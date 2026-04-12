@@ -1,8 +1,7 @@
 {
 	"useTabs": true,
 	"plugins": [
-		"prettier-plugin-svelte",
-		"prettier-plugin-rust"
+		"prettier-plugin-svelte"
 	],
 	"overrides": [
 		{

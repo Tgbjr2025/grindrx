@@ -9,15 +9,14 @@ Also it's recommended to set `Accept: application/json` header at all times exce
 Absense or incorrect forming of this header might lead to HTTP status 403 and Cloudflare block page.
 
 ```
-<appVersion>;GLOBAL;<deviceType>;<androidVersion>;<screenResolution>;<totalRAM>;<advertisingId>
+<deviceId>;GLOBAL;<deviceType>;<totalRAM>;<screenResolution>;<advertisingId>
 ```
 
-- `deviceType` — `1` if `Build.CPU_ABI == "x86"` (emulator), `2` otherwise (real device)
-- `appVersion` — `25.20.0.147239` or similar
+- `deviceId` — 16 hex characters
 - `GLOBAL` — hardcoded channel/flavor
-- `totalRam` — total RAM
+- `deviceType` — `1` if `Build.CPU_ABI == "x86"` (emulator), `2` otherwise (real device)
+- `totalRam` — ActivityManager.MemoryInfo.totalMem
 - `screenResolution` — "heightPx x widthPx" e.g. `2400x1080`
-- `totalRAM` — ActivityManager.MemoryInfo.totalMem
 - `advertisingId` — Google Advertising ID, falls back to `00000000-0000-0000-0000-000000000000` if unavailable
 
 Example: `a1b2c3d4e5f60789;GLOBAL;2;8026152960;2400x1080;550e8400-e29b-41d4-a716-446655440000`

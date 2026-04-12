@@ -13,14 +13,13 @@
 		"editor.defaultFormatter": "esbenp.prettier-vscode"
 	},
 	"[rust]": {
-		"editor.defaultFormatter": "esbenp.prettier-vscode"
+		"editor.defaultFormatter": "rust-lang.rust-analyzer"
 	},
 	"editor.codeActionsOnSave": {
 		"source.fixAll.eslint": "explicit"
 	},
 	"editor.indentSize": "tabSize",
 	"editor.detectIndentation": false,
-	"svelte.enable-ts-plugin": false,
 	"json.schemaDownload.trustedDomains": {
 		"https://schema.tauri.app/config/2": true
 	},
@@ -28,6 +27,5 @@
 		"editor.indentSize": 2,
 		"editor.detectIndentation": false,
 		"editor.insertSpaces": true
-	},
-	"vue.server.includeLanguages": ["vue", "markdown"]
+	}
 }

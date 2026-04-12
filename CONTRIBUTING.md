@@ -50,3 +50,7 @@ const req = await fetch("https://grindr.mobi/v8/sessions", {
 process.stdout.write("Grindr3 " + (await req.json().then((t) => t.sessionId)));
 
 ```
+
+## Contribution guidelines
+
+AI-generated pull requests are not allowed. AI-assisted code is allowed.

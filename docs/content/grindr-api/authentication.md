@@ -25,6 +25,7 @@ Response:
 
 - `profileId` — string with numbers, account's ID
 - `sessionId` — JWT token (see [Session ID](#session-id))
+- `authToken` — Auth token for session refresh
 
 ## Session ID
 
