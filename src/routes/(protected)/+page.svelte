@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { callMethod, fetchRest } from "$lib/api";
-	import { appState } from "$lib/app-state.svelte";
 </script>
 
 <svelte:head>

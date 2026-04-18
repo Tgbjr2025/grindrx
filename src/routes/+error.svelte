@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import clippy from "$lib/assets/clippy.avif";
+	import { Tween } from "svelte/motion";
+	import toast from "svelte-french-toast";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Button } from "$lib/components/ui/button";
 	import * as Tooltip from "$lib/components/ui/tooltip";
 	import QuestionMarkIcon from "phosphor-svelte/lib/QuestionMarkIcon";
 	import ExclamationMarkIcon from "phosphor-svelte/lib/ExclamationMarkIcon";
 	import ArrowUpRightIcon from "phosphor-svelte/lib/ArrowUpRightIcon";
-	import { Tween } from "svelte/motion";
-	import toast from "svelte-french-toast";
+	import clippy from "$lib/assets/clippy.avif";
 
 	let flip = $state(false);
 	let flipProgress = new Tween(0, { duration: 500 });
@@ -133,6 +133,8 @@
 		<Button variant="link" class="text-muted-foreground" size="sm">
 			<a
 				href="https://git.hloth.dev/hloth/open-grind/issues/new?title=%5BBUG%5D+Short+description+of+the+issue"
+				target="_blank"
+				rel="noopener noreferrer"
 			>
 				Report an issue <ArrowUpRightIcon class="inline" />
 			</a>
