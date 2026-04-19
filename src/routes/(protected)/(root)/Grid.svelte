@@ -4,6 +4,7 @@
 	import { searchProfiles, type searchProfileSchema } from "./grid";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import ProfileMiniCard from "./ProfileMiniCard.svelte";
+	import Filters from "./Filters.svelte";
 
 	let {
 		geohash,
@@ -38,6 +39,7 @@
 	}
 </script>
 
+<Filters />
 <div
 	class="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 w-full gap-0.5 px-1"
 >

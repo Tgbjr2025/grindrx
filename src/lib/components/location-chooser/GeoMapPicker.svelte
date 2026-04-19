@@ -1,10 +1,6 @@
 <script lang="ts">
 	import { Map, TileLayer, Marker, ControlAttribution } from "sveaflet";
-	import type {
-		Map as LeafletMap,
-		LatLng,
-		LeafletMouseEventHandlerFn,
-	} from "leaflet";
+	import type { Map as LeafletMap, LeafletMouseEventHandlerFn } from "leaflet";
 	import { divIcon } from "leaflet";
 	import { GpsFixIcon } from "phosphor-svelte";
 	import toast from "svelte-french-toast";
