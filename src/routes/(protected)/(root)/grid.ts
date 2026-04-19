@@ -1,10 +1,10 @@
+import z from "zod";
 import { fetchRest } from "$lib/api";
 import { geohashSchema } from "$lib/api/geohash";
 import { mediaHashPublicSchema } from "$lib/api/media";
 import { urlSearchParamsCodec } from "$lib/utils";
-import z from "zod";
 
-export const searchProfile = z.object({
+export const searchProfileSchema = z.object({
 	profileId: z.int().nonnegative(),
 	displayName: z.string(),
 	age: z.int().nonnegative().nullable(),
@@ -12,7 +12,7 @@ export const searchProfile = z.object({
 	medias: z.array(z.object({ mediaHash: mediaHashPublicSchema })),
 });
 
-export const gridQuery = z.object({
+export const gridQuerySchema = z.object({
 	nearbyGeoHash: geohashSchema,
 	exploreGeoHash: geohashSchema.optional(),
 	photoOnly: z.boolean().optional(),
@@ -24,7 +24,7 @@ export const gridQuery = z.object({
 	pageNumber: z.int().nonnegative().optional(),
 });
 
-export const searchQuery = gridQuery.extend({
+export const searchQuerySchema = gridQuerySchema.extend({
 	online: z.boolean().optional(),
 	ageMinimum: z.int().nonnegative().optional(),
 	ageMaximum: z.int().nonnegative().optional(),
@@ -45,15 +45,15 @@ export const searchQuery = gridQuery.extend({
 	freeFilter: z.boolean().optional(),
 });
 
-export async function searchProfiles(query: z.infer<typeof searchQuery>) {
+export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
 	return await fetchRest(
-		"/v7/search?" + urlSearchParamsCodec(searchQuery).encode(query),
+		"/v7/search?" + urlSearchParamsCodec(searchQuerySchema).encode(query),
 	)
 		.then((res) => res.json())
 		.then((data) =>
 			z
 				.object({
-					profiles: z.array(searchProfile),
+					profiles: z.array(searchProfileSchema),
 				})
 				.parse(data),
 		);

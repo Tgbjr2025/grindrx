@@ -6,15 +6,20 @@
 		LeafletMouseEventHandlerFn,
 	} from "leaflet";
 	import { divIcon } from "leaflet";
-	import Button from "../ui/button/button.svelte";
 	import { GpsFixIcon } from "phosphor-svelte";
+	import toast from "svelte-french-toast";
+	import Button from "$lib/components/ui/button/button.svelte";
 	import {
 		checkPermissions,
 		getCurrentPosition,
 		requestPermissions,
 	} from "@tauri-apps/plugin-geolocation";
-	import toast from "svelte-french-toast";
 	import { platform } from "@tauri-apps/plugin-os";
+	import { Input } from "$lib/components/ui/input";
+	import Spinner from "$lib/components/ui/spinner/spinner.svelte";
+	import Alert from "$lib/components/ui/alert/alert.svelte";
+	import { fetchRest } from "$lib/api";
+	import z from "zod";
 
 	let {
 		pinPos = $bindable(),
@@ -33,6 +38,44 @@
 			return () => {
 				map?.off("click", onMapClick);
 			};
+		}
+	});
+
+	let searchQuery = $state("Madrid");
+	let searchPlaces = $derived.by(async () => {
+		try {
+			let query = searchQuery.trim();
+			if (!query) return;
+			const abortController = new AbortController();
+			const response = await fetchRest(
+				"/v3/places/search?" +
+					new URLSearchParams({
+						placeName: query,
+					}),
+				{ abortController },
+			)
+				.then((res) => res.json())
+				.then((data) =>
+					z
+						.object({
+							places: z.array(
+								z.object({
+									name: z.string(),
+									address: z.string(),
+									lat: z.number(),
+									lon: z.number(),
+									importance: z.number(),
+								}),
+							),
+						})
+						.parse(data),
+				);
+			return response;
+		} catch (e) {
+			toast.error(
+				"Failed to search places: " +
+					(e instanceof Error ? e.message : String(e)),
+			);
 		}
 	});
 </script>
@@ -69,8 +112,48 @@
 			/>
 		{/if}
 	</Map>
+	<div class="absolute bottom-4 w-full z-1010 p-2">
+		<Input
+			id="search-place"
+			type="search"
+			placeholder="Search places..."
+			bind:value={searchQuery}
+			class=" bg-popover-foreground text-background shadow-md"
+			maxlength={100}
+		/>
+		<!-- bottom-2 w-[calc(100%-8rem)]  -->
+	</div>
+	{#if searchQuery}
+		<div class="size-full z-1000 top-0 left-0 absolute p-1 pb-16">
+			<div
+				class="bg-popover-foreground backdrop-blur-xl w-full h-full rounded-md flex flex-col text-popover shadow-md px-1 py-3 overflow-auto gap-2"
+			>
+				{#await searchPlaces}
+					<Spinner class="m-auto size-8" />
+				{:then response}
+					{#if response}
+						{#each response.places.toSorted((a, b) => b.importance - a.importance) as place}
+							<Button
+								class="flex flex-col gap-0 items-start justify-start text-current cursor-pointer text-left h-auto"
+								variant="link"
+							>
+								<span class="max-w-full truncate line-clamp-1">{place.name}</span>
+								<span
+									class="max-w-full truncate line-clamp-1 text-sm text-popover/40"
+								>
+									{place.address}
+								</span>
+							</Button>
+						{/each}
+					{/if}
+				{:catch error}
+					<Alert>{error}</Alert>
+				{/await}
+			</div>
+		</div>
+	{/if}
 	{#if ["android", "ios"].includes(platform())}
-		<div class="absolute bottom-6 right-2 z-1000 rounded-full">
+		<div class="absolute bottom-6 right-2 z-1010 rounded-full">
 			<Button
 				size="icon-lg"
 				aria-label="Locate me"

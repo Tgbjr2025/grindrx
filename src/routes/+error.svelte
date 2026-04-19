@@ -51,7 +51,7 @@
 				>
 					<div
 						class={[
-							"transform-3d relative transition-transform duration-500 rounded-full w-full h-full *:backface-hidden *:absolute *:top-0 *:left-0 *:size-full",
+							"transform-3d relative transition-transform duration-500 rounded-full size-full *:backface-hidden *:absolute *:top-0 *:left-0 *:size-full",
 							{
 								"-rotate-y-180": flip,
 							},
@@ -63,7 +63,7 @@
 
 						<Tooltip.Provider>
 							<img
-								class="rotate-y-180 w-full h-full rounded-full bg-neutral-200 select-none"
+								class="rotate-y-180 size-full rounded-full bg-neutral-200 select-none"
 								src={clippy}
 								alt="Clippy"
 							/>

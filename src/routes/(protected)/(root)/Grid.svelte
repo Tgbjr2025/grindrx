@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type z from "zod";
 	import { onMount } from "svelte";
-	import { searchProfiles, type searchProfile } from "./grid";
+	import { searchProfiles, type searchProfileSchema } from "./grid";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 
 	let {
@@ -23,7 +23,7 @@
 	// 	}}>Log out</button
 	// >
 
-	let profiles: z.infer<typeof searchProfile>[] = $state([]);
+	let profiles: z.infer<typeof searchProfileSchema>[] = $state([]);
 
 	onMount(() => {
 		void fetchProfiles();

@@ -66,6 +66,7 @@ export async function fetchRest(
 	options: {
 		method?: string;
 		body?: unknown;
+		abortController?: AbortController;
 	} = { method: "GET" },
 ) {
 	try {
