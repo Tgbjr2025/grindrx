@@ -17,7 +17,7 @@
 	let { sexualPosition }: { sexualPosition: SexualPositionId } = $props();
 </script>
 
-<span class="flex items-center gap-1">
+<span class="flex items-center gap-1 whitespace-nowrap *:shrink-0">
 	{#if sexualPosition === SexualPosition.Top}
 		<ArrowUpIcon />
 	{:else if sexualPosition === SexualPosition.VersTop}

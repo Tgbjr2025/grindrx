@@ -15,8 +15,8 @@
 </script>
 
 {#if height !== null || weight !== null || bodyType !== null}
-	<span class="flex items-center gap-1 leading-3">
-		<RulerIcon class="rotate-y-180" />
+	<span class="flex items-center gap-1 leading-3 whitespace-nowrap">
+		<RulerIcon class="rotate-y-180 shrink-0" />
 		{#if height !== null}
 			{Math.round(height)} cm
 		{/if}

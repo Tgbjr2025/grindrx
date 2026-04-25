@@ -11,10 +11,10 @@
 </script>
 
 {#if onlineUntil !== null && onlineUntil > Date.now()}
-	<span>
-		<span class="bg-green-600 rounded-full size-1 inline-block"></span>
+	<div class="flex items-center gap-1.5 whitespace-nowrap">
+		<span class="bg-green-500 rounded-full size-2 inline-block ms-0.5 shrink-0"></span>
 		Online now
-	</span>
+	</div>
 {:else if seen !== null}
 	<span class="text-gray-500">
 		Online {formatDistanceToNowStrict(seen, {

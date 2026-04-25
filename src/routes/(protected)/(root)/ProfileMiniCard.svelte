@@ -27,6 +27,7 @@
 				alt="Profile avatar"
 				class="w-full h-full"
 				loading="lazy"
+				draggable="false"
 			/>
 		{:else}
 			<UserIcon

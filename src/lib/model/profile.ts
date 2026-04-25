@@ -56,15 +56,26 @@ export const acceptNSFWPicsOptionSchema = z.union(
 
 export type AcceptNSFWPicsOptionId = keyof typeof acceptNSFWPicsOptions;
 
+export const RelationshipStatus = {
+	Single: 1,
+	Dating: 2,
+	Exclusive: 3,
+	Committed: 4,
+	Partnered: 5,
+	Engaged: 6,
+	Married: 7,
+	OpenRelationship: 8,
+} as const;
+
 export const relationshipStatuses = {
-	1: "Single",
-	2: "Dating",
-	3: "Exclusive",
-	4: "Committed",
-	5: "Partnered",
-	6: "Engaged",
-	7: "Married",
-	8: "Open Relationship",
+	[RelationshipStatus.Single]: "Single",
+	[RelationshipStatus.Dating]: "Dating",
+	[RelationshipStatus.Exclusive]: "Exclusive",
+	[RelationshipStatus.Committed]: "Committed",
+	[RelationshipStatus.Partnered]: "Partnered",
+	[RelationshipStatus.Engaged]: "Engaged",
+	[RelationshipStatus.Married]: "Married",
+	[RelationshipStatus.OpenRelationship]: "Open Relationship",
 } as const;
 
 export const relationshipStatusSchema = z.union(
@@ -101,20 +112,36 @@ export const bodyTypeSchema = z.union(
 	),
 );
 
+export const Tribes = {
+	Bear: 1,
+	CleanCut: 2,
+	Daddy: 3,
+	Discreet: 4,
+	Geek: 5,
+	Jock: 6,
+	Leather: 7,
+	Otter: 8,
+	Poz: 9,
+	Rugged: 10,
+	Sober: 11,
+	Trans: 12,
+	Twink: 13,
+} as const;
+
 export const tribes = {
-	1: "Bear",
-	2: "Clean-Cut",
-	3: "Daddy",
-	4: "Discreet",
-	5: "Geek",
-	6: "Jock",
-	7: "Leather",
-	8: "Otter",
-	9: "Poz",
-	10: "Rugged",
-	11: "Sober",
-	12: "Trans",
-	13: "Twink",
+	[Tribes.Bear]: "Bear",
+	[Tribes.CleanCut]: "Clean-Cut",
+	[Tribes.Daddy]: "Daddy",
+	[Tribes.Discreet]: "Discreet",
+	[Tribes.Geek]: "Geek",
+	[Tribes.Jock]: "Jock",
+	[Tribes.Leather]: "Leather",
+	[Tribes.Otter]: "Otter",
+	[Tribes.Poz]: "Poz",
+	[Tribes.Rugged]: "Rugged",
+	[Tribes.Sober]: "Sober",
+	[Tribes.Trans]: "Trans",
+	[Tribes.Twink]: "Twink",
 } as const;
 
 export const tribeSchema = z.union(
@@ -141,16 +168,28 @@ export const meetAtOptionsSchema = z.union(
 
 export type MeetAtOptionId = keyof typeof meetAtOptions;
 
+export const Ethnicity = {
+	Asian: 1,
+	Black: 2,
+	Latino: 3,
+	MiddleEastern: 4,
+	Mixed: 5,
+	NativeAmerican: 6,
+	White: 7,
+	Other: 8,
+	SouthAsian: 9,
+} as const;
+
 export const ethnicities = {
-	1: "Asian",
-	2: "Black",
-	3: "Latino",
-	4: "Middle Eastern",
-	5: "Mixed",
-	6: "Native American",
-	7: "White",
-	8: "Other",
-	9: "South Asian",
+	[Ethnicity.Asian]: "Asian",
+	[Ethnicity.Black]: "Black",
+	[Ethnicity.Latino]: "Latino",
+	[Ethnicity.MiddleEastern]: "Middle Eastern",
+	[Ethnicity.Mixed]: "Mixed",
+	[Ethnicity.NativeAmerican]: "Native American",
+	[Ethnicity.White]: "White",
+	[Ethnicity.Other]: "Other",
+	[Ethnicity.SouthAsian]: "South Asian",
 } as const;
 
 export const ethnicitySchema = z.union(

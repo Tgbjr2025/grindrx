@@ -5,8 +5,8 @@
 </script>
 
 {#if distance !== null}
-	<span class="flex items-center gap-1">
-		<NavigationArrowIcon weight="fill" class="rotate-y-180" />
+	<span class="flex items-center gap-1 whitespace-nowrap">
+		<NavigationArrowIcon weight="fill" class="rotate-y-180 shrink-0" />
 		{#if distance < 1000}
 			{Math.round(distance)} m
 		{:else}
