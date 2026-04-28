@@ -2,10 +2,10 @@
 
 ## Features
 
-- [ ] Authentication
-  - [ ] Password-based
+- [X] Authentication
+  - [X] Password-based
   - [ ] Sign-in with Google
-- [ ] Geo service
+- [X] Geo service
   - [ ] Location self-reporting
 - [ ] Messaging
   - [ ] Text messages
@@ -19,13 +19,13 @@
   - [ ] Saved phrases
   - [ ] Voice messages
   - [ ] Reactions
-- [ ] Profiles
-  - [ ] Fetching
+- [X] Profiles
+  - [X] Fetching
   - [ ] Favoring/unfavoring
   - [ ] Blocking/unblocking
   - [ ] Taps
   - [ ] Reports
-- [ ] Grid
+- [X] Grid
   - [ ] Limit bypass
   - [ ] Filtering
 - [ ] Interest section
