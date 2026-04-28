@@ -2,37 +2,50 @@
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
-	let focused = $state(false);
+	let focused:
+		| {
+				startX: number;
+				startY: number;
+		  }
+		| false = $state(false);
+	const id = $props.id();
 
-	$effect(() => {
-		const id = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+	function onclick(event: MouseEvent) {
+		focused = !focused;
 		if (focused) {
 			document.documentElement.classList.add(`scroll-lock-${id}`);
-			return () => {
-				document.documentElement.classList.remove(`scroll-lock-${id}`);
-			};
 		} else {
 			document.documentElement.classList.remove(`scroll-lock-${id}`);
 		}
-	});
+		event.clientX;
+	}
 </script>
 
-<button onclick={() => (focused = !focused)} class="item">
+<button {onclick} class="item">
 	<img
 		src="https://placehold.co/600x400"
 		alt=""
 		draggable="false"
-		class={{
-			focused: focused,
-			unfocused: !focused,
-		}}
+		class="w-full h-full aspect-[inherit] absolute top-0 left-0 object-cover"
 	/>
 </button>
 {#if focused}
-	<div
+	<button
 		class="bg-black/50 fixed top-0 left-0 size-full z-99"
 		transition:fade={{ duration: 500, easing: expoOut }}
-	></div>
+		onclick={() => (focused = false)}
+		aria-label="Close image"
+	></button>
+	<div
+		class="fixed top-0 left-0 size-full z-100 flex justify-center items-center p-4"
+	>
+		<img
+			src="https://placehold.co/600x400"
+			alt=""
+			draggable="false"
+			class="z-100 w-full h-full object-contain"
+		/>
+	</div>
 {/if}
 
 <style lang="postcss">
@@ -40,18 +53,5 @@
 	.item {
 		@apply w-full h-full aspect-[inherit] relative block;
 		scroll-snap-stop: always;
-	}
-
-	.item img {
-		@apply w-full h-full aspect-[inherit] z-100;
-		transition: all 500ms cubic-bezier(0.16, 1, 0.3, 1);
-	}
-
-	.item img.unfocused {
-		@apply absolute top-0 left-0 object-cover;
-	}
-
-	.item img.focused {
-		@apply fixed top-1/2 left-1/2 object-contain -translate-1/2;
 	}
 </style>

@@ -25,6 +25,7 @@
 		"@tauri-apps/plugin-os": "~2",
 		"copy-to-clipboard": "^3.3.3",
 		"date-fns": "^4.1.0",
+		"photoswipe": "^5.4.4",
 		"sveaflet": "^0.1.4",
 		"svelte-french-toast": "^1.2.0",
 		"tailwindcss": "^4.2.2",
