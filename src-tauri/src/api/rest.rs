@@ -69,9 +69,11 @@ impl GrindrClient {
             .header("Authorization", authorization);
 
         if let Some(body) = body {
+            let json_body: serde_json::Value = rmp_serde::from_slice(&body)
+                .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
             request = request
                 .header("Content-Type", "application/json")
-                .body(body);
+                .json(&json_body);
         }
 
         let response = request.send().await?;
@@ -82,25 +84,46 @@ impl GrindrClient {
     }
 }
 
+#[derive(Deserialize)]
+struct RequestPayload {
+    method: String,
+    path: String,
+    #[serde(with = "serde_bytes")]
+    #[serde(default)]
+    body: Option<Vec<u8>>,
+}
+
 #[tauri::command]
 pub async fn request(
     state: tauri::State<'_, AppState>,
-    method: String,
-    path: String,
-    body: Option<Vec<u8>>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<Response, AppError> {
-    println!(
-        "Received request: {method} {path} with body of length {}",
-        body.as_ref().map(|b| b.len()).unwrap_or(0)
-    );
-    let method = Method::from_str(&method).map_err(|_| AppError::Api {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(AppError::Api {
+            code: 400,
+            message: "Expected raw msgpack body".to_owned(),
+        });
+    };
+
+    let payload: RequestPayload = rmp_serde::from_slice(bytes)
+        .map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
+
+    let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
         code: 400,
-        message: format!("Invalid method: {method}"),
+        message: format!("Invalid method: {}", payload.method),
     })?;
 
-    let raw = state.client()?.request_raw(method, &path, body).await;
+    println!(
+        "Received request: {} {} with body of length {}",
+        method,
+        payload.path,
+        payload.body.as_ref().map(|b| b.len()).unwrap_or(0)
+    );
 
-    let raw = raw?;
+    let raw = state
+        .client()?
+        .request_raw(method, &payload.path, payload.body)
+        .await?;
 
     Ok(Response::new(
         rmp_serde::encode::to_vec_named(&raw).map_err(|e| AppError::Http(e.to_string()))?,

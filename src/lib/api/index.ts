@@ -1,6 +1,6 @@
 import z from "zod";
 import { invoke } from "@tauri-apps/api/core";
-import { decode } from "@msgpack/msgpack";
+import { decode, encode } from "@msgpack/msgpack";
 import { goto } from "$app/navigation";
 import toast from "svelte-french-toast";
 
@@ -70,29 +70,28 @@ export async function fetchRest(
 	} = { method: "GET" },
 ) {
 	try {
-		const packed = await invoke("request", {
+		const payload = encode({
 			method: options.method || "GET",
 			path,
-			...(options.body != null && {
-				body: Array.from(
-					new TextEncoder().encode(JSON.stringify(options.body)),
-				),
-			}),
-		}).then((res) => z.instanceof(ArrayBuffer).parse(res));
+			body: options.body === undefined ? null : encode(options.body),
+		});
+		const packed = await invoke("request", payload).then((res) =>
+			z.instanceof(ArrayBuffer).parse(res),
+		);
 		const decoded = decode(packed);
-		const { status, body } = z
+		const { status, body: responseBody } = z
 			.object({ status: z.number(), body: z.instanceof(Uint8Array) })
 			.parse(decoded);
 		return {
 			status,
 			bytes() {
-				return body;
+				return responseBody;
 			},
 			text() {
-				return new TextDecoder().decode(body);
+				return new TextDecoder().decode(responseBody);
 			},
 			json() {
-				return JSON.parse(new TextDecoder().decode(body));
+				return JSON.parse(new TextDecoder().decode(responseBody));
 			},
 		};
 	} catch (error) {
