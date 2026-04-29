@@ -69,17 +69,17 @@ export type PartialGridProfile = {
 
 export type GridProfile = FullGridProfile | PartialGridProfile;
 
-const partialProfileCache = new Map<number, FullGridProfile>();
+export const profileCache = new Map<number, FullGridProfile>();
 
 export async function resolvePartialBatch(
 	profileIds: number[],
 ): Promise<FullGridProfile[]> {
-	const cachedProfiles = profileIds
-		.map((id) => partialProfileCache.get(id))
-		.filter((profile): profile is FullGridProfile => profile !== undefined);
-	const resolvedProfiles = await fetchRest("/v3/profiles", {
+	if (profileIds.length === 0) return [];
+	return await fetchRest("/v3/profiles", {
 		method: "POST",
-		body: { targetProfileIds: profileIds.filter((id) => !partialProfileCache.has(id)) },
+		body: {
+			targetProfileIds: profileIds,
+		},
 	})
 		.then((res) => res.json())
 		.then((data) =>
@@ -107,10 +107,6 @@ export async function resolvePartialBatch(
 					unread: null,
 				})),
 		);
-	resolvedProfiles.forEach((profile) =>
-		partialProfileCache.set(profile.id, profile),
-	);
-	return [...cachedProfiles, ...resolvedProfiles];
 }
 
 export async function getGrid(query: Parameters<typeof getV3Cascade>[0]) {

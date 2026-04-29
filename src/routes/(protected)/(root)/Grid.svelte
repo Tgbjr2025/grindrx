@@ -1,7 +1,13 @@
 <script lang="ts">
 	import z from "zod";
 	import toast from "svelte-french-toast";
-	import { getGrid, resolvePartialBatch, type GridProfile } from "./grid";
+	import {
+		getGrid,
+		resolvePartialBatch,
+		type GridProfile,
+		type FullGridProfile,
+		profileCache,
+	} from "./grid";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import ProfileMiniCard from "./ProfileMiniCard.svelte";
 	import Filters from "./GridFilters.svelte";
@@ -25,12 +31,25 @@
 			const profileIds = partialBatches[batchIndex].batch.map(
 				(p) => p.profileId,
 			);
-			const resolved = await resolvePartialBatch(profileIds);
+			const uncachedIds: number[] = [];
+
+			for (const id of profileIds) {
+				const cached = profileCache.get(id);
+				if (cached) {
+					const idx = items.findIndex((i) => i.id === id);
+					if (idx !== -1) items[idx] = cached;
+				} else {
+					uncachedIds.push(id);
+				}
+			}
+
+			const resolved = await resolvePartialBatch(uncachedIds);
 			for (const profile of resolved) {
+				profileCache.set(profile.id, profile);
 				const idx = items.findIndex((i) => i.id === profile.id);
 				if (idx !== -1) items[idx] = profile;
 			}
-			const unresolved = profileIds.filter(
+			const unresolved = uncachedIds.filter(
 				(id) => !resolved.some((profile) => profile.id === id),
 			);
 			for (const unresolvedProfileId of unresolved) {
