@@ -1,4 +1,6 @@
 <script lang="ts">
+	// Credit: https://kennethnym.com/blog/progressive-blur-in-css/ by @kennethnym
+
 	let {
 		class: className,
 		bgClass,

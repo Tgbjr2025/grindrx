@@ -5,7 +5,6 @@
 	import TopBar from "./TopBar.svelte";
 
 	let preferences = $state(getPreferences());
-
 	let grid: Grid | undefined = $state();
 </script>
 

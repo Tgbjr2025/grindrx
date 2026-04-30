@@ -7,10 +7,12 @@
 
 	let {
 		onUpdate,
-		expanded,
+		class: className,
+		expansion,
 	}: {
 		onUpdate?: () => void;
-		expanded?: boolean;
+		class?: import("svelte/elements").ClassValue;
+		expansion: number;
 	} = $props();
 
 	let geoMapPickerOpen = $state(false);
@@ -30,14 +32,19 @@
 
 <Button
 	variant="secondary"
-	class={{ "w-full": expanded }}
+	class={[
+		"transition-none relative *:absolute *:top-1/2 *:left-1/2 *:-translate-1/2 *:flex *:items-center *:justify-center *:gap-1.5 overflow-clip",
+		className,
+	]}
+	style="width: max(44px, {expansion * 100}%)"
 	onclick={() => (geoMapPickerOpen = true)}
 >
-	{#if expanded}
+	<div style="opacity: {expansion}">
 		<PencilSimpleIcon weight="fill" />
 		Change location
-	{:else}
+	</div>
+	<div style="opacity: {1 - expansion}">
 		<GpsFixIcon weight="fill" />
-	{/if}
+	</div>
 </Button>
 <LocationChooser {onSubmit} bind:open={geoMapPickerOpen} />

@@ -151,3 +151,7 @@ a {
 *[data-tauri-drag-region] {
 	background: red;
 }
+
+.scrollbar-thin {
+	scrollbar-width: thin;
+}
