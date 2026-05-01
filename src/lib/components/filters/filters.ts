@@ -157,7 +157,7 @@ export const gridSearchFiltersSchema = z.object({
 
 export type GridSearchFilters = z.infer<typeof gridSearchFiltersSchema>;
 
-export const defaultFilters = {
+export const defaultFilters: GridSearchFilters = {
 	isFavorite: false,
 	isOnline: false,
 	isRightNow: false,

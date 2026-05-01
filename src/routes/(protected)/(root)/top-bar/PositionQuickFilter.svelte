@@ -1,9 +1,6 @@
 <script lang="ts">
 	import type z from "zod";
-	import {
-		getPreferences,
-		setPreferences,
-	} from "$lib/app-data/preferences.svelte";
+	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import {
 		defaultFilters,
 		filterPositionSchema,
@@ -17,12 +14,12 @@
 		open = $bindable(),
 		enabled = $bindable(),
 		value = $bindable(),
-		onRefreshGrid,
+		onUpdateFilters,
 	}: {
 		open: boolean;
 		enabled: boolean;
 		value: z.infer<typeof filterPositionSchema>;
-		onRefreshGrid: () => void;
+		onUpdateFilters: () => void;
 	} = $props();
 
 	let filtersChanges: {
@@ -77,24 +74,10 @@
 		<Drawer.Footer>
 			<Drawer.Close
 				class={buttonVariants({ variant: "default" })}
-				onclick={async () => {
-					if (
-						value !== filtersChanges.positions ||
-						enabled !== filtersChanges.positionEnabled
-					) {
-						value = filtersChanges.positions;
-						enabled = filtersChanges.positionEnabled;
-						const { gridSearchFilters: oldGridSearchFilters = defaultFilters } =
-							await getPreferences();
-						await setPreferences({
-							gridSearchFilters: {
-								...oldGridSearchFilters,
-								positions: filtersChanges.positions,
-								positionEnabled: filtersChanges.positionEnabled,
-							},
-						});
-						onRefreshGrid();
-					}
+				onclick={() => {
+					value = filtersChanges.positions;
+					enabled = filtersChanges.positionEnabled;
+					onUpdateFilters();
 					open = false;
 				}}
 			>

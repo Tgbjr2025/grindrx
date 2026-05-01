@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type z from "zod";
-	import isEqual from "lodash-es/isEqual";
 
 	import { Button } from "$lib/components/ui/button";
 	import * as Sheet from "$lib/components/ui/sheet";
@@ -24,114 +23,98 @@
 	import MeetAtFilter from "$lib/components/filters/MeetAtFilter.svelte";
 	import HealthPracticesFilter from "$lib/components/filters/HealthPracticesFilter.svelte";
 
-	import {
-		getPreferences,
-		setPreferences,
-	} from "$lib/app-data/preferences.svelte";
-
 	let {
-		onUpdate,
 		open = $bindable(),
-	}: { onUpdate: () => void; open: boolean } = $props();
+		filters = $bindable(),
+		onUpdateFilters,
+	}: {
+		filters: z.infer<typeof gridSearchFiltersSchema>;
+		onUpdateFilters: () => void;
+		open: boolean;
+	} = $props();
 
-	let filters: z.infer<typeof gridSearchFiltersSchema> = $state(defaultFilters);
-
-	let contentScroll = $state(0);
-
-	async function onSubmit() {
-		const { gridSearchFilters: currentValue } = await getPreferences();
-		if (!isEqual(currentValue, filters)) {
-			await setPreferences({
-				gridSearchFilters: filters,
-			});
-			loadSavedFilters();
-			onUpdate();
-		}
-		open = false;
-	}
+	let filtersChanges = $state(defaultFilters);
 
 	$effect(() => {
-		if (open || !open) {
-			loadSavedFilters();
+		if (open) {
+			filtersChanges = { ...filters };
 		}
 	});
 
-	async function loadSavedFilters() {
-		const preferences = await getPreferences();
-		if (preferences?.gridSearchFilters) {
-			filters = preferences.gridSearchFilters;
-		}
-	}
+	let contentScroll = $state(0);
 </script>
 
 {#snippet col1()}
-	<FilterBoolean id="favorite" bind:checked={filters.isFavorite}>
+	<FilterBoolean id="favorite" bind:checked={filtersChanges.isFavorite}>
 		Favorites
 	</FilterBoolean>
-	<FilterBoolean id="online" bind:checked={filters.isOnline}>
+	<FilterBoolean id="online" bind:checked={filtersChanges.isOnline}>
 		Online
 	</FilterBoolean>
-	<FilterBoolean id="right-now" bind:checked={filters.isRightNow}>
+	<FilterBoolean id="right-now" bind:checked={filtersChanges.isRightNow}>
 		Right now
 	</FilterBoolean>
-	<AgeFilter bind:checked={filters.ageEnabled} bind:value={filters.age} />
+	<AgeFilter
+		bind:checked={filtersChanges.ageEnabled}
+		bind:value={filtersChanges.age}
+	/>
 	<GendersFilter
-		bind:checked={filters.genderEnabled}
-		bind:value={filters.genders}
+		bind:checked={filtersChanges.genderEnabled}
+		bind:value={filtersChanges.genders}
 	/>
 {/snippet}
 {#snippet col2()}
 	<PositionFilter
-		bind:checked={filters.positionEnabled}
-		bind:value={filters.positions}
+		bind:checked={filtersChanges.positionEnabled}
+		bind:value={filtersChanges.positions}
 	/>
 	<PhotosFilter
-		bind:checked={filters.photosEnabled}
-		bind:value={filters.photos}
+		bind:checked={filtersChanges.photosEnabled}
+		bind:value={filtersChanges.photos}
 	/>
 {/snippet}
 {#snippet col3()}
 	<TribesFilter
-		bind:checked={filters.tribesEnabled}
-		bind:value={filters.tribes}
+		bind:checked={filtersChanges.tribesEnabled}
+		bind:value={filtersChanges.tribes}
 	/>
 	<BodyTypeFilter
-		bind:checked={filters.bodyTypesEnabled}
-		bind:value={filters.bodyTypes}
+		bind:checked={filtersChanges.bodyTypesEnabled}
+		bind:value={filtersChanges.bodyTypes}
 	/>
 	<HeightFilter
-		bind:checked={filters.heightEnabled}
-		bind:value={filters.height}
+		bind:checked={filtersChanges.heightEnabled}
+		bind:value={filtersChanges.height}
 	/>
 	<WeightFilter
-		bind:checked={filters.weightEnabled}
-		bind:value={filters.weight}
+		bind:checked={filtersChanges.weightEnabled}
+		bind:value={filtersChanges.weight}
 	/>
 	<RelationshipStatusFilter
-		bind:checked={filters.relationshipStatusesEnabled}
-		bind:value={filters.relationshipStatuses}
+		bind:checked={filtersChanges.relationshipStatusesEnabled}
+		bind:value={filtersChanges.relationshipStatuses}
 	/>
 	<AcceptNSFWPicsFilter
-		bind:checked={filters.acceptNSFWPicsEnabled}
-		bind:value={filters.acceptNSFWPics}
+		bind:checked={filtersChanges.acceptNSFWPicsEnabled}
+		bind:value={filtersChanges.acceptNSFWPics}
 	/>
 	<LookingForFilter
-		bind:checked={filters.lookingForEnabled}
-		bind:value={filters.lookingFor}
+		bind:checked={filtersChanges.lookingForEnabled}
+		bind:value={filtersChanges.lookingFor}
 	/>
 	<MeetAtFilter
-		bind:checked={filters.meetAtEnabled}
-		bind:value={filters.meetAt}
+		bind:checked={filtersChanges.meetAtEnabled}
+		bind:value={filtersChanges.meetAt}
 	/>
 	<FilterBoolean
 		id="havent-chatted-today"
-		bind:checked={filters.haventChattedTodayEnabled}
+		bind:checked={filtersChanges.haventChattedTodayEnabled}
 	>
 		Haven't chatted today
 	</FilterBoolean>
 	<HealthPracticesFilter
-		bind:checked={filters.healthPracticesEnabled}
-		bind:value={filters.healthPractices}
+		bind:checked={filtersChanges.healthPracticesEnabled}
+		bind:value={filtersChanges.healthPractices}
 	/>
 {/snippet}
 <Sheet.Root bind:open>
@@ -183,7 +166,16 @@
 				},
 			]}
 		>
-			<Button type="submit" onclick={onSubmit}>Apply</Button>
+			<Button
+				type="submit"
+				onclick={() => {
+					filters = filtersChanges;
+					onUpdateFilters();
+					open = false;
+				}}
+			>
+				Apply
+			</Button>
 		</Sheet.Footer>
 	</Sheet.Content>
 </Sheet.Root>

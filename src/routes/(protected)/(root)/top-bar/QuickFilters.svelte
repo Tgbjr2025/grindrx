@@ -1,71 +1,40 @@
 <script lang="ts">
-	import toast from "svelte-french-toast";
-	import { onMount } from "svelte";
+	import type z from "zod";
 	import { SlidersHorizontalIcon } from "phosphor-svelte";
-	import {
-		getPreferences,
-		setPreferences,
-	} from "$lib/app-data/preferences.svelte";
-	import { defaultFilters } from "$lib/components/filters/filters";
 	import { Button, buttonVariants } from "$lib/components/ui/button";
 	import * as ToggleGroup from "$lib/components/ui/toggle-group";
+	import type { gridSearchFiltersSchema } from "$lib/components/filters/filters";
+	import AgeQuickFilter from "./AgeQuickFilter.svelte";
+	import PositionQuickFilter from "./PositionQuickFilter.svelte";
 
 	let {
-		open = $bindable(),
+		openFilters = $bindable(),
 		filters = $bindable(),
-		onRefreshGrid,
+		onUpdateFilters,
 	}: {
-		open: {
+		openFilters: {
 			all: boolean;
 			age: boolean;
 			position: boolean;
 		};
-		filters: {
-			age: number[];
-			ageEnabled: boolean;
-			position: number[] | null;
-			positionEnabled: boolean;
-		};
-		onRefreshGrid: () => void;
+		filters: z.infer<typeof gridSearchFiltersSchema>;
+		onUpdateFilters: () => void;
 	} = $props();
 
-	let booleanFilters = $state({
-		isFavorite: false,
-		isOnline: false,
-		isRightNow: false,
-		isFresh: false,
-	});
-
-	onMount(() => {
-		getPreferences().then(({ gridSearchFilters = defaultFilters }) => {
-			booleanFilters = {
-				isFavorite: gridSearchFilters.isFavorite,
-				isOnline: gridSearchFilters.isOnline,
-				isRightNow: gridSearchFilters.isRightNow,
-				isFresh: gridSearchFilters.isFresh || false,
-			};
-			filters = {
-				age: gridSearchFilters.age,
-				ageEnabled: gridSearchFilters.ageEnabled,
-				position: gridSearchFilters.positions,
-				positionEnabled: gridSearchFilters.positionEnabled,
-			};
-		});
-	});
-
-	const booleanFiltersValue = $derived(
-		Object.entries(booleanFilters)
-			.filter(([_, v]) => v)
-			.map(([k, _]) => k),
-	);
+	const booleanFiltersKeys = [
+		"isFavorite",
+		"isOnline",
+		"isRightNow",
+		"isFresh",
+	] as const;
 </script>
 
-<Button variant="secondary" onclick={() => (open.all = true)}>
+<Button variant="secondary" onclick={() => (openFilters.all = true)}>
 	<SlidersHorizontalIcon />
 </Button>
 <Button
 	variant="secondary"
-	onclick={() => (open.age = true)}
+	onclick={() => (openFilters.age = true)}
 	class={{
 		"bg-white hover:bg-neutral-200 text-popover": filters.ageEnabled,
 	}}
@@ -74,7 +43,7 @@
 </Button>
 <Button
 	variant="secondary"
-	onclick={() => (open.position = true)}
+	onclick={() => (openFilters.position = true)}
 	class={{
 		"bg-white hover:bg-neutral-200 text-popover": filters.positionEnabled,
 	}}
@@ -85,30 +54,12 @@
 	type="multiple"
 	variant="default"
 	bind:value={
-		() => booleanFiltersValue,
+		() => booleanFiltersKeys.filter((value) => filters[value]),
 		(values) => {
-			async function updateFilters() {
-				const oldBooleanFilters = booleanFilters;
-				booleanFilters = {
-					...oldBooleanFilters,
-					isFavorite: values.includes("isFavorite"),
-					isOnline: values.includes("isOnline"),
-					isRightNow: values.includes("isRightNow"),
-					isFresh: values.includes("isFresh"),
-				};
-				try {
-					const { gridSearchFilters: oldFilters = defaultFilters } =
-						await getPreferences();
-					await setPreferences({
-						gridSearchFilters: { ...oldFilters, ...booleanFilters },
-					});
-					onRefreshGrid();
-				} catch (e) {
-					toast.error("Failed to update filters");
-					booleanFilters = oldBooleanFilters;
-				}
-			}
-			updateFilters();
+			booleanFiltersKeys.forEach((key) => {
+				filters[key] = values.includes(key);
+			});
+			onUpdateFilters();
 		}
 	}
 	size="sm"
@@ -133,3 +84,16 @@
 		Fresh
 	</ToggleGroup.Item>
 </ToggleGroup.Root>
+
+<AgeQuickFilter
+	bind:open={openFilters.age}
+	bind:enabled={filters.ageEnabled}
+	bind:value={filters.age}
+	{onUpdateFilters}
+/>
+<PositionQuickFilter
+	bind:open={openFilters.position}
+	bind:enabled={filters.positionEnabled}
+	bind:value={filters.positions}
+	{onUpdateFilters}
+/>

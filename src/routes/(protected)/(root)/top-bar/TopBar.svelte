@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { onMount, untrack } from "svelte";
+	import toast from "svelte-french-toast";
+	import { onMount, tick, untrack } from "svelte";
 	import { Tween } from "svelte/motion";
 	import { expoOut } from "svelte/easing";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
-	import AgeQuickFilter from "./AgeQuickFilter.svelte";
+	import { defaultFilters } from "$lib/components/filters/filters";
+	import {
+		getPreferences,
+		setPreferences,
+	} from "$lib/app-data/preferences.svelte";
 	import QuickFilters from "./QuickFilters.svelte";
 	import LocationChange from "../LocationChange.svelte";
 	import Filters from "../GridFilters.svelte";
-	import {
-		defaultFilters,
-		filterPositionSchema,
-	} from "$lib/components/filters/filters";
-	import PositionQuickFilter from "./PositionQuickFilter.svelte";
-	import type z from "zod";
+	import isEqual from "lodash-es/isEqual";
 
 	let {
 		onUpdatePreferences,
@@ -24,15 +24,9 @@
 
 	let expanded = $state(false);
 	let expansion = new Tween(0, { duration: 600, easing: expoOut });
-	let openFilters = $state({
-		all: false,
-		age: false,
-		position: false,
-	});
 
 	let from: HTMLDivElement;
 	let to: HTMLDivElement;
-
 	let fromPos = $state({ left: 0, top: 0 });
 	let toPos = $state({ left: 0, top: 0 });
 
@@ -61,21 +55,41 @@
 		lastScrollY = window.scrollY;
 	});
 
-	let filters: {
-		age: number[];
-		ageEnabled: boolean;
-		position: z.infer<typeof filterPositionSchema>;
-		positionEnabled: boolean;
-	} = $state({
-		age: defaultFilters.age,
-		ageEnabled: defaultFilters.ageEnabled,
-		position: defaultFilters.positions,
-		positionEnabled: defaultFilters.positionEnabled,
+	let openFilters = $state({
+		all: false,
+		age: false,
+		position: false,
 	});
+
+	let filters = $state(defaultFilters);
+
+	onMount(() => {
+		getPreferences().then(
+			({ gridSearchFilters: preferredFilters = defaultFilters }) => {
+				filters = preferredFilters;
+			},
+		);
+	});
+
+	async function onUpdateFilters() {
+		try {
+			// await tick();
+			const { gridSearchFilters: oldFilters = defaultFilters } =
+				await getPreferences();
+			if (!isEqual(oldFilters, filters)) {
+				await setPreferences({
+					gridSearchFilters: filters,
+				});
+				onRefreshGrid();
+			}
+		} catch (e) {
+			toast.error("Failed to update filters");
+		}
+	}
 </script>
 
 <svelte:window
-	onscroll={(e) => {
+	onscroll={() => {
 		expanded = window.scrollY - lastScrollY < 0;
 		expansion.target = expanded ? 1 : 0;
 		fromPos = from.getBoundingClientRect();
@@ -121,20 +135,8 @@
 		>
 			<LocationChange expansion={0} onUpdate={onUpdatePreferences} />
 		</div>
-		<QuickFilters {onRefreshGrid} bind:open={openFilters} bind:filters />
+		<QuickFilters bind:openFilters bind:filters {onUpdateFilters} />
 	</div>
 </ProgressiveBlur>
 <div class="h-20"></div>
-<Filters onUpdate={onRefreshGrid} bind:open={openFilters.all} />
-<AgeQuickFilter
-	bind:open={openFilters.age}
-	bind:enabled={filters.ageEnabled}
-	bind:value={filters.age}
-	{onRefreshGrid}
-/>
-<PositionQuickFilter
-	bind:open={openFilters.position}
-	bind:enabled={filters.positionEnabled}
-	bind:value={filters.position}
-	{onRefreshGrid}
-/>
+<Filters bind:filters bind:open={openFilters.all} {onUpdateFilters} />

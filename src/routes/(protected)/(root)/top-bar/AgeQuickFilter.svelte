@@ -1,8 +1,4 @@
 <script lang="ts">
-	import {
-		getPreferences,
-		setPreferences,
-	} from "$lib/app-data/preferences.svelte";
 	import AgeFilterSlider from "$lib/components/filters/age/AgeFilterSlider.svelte";
 	import { defaultFilters } from "$lib/components/filters/filters";
 	import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -13,12 +9,12 @@
 		open = $bindable(),
 		enabled = $bindable(),
 		value = $bindable(),
-		onRefreshGrid,
+		onUpdateFilters,
 	}: {
 		open: boolean;
 		enabled: boolean;
 		value: number[];
-		onRefreshGrid: () => void;
+		onUpdateFilters: () => void;
 	} = $props();
 
 	let filtersChanges: { age: number[]; ageEnabled: boolean } = $state({
@@ -74,24 +70,10 @@
 		<Drawer.Footer>
 			<Drawer.Close
 				class={buttonVariants({ variant: "default" })}
-				onclick={async () => {
-					if (
-						value !== filtersChanges.age ||
-						enabled !== filtersChanges.ageEnabled
-					) {
-						value = filtersChanges.age;
-						enabled = filtersChanges.ageEnabled;
-						const { gridSearchFilters: oldGridSearchFilters = defaultFilters } =
-							await getPreferences();
-						await setPreferences({
-							gridSearchFilters: {
-								...oldGridSearchFilters,
-								age: filtersChanges.age,
-								ageEnabled: filtersChanges.ageEnabled,
-							},
-						});
-						onRefreshGrid();
-					}
+				onclick={() => {
+					value = filtersChanges.age;
+					enabled = filtersChanges.ageEnabled;
+					onUpdateFilters();
 					open = false;
 				}}
 			>
