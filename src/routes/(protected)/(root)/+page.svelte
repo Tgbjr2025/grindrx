@@ -2,7 +2,7 @@
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import LocationChooser from "./LocationEmpty.svelte";
 	import Grid from "./Grid.svelte";
-	import TopBar from "./TopBar.svelte";
+	import TopBar from "./top-bar/TopBar.svelte";
 
 	let preferences = $state(getPreferences());
 	let grid: Grid | undefined = $state();

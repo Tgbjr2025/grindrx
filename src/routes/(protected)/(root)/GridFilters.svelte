@@ -7,10 +7,10 @@
 	import FilterBoolean from "$lib/components/filters/FilterBoolean.svelte";
 	import {
 		defaultFilters,
-		type gridSearchFiltersSchema,
+		gridSearchFiltersSchema,
 	} from "$lib/components/filters/filters";
 
-	import AgeFilter from "$lib/components/filters/AgeFilter.svelte";
+	import AgeFilter from "$lib/components/filters/age/AgeFilterField.svelte";
 	import GendersFilter from "$lib/components/filters/GendersFilter.svelte";
 	import PositionFilter from "$lib/components/filters/PositionFilter.svelte";
 	import PhotosFilter from "$lib/components/filters/PhotosFilter.svelte";
