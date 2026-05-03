@@ -1,18 +1,13 @@
 <script lang="ts">
+	import { ArrowLeftIcon, UserIcon } from "phosphor-svelte";
 	import { page } from "$app/state";
 	import * as Card from "$lib/components/ui/card";
 	import * as Avatar from "$lib/components/ui/avatar";
-	import { getConversationMessages } from "$lib/api/conversation";
-	import {
-		getConversation,
-		getStackedMessages,
-		groupMessagesByDate,
-	} from "./messages";
-	import MessagesList from "./MessagesList.svelte";
-	import MessageComposer from "./MessageComposer.svelte";
-	import { ArrowLeftIcon, UserIcon } from "phosphor-svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
+	import { getConversation } from "./messages";
+	import MessagesList from "./MessagesList.svelte";
+	import MessageComposer from "./MessageComposer.svelte";
 
 	let { data }: import("./$types").PageProps = $props();
 

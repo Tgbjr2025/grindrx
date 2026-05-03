@@ -1,3 +1,5 @@
+import { albumExpirationSchema, albumPreviewSchema } from "$lib/model/album";
+import { mediaHashPrivateSchema } from "$lib/model/media";
 import { unixTimestampMsSchema } from "$lib/model/types";
 import z from "zod";
 
@@ -28,6 +30,52 @@ export const textMessageSchema = messageBaseSchema.safeExtend({
 	}),
 });
 
-export const messageSchema = z.discriminatedUnion("type", [textMessageSchema]);
+export const albumMessageSchema = messageBaseSchema.safeExtend({
+	type: z.enum(["Album", "ExpiringAlbum", "ExpiringAlbumV2"]),
+	body: z.object({
+		...albumPreviewSchema.shape,
+		...albumExpirationSchema.shape,
+		coverUrl: mediaHashPrivateSchema,
+		ownerProfileId: z.number().int().nonnegative().nullable(),
+		isViewable: z.boolean(),
+		hasVideo: z.boolean(),
+		hasPhoto: z.boolean(),
+		viewableUntil: unixTimestampMsSchema.nullable(),
+	}),
+});
+
+const imageBaseMessageSchema = messageBaseSchema.safeExtend({
+	body: z.object({
+		mediaId: z.number().int().nonnegative(),
+		url: z.url(),
+		width: z.number().int().nonnegative().nullable(),
+		height: z.number().int().nonnegative().nullable(),
+		imageHash: mediaHashPrivateSchema,
+	}),
+});
+
+export const imageMessageSchema = imageBaseMessageSchema.safeExtend({
+	type: z.literal("Image"),
+	body: z.object({
+		...imageBaseMessageSchema.shape.body.shape,
+		takenOnGrindr: z.boolean(),
+		createdAt: unixTimestampMsSchema.nullable(),
+	}),
+});
+
+export const expiringImageMessageSchema = imageBaseMessageSchema.safeExtend({
+	type: z.literal("ExpiringImage"),
+	body: z.object({
+		...imageBaseMessageSchema.shape.body.shape,
+		viewsRemaining: z.number().int().nonnegative().nullable(),
+	}),
+});
+
+export const messageSchema = z.discriminatedUnion("type", [
+	textMessageSchema,
+	albumMessageSchema,
+	imageMessageSchema,
+	expiringImageMessageSchema,
+]);
 
 export type Message = z.infer<typeof messageSchema>;

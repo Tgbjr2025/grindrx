@@ -30,7 +30,7 @@ export function getStackedMessages<T extends Message>({
 					...msg,
 					indexInStack: arr.length - 1 - i,
 					stackLength: arr.length,
-				})),
+				})) as (T & StackedMessage)[],
 			);
 			stack = undefined;
 		}

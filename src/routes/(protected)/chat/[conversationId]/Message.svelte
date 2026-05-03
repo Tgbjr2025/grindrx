@@ -75,6 +75,30 @@
 			{/if}
 			<span class="whitespace-pre-wrap">{message.body.text}</span>
 		</div>
+	{:else if message.type === "Image" || message.type === "ExpiringImage"}
+		<div class="w-2/5 max-w-60 ms-3">
+			<img
+				src={message.body.url}
+				alt=""
+				class={[
+					"w-full rounded-lg bg-card-foreground/10 object-cover min-w-35 max-w-80",
+					{
+						"rounded-es-[6px]": lastInStack && !msgOut,
+						"rounded-ee-[6px]": lastInStack && msgOut,
+					},
+				]}
+				style:aspect-ratio={message.body.width !== null &&
+				message.body.height !== null
+					? `${message.body.width} / ${message.body.height}`
+					: undefined}
+			/>
+		</div>
+	{:else}
+		<div
+			class="bg-card text-muted-foreground/30 w-full rounded-lg p-2 max-w-full text-center text-sm"
+		>
+			Unsupported message type: {message.type}
+		</div>
 	{/if}
 	{#if lastInStack}
 		<span
