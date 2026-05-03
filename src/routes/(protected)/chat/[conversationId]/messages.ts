@@ -1,3 +1,4 @@
+import { getConversationMessages } from "$lib/api/conversation";
 import type { Message } from "$lib/model/message";
 
 type StackedMessage = Message & {
@@ -76,4 +77,26 @@ export function groupMessagesByDate<T extends Message>({
 		return message;
 	});
 	return groupedMessages.toReversed();
+}
+
+export async function getConversation({
+	conversationId,
+	ourProfileId,
+}: {
+	conversationId: string;
+	ourProfileId: number;
+}) {
+	return await getConversationMessages(conversationId).then((res) => {
+		const stackedMessages = getStackedMessages({
+			messages: res.messages,
+			ourProfileId,
+		});
+		const groupedMessages = groupMessagesByDate({
+			messages: stackedMessages,
+		});
+		return {
+			...res,
+			messages: groupedMessages,
+		};
+	});
 }

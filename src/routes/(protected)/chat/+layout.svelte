@@ -53,13 +53,11 @@
 		<Resizable.Pane
 			defaultSize={57}
 			minSize={pageContentMinWidthPercentage * 100}
-			// class="min-w-68.75"
 		>
 			<div class="flex-1 self-stretch p-4 ps-1 pb-18 h-full">
-				<!-- min-w-68.75 -->
 				<Card.Root
 					class={[
-						"h-full rounded-2xl p-0",
+						"h-full rounded-2xl p-0 gap-0 relative dark:ring-neutral-800",
 						{
 							"bg-card/20 ring-0": !isChatSelected,
 						},
@@ -71,7 +69,7 @@
 		</Resizable.Pane>
 	</Resizable.PaneGroup>
 	{#if isChatSelected}
-		<div class="flex-1 self-stretch h-full flex xs:hidden">
+		<div class="flex-1 self-stretch h-full flex xs:hidden flex-col max-w-full">
 			{@render children?.()}
 		</div>
 	{:else}

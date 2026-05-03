@@ -24,7 +24,8 @@ export async function getConversations(page: number = 1) {
 
 export async function getConversationMessages(conversationId: string) {
 	const messages = await fetchRest(
-		`/v5/chat/conversation/${conversationId}/message`,
+		`/v5/chat/conversation/${conversationId}/message?` +
+			new URLSearchParams({ profile: "true" }),
 		{
 			method: "GET",
 		},
@@ -33,7 +34,15 @@ export async function getConversationMessages(conversationId: string) {
 		.then((res) =>
 			z
 				.object({
-					messages: z.array(messageSchema)
+					messages: z.array(messageSchema),
+					profile: z.object({
+						distance: z.number().nullable(),
+						mediaHash: z.string().nullable(),
+						name: z.string().nullable(),
+						onlineUntil: z.number().nullable(),
+						profileId: z.number().int(),
+						showDistance: z.boolean(),
+					}),
 				})
 				.parse(res),
 		);
