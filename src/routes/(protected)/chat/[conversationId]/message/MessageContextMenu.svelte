@@ -18,51 +18,61 @@
 </script>
 
 <ContextMenu {...props}>
-	{#if reactionAvailable}
-		<span class="block w-40 -mt-7 mb-2 text-center text-muted-foreground/70">
-			Double tap to <img
-				src={fireEmoji}
-				alt="Fire Emoji"
-				width="16"
-				height="16"
-				class="inline align-middle"
-			/>
-		</span>
-	{/if}
-	<div class="buttons w-40">
-		{#if textContent !== undefined}
+	{#snippet children(placement)}
+		{#if reactionAvailable}
+			<span
+				class={[
+					"block w-40 mb-2 text-center text-muted-foreground/70",
+					{
+						"-mt-7": !placement.startsWith("bottom"),
+						"mt-1": placement.startsWith("bottom"),
+					},
+				]}
+			>
+				Double tap to <img
+					src={fireEmoji}
+					alt="Fire Emoji"
+					width="16"
+					height="16"
+					class="inline align-middle"
+				/>
+			</span>
+		{/if}
+		<div class="buttons w-40">
+			{#if textContent !== undefined}
+				<Button
+					variant="ghost"
+					onclick={() => {
+						writeText(textContent).then(() => {
+							toast.success("Message copied to clipboard");
+							props.onClose();
+						});
+					}}
+				>
+					<CopyIcon /> Copy message
+				</Button>
+			{/if}
 			<Button
 				variant="ghost"
 				onclick={() => {
-					writeText(textContent).then(() => {
-						toast.success("Message copied to clipboard");
-						props.onClose();
-					});
+					toast.error("TODO: Delete message not implemented yet");
+					props.onClose();
 				}}
 			>
-				<CopyIcon /> Copy message
+				<TrashIcon />
+				Delete for me
 			</Button>
-		{/if}
-		<Button
-			variant="ghost"
-			onclick={() => {
-				toast.error("TODO: Delete message not implemented yet");
-				props.onClose();
-			}}
-		>
-			<TrashIcon />
-			Delete for me
-		</Button>
-		<Button
-			variant="ghost"
-			onclick={() => {
-				toast.error("TODO: Report message not implemented yet");
-				props.onClose();
-			}}
-		>
-			<FlagIcon /> Report
-		</Button>
-	</div>
+			<Button
+				variant="ghost"
+				onclick={() => {
+					toast.error("TODO: Report message not implemented yet");
+					props.onClose();
+				}}
+			>
+				<FlagIcon /> Report
+			</Button>
+		</div>
+	{/snippet}
 </ContextMenu>
 
 <style lang="postcss">

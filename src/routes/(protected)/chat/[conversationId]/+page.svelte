@@ -15,17 +15,16 @@
 
 	const ourProfileId = $derived(data.profileId);
 
+	if (page.params.conversationId === undefined)
+		throw new Error("conversationId is required");
+
+	const conversationId = $derived(page.params.conversationId);
+
 	async function fetchConversation() {
-		if (page.params.conversationId === undefined) {
-			throw new Error("conversationId is required");
-		}
 		return getConversation({
-			conversationId: page.params.conversationId,
-			ourProfileId,
+			conversationId,
 		});
 	}
-
-	let conversation = $derived(fetchConversation());
 
 	async function onSend({ text }: { text: string }) {
 		const {
@@ -43,6 +42,8 @@
 		});
 		conversation = fetchConversation(); // TODO: websockets
 	}
+
+	let conversation = $derived(fetchConversation());
 </script>
 
 <ProgressiveBlur
@@ -117,6 +118,6 @@
 	{/await}
 </ProgressiveBlur>
 <Card.Content class="flex flex-col flex-1 pb-2 px-0 max-h-full min-h-0">
-	<MessagesList {ourProfileId} {conversation} />
+	<MessagesList {ourProfileId} {conversationId} {conversation} />
 	<MessageComposer {onSend} />
 </Card.Content>

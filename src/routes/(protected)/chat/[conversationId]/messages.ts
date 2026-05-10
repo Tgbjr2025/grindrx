@@ -79,24 +79,31 @@ export function groupMessagesByDate<T extends ApiResponseMessage>({
 	return groupedMessages.toReversed();
 }
 
-export async function getConversation({
-	conversationId,
+export function processMessages<T extends ApiResponseMessage>({
+	messages,
 	ourProfileId,
 }: {
-	conversationId: string;
+	messages: T[];
 	ourProfileId: number;
 }) {
-	return await getConversationMessages(conversationId).then((res) => {
-		const stackedMessages = getStackedMessages({
-			messages: res.messages,
-			ourProfileId,
-		});
-		const groupedMessages = groupMessagesByDate({
-			messages: stackedMessages,
-		});
-		return {
-			...res,
-			messages: groupedMessages,
-		};
+	return groupMessagesByDate({
+		messages: getStackedMessages({ messages, ourProfileId }),
 	});
+}
+
+export async function getConversation({
+	conversationId,
+	pageKey,
+}: {
+	conversationId: string;
+	pageKey?: string;
+}) {
+	return await getConversationMessages({ conversationId, pageKey }).then(
+		(res) => {
+			return {
+				...res,
+				pageKey: res.messages.at(-1)?.messageId ?? null,
+			};
+		},
+	);
 }

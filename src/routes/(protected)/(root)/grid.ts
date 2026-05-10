@@ -1,55 +1,5 @@
-import z from "zod";
-import { fetchRest } from "$lib/api";
-import { urlSearchParamsCodec } from "$lib/utils";
-import { searchProfileSchema, searchQuerySchema } from "$lib/model/grid/search";
-import {
-	cascadeV3QuerySchema,
-	cascadeV3ResponseItemSchema,
-} from "$lib/model/grid/cascade";
-import { profileRightNowSchema, profileShortSchema } from "$lib/model/profile";
-
-export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
-	return await fetchRest(
-		"/v7/search?" +
-			new URLSearchParams(
-				urlSearchParamsCodec(searchQuerySchema).encode(query),
-			),
-	)
-		.then((res) => res.json())
-		.then((data) =>
-			z
-				.object({
-					profiles: z.array(searchProfileSchema),
-				})
-				.parse(data),
-		);
-}
-
-/**
- * Main endpoint used in the source apk. /v4/cascade is currently feature-flagged, /v7/search is only for profile tags
- */
-export async function getV3Cascade(
-	query: z.infer<typeof cascadeV3QuerySchema>,
-) {
-	return await fetchRest(
-		"/v3/cascade?" +
-			new URLSearchParams(
-				urlSearchParamsCodec(cascadeV3QuerySchema).encode(query),
-			),
-	)
-		.then((res) => res.json())
-		.then((data) =>
-			z
-				.object({
-					items: z.array(cascadeV3ResponseItemSchema),
-					nextPage: z.number().int().nonnegative().nullable(),
-					shuffled: z.boolean(),
-					hiddenProfiles: z.unknown(),
-					hiddenProfileInfo: z.unknown(),
-				})
-				.parse(data),
-		);
-}
+import { getCascadeV3 } from "$lib/api/grid";
+import { getProfiles } from "$lib/api/profile";
 
 export type FullGridProfile = {
 	type: "full";
@@ -68,48 +18,8 @@ export type PartialGridProfile = {
 
 export type GridProfile = FullGridProfile | PartialGridProfile;
 
-export const profileCache = new Map<number, FullGridProfile>();
-
-export async function resolvePartialBatch(
-	profileIds: number[],
-): Promise<FullGridProfile[]> {
-	if (profileIds.length === 0) return [];
-	return await fetchRest("/v3/profiles", {
-		method: "POST",
-		body: {
-			targetProfileIds: profileIds,
-		},
-	})
-		.then((res) => res.json())
-		.then((data) =>
-			z
-				.object({
-					profiles: z.array(
-						z.object({
-							...profileShortSchema.shape,
-							...profileRightNowSchema.shape,
-						}),
-					),
-				})
-				.parse(data)
-				.profiles.filter(({ profileId }) => profileIds.includes(profileId))
-				.sort(
-					(a, b) =>
-						profileIds.indexOf(a.profileId) - profileIds.indexOf(b.profileId),
-				)
-				.map((profile) => ({
-					type: "full" as const,
-					id: profile.profileId,
-					displayName: profile.displayName ?? null,
-					distance: profile.distance ?? null,
-					profilePhotosHashes: profile.medias?.map((m) => m.mediaHash) ?? null,
-					unread: null,
-				})),
-		);
-}
-
-export async function getGrid(query: Parameters<typeof getV3Cascade>[0]) {
-	const response = await getV3Cascade(query);
+export async function getGrid(query: Parameters<typeof getCascadeV3>[0]) {
+	const response = await getCascadeV3(query);
 	const items: GridProfile[] = [];
 	const partialBatches: { batch: { profileId: number }[] }[] = [];
 	let currentBatch: { profileId: number }[] = [];
@@ -149,4 +59,26 @@ export async function getGrid(query: Parameters<typeof getV3Cascade>[0]) {
 		nextPage: response.nextPage,
 		shuffled: response.shuffled,
 	};
+}
+
+export const profileCache = new Map<number, FullGridProfile>();
+
+export async function resolvePartialBatch(
+	profileIds: number[],
+): Promise<FullGridProfile[]> {
+	const profiles = await getProfiles(profileIds);
+	return profiles
+		.filter(({ profileId }) => profileIds.includes(profileId))
+		.sort(
+			(a, b) =>
+				profileIds.indexOf(a.profileId) - profileIds.indexOf(b.profileId),
+		)
+		.map((profile) => ({
+			type: "full" as const,
+			id: profile.profileId,
+			displayName: profile.displayName ?? null,
+			distance: profile.distance ?? null,
+			profilePhotosHashes: profile.medias?.map((m) => m.mediaHash) ?? null,
+			unread: null,
+		}));
 }

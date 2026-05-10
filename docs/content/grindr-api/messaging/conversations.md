@@ -37,7 +37,7 @@ String with two long integers separated by `:`, e.g. `"12345678:23456789"`. Long
     - `albumContentId` — unknown, appears to be `null`
     - `albumContentReply` — unknown, appears to be `null`
     - `duration` — unknown, appears to be `null`
-    - `imageHash` — unknown, appears to be `null`
+    - `imageHash` — public media hash or `null`
     - `photoContentReply` — unknown, appears to be `null`
   - `muted` — boolean
   - `pinned` — boolean
@@ -116,7 +116,7 @@ Response (array):
     - `albumContentId` — unknown, appears to be `null`
     - `albumContentReply` — unknown, appears to be `null`
     - `duration` — unknown, appears to be `null`
-    - `imageHash` — unknown, appears to be `null`
+    - `imageHash` — public media hash or `null`
     - `photoContentReply` — unknown, appears to be `null`
   - `muted` — boolean
   - `pinned` — boolean

@@ -26,7 +26,7 @@ export const AlbumExpiration = {
 	ONE_DAY: 4,
 } as const;
 
-export const albumExpirationTypeSchema = z.enum(AlbumExpiration);
+export const albumExpirationTypeSchema = z.enum(Object.keys(AlbumExpiration));
 
 export type AlbumExpirationType = z.infer<typeof albumExpirationTypeSchema>;
 

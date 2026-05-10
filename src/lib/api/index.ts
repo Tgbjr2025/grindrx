@@ -96,10 +96,10 @@ export async function fetchRest(
 			json() {
 				return JSON.parse(this.text());
 			},
-			jsonParsed<TSchema extends z.ZodType>(parserOptions: TSchema) {
+			jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
 				const data = this.json();
 				return parseApiResponse({
-					schema: parserOptions,
+					schema,
 					data,
 					path,
 					method: options.method || "GET",

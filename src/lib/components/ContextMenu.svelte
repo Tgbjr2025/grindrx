@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { computePosition, flip, offset, shift } from "@floating-ui/dom";
+	import {
+		computePosition,
+		flip,
+		offset,
+		shift,
+		type Placement,
+	} from "@floating-ui/dom";
 
 	let {
 		contextMenuOpen,
@@ -12,22 +18,32 @@
 		style: string;
 		onClose: () => void;
 		content: import("svelte").Snippet<[boolean]>;
-		children?: import("svelte").Snippet;
+		children?: import("svelte").Snippet<[Placement]>;
 	} = $props();
 
 	let contextMenuDialog: HTMLDialogElement | null = $state(null);
 	let contextMenuTrigger: HTMLDivElement | null = $state(null);
 	let contextMenuList: HTMLDivElement | null = $state(null);
-	let contextMenuListPosition = $state({ x: 0, y: 0 });
+	let contextMenuListPosition: {
+		x: number;
+		y: number;
+		placement: Placement;
+	} = $state({ x: 0, y: 0, placement: "right-start" });
 
 	$effect(() => {
 		if (!contextMenuTrigger || !contextMenuList) return;
 		computePosition(contextMenuTrigger, contextMenuList, {
 			placement: "right-start",
-			middleware: [offset(8), flip(), shift()],
+			middleware: [
+				offset(8),
+				flip({
+					fallbackPlacements: ["left-start", "bottom-end"],
+				}),
+				shift(),
+			],
 			strategy: "fixed",
-		}).then(({ x, y }) => {
-			contextMenuListPosition = { x, y };
+		}).then(({ x, y, placement }) => {
+			contextMenuListPosition = { x, y, placement };
 		});
 	});
 
@@ -77,6 +93,6 @@
 		style:left="{contextMenuListPosition.x}px"
 		style:top="{contextMenuListPosition.y}px"
 	>
-		{@render children?.()}
+		{@render children?.(contextMenuListPosition.placement)}
 	</div>
 </dialog>

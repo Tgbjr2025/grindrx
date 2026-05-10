@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { tick } from "svelte";
 	import type { ApiResponseMessage } from "$lib/model/message";
-	import { reactToMessage } from "$lib/api/messages";
 	import AlbumMessage from "./AlbumMessage.svelte";
 	import ImageMessage from "./ImageMessage.svelte";
 	import TextMessage from "./TextMessage.svelte";
@@ -12,6 +11,8 @@
 	import { setMessageContext } from "./context";
 	import MessageContextMenu from "./MessageContextMenu.svelte";
 	import Reaction from "./Reaction.svelte";
+	import { expoOut } from "svelte/easing";
+	import { scale } from "svelte/transition";
 
 	let {
 		message,
@@ -19,12 +20,14 @@
 		indexInStack,
 		stackLength,
 		dayStart,
+		onReact,
 	}: {
 		message: ApiResponseMessage;
 		ourProfileId: number;
 		indexInStack: number;
 		stackLength: number;
 		dayStart?: number;
+		onReact?: (reactionId: number) => void;
 	} = $props();
 
 	const msgOut = $derived(message.senderId === ourProfileId);
@@ -100,24 +103,27 @@
 	}
 
 	let contextMenu: HTMLDialogElement | null = $state(null);
-
-	async function onReact(reactionId: number) {
-		await reactToMessage({
-			conversationId: message.conversationId,
-			messageId: message.messageId,
-			reactionId,
-		});
-	}
 </script>
 
 {#snippet adornments()}
-	<div class="absolute top-0 right-0 -translate-y-1/2 translate-x-1/2 z-5">
+	<div
+		class={[
+			"absolute top-0 -translate-y-1/2 z-5",
+			{
+				"translate-x-1/2 right-0": !msgOut,
+				"-translate-x-1/2 left-0": msgOut,
+			},
+		]}
+	>
 		{#if message.reactions.length > 0}
 			{@const reactionMap = message.reactions.reduce(
 				(m, r) => m.set(r.reactionType, (m.get(r.reactionType) ?? 0) + 1),
 				new Map<number, number>(),
 			)}
-			<div class="flex items-center gap-0.5 mt-1 mr-1">
+			<div
+				class="flex items-center gap-0.5 mt-1 mr-1"
+				transition:scale={{ duration: 150, easing: expoOut }}
+			>
 				{#each reactionMap.entries() as [type, count]}
 					<Reaction type={Number(type)} {count} />
 				{/each}
@@ -152,13 +158,19 @@
 		<MessageDateGroup {dayStart} />
 	{/if}
 	<div
-		class={["message-container", { "*:me-auto": !msgOut, "*:ms-auto": msgOut }]}
+		class={{
+			"*:me-auto *:float-start pe-3": !msgOut,
+			"*:ms-auto *:float-end ps-3": msgOut,
+		}}
 		role="button"
 		tabindex="0"
 		aria-label="Message"
 		ondblclick={(e) => {
-			e.preventDefault();
-			onReact(1);
+			if (!msgOut && onReact) {
+				e.preventDefault();
+				onReact(1);
+			}
+			window.getSelection()?.removeAllRanges();
 		}}
 		onkeydown={(e) => {
 			if (e.key === "Enter" || e.key === " ") {

@@ -264,18 +264,3 @@ export const cascadeV4ResponseItemSchema = z.discriminatedUnion("type", [
 	cascadeV4ResponseXtraMpuV1Schema,
 ]);
 
-export const cascadeV3ResponseSchema = z.object({
-	items: z.array(cascadeV3ResponseItemSchema),
-	nextPage: z.number().int().nonnegative(),
-	shuffled: z.boolean(),
-	hiddenProfiles: z.unknown(),
-	hiddenProfileInfo: z.unknown(),
-});
-
-export const cascadeV4ResponseSchema = z.object({
-	items: z.array(cascadeV4ResponseItemSchema),
-	nextPage: z.number().int().nonnegative(),
-	shuffled: z.boolean(),
-	hiddenProfiles: z.unknown(),
-	hiddenProfileInfo: z.unknown(),
-});

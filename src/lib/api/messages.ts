@@ -14,13 +14,18 @@ const conversationMessagesSchema = z.object({
 	}),
 });
 
-export async function getConversationMessages(conversationId: string) {
+export async function getConversationMessages({
+	conversationId,
+	pageKey,
+}: {
+	conversationId: string;
+	pageKey?: string;
+}) {
+	const params = new URLSearchParams({ profile: "true" });
+	if (pageKey !== undefined) params.set("pageKey", pageKey);
 	const messages = await fetchRest(
-		`/v5/chat/conversation/${conversationId}/message?` +
-			new URLSearchParams({ profile: "true" }),
-		{
-			method: "GET",
-		},
+		`/v5/chat/conversation/${conversationId}/message?` + params,
+		{ method: "GET" },
 	).then((res) => res.jsonParsed(conversationMessagesSchema));
 	return messages;
 }
@@ -48,18 +53,18 @@ export async function sendMessage({
 export async function reactToMessage({
 	conversationId,
 	messageId,
-	reactionId,
+	reactionType,
 }: {
 	conversationId: string;
 	messageId: string;
-	reactionId: number;
+	reactionType: number;
 }) {
 	return await fetchRest("/v4/chat/message/reaction", {
 		method: "POST",
 		body: {
 			conversationId,
 			messageId,
-			reactionType: reactionId,
+			reactionType,
 		},
 	});
 }

@@ -1,5 +1,8 @@
 import { albumExpirationSchema, albumPreviewSchema } from "$lib/model/album";
-import { mediaHashPrivateSchema } from "$lib/model/media";
+import {
+	mediaHashPrivateSchema,
+	mediaHashPublicSchema,
+} from "$lib/model/media";
 import { unixTimestampMsSchema } from "$lib/model/types";
 import z from "zod";
 
@@ -26,17 +29,8 @@ export const apiResponseMessageOverlaySchema = z.object({
 	// replyPreview: z.unknown().nullable(),
 });
 
-export const textMessageSchema = messageBaseSchema.safeExtend({
-	type: z.literal("Text"),
-	body: z.object({
-		text: z.string(),
-	}),
-});
-
-export type TextMessage = z.infer<typeof textMessageSchema>;
-
 export const albumMessageSchema = messageBaseSchema.safeExtend({
-	type: z.enum(["Album", "ExpiringAlbum", "ExpiringAlbumV2"]),
+	type: z.literal("Album"),
 	body: z.object({
 		...albumPreviewSchema.shape,
 		...albumExpirationSchema.shape,
@@ -50,6 +44,125 @@ export const albumMessageSchema = messageBaseSchema.safeExtend({
 });
 
 export type AlbumMessage = z.infer<typeof albumMessageSchema>;
+
+export const expiringAlbumMessageSchema = albumMessageSchema.extend({
+	type: z.literal("ExpiringAlbum"),
+	body: z.object({
+		...albumMessageSchema.shape.body.shape,
+	}),
+});
+
+export type ExpiringAlbumMessage = z.infer<typeof expiringAlbumMessageSchema>;
+
+export const expiringAlbumV2MessageSchema = albumMessageSchema.extend({
+	type: z.literal("ExpiringAlbumV2"),
+	body: z.object({
+		...albumMessageSchema.shape.body.shape,
+	}),
+});
+
+export type ExpiringAlbumV2Message = z.infer<
+	typeof expiringAlbumV2MessageSchema
+>;
+
+export const albumContentReactionMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("AlbumContentReaction"),
+	body: z.object({
+		albumId: z.number().int().nonnegative(),
+		ownerProfileId: z.number().int().nonnegative().nullable(),
+		albumContentId: z.number().int().nonnegative(),
+		previewUrl: z.url().nullable(),
+		expiresAt: unixTimestampMsSchema.nullable(),
+		viewable: z.boolean(),
+	}),
+});
+
+export type AlbumContentReactionMessage = z.infer<
+	typeof albumContentReactionMessageSchema
+>;
+
+export const albumContentReplyMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("AlbumContentReply"),
+	body: z.object({
+		...albumContentReactionMessageSchema.shape.body.shape,
+		albumContentReply: z.string(),
+		contentType: z.string().nullable(),
+	}),
+});
+
+export type AlbumContentReplyMessage = z.infer<
+	typeof albumContentReplyMessageSchema
+>;
+
+export const audioMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Audio"),
+	body: z.object({
+		mediaId: z.number().int().nonnegative(),
+		mediaHash: mediaHashPrivateSchema.nullable(),
+		url: z.url(),
+		contentType: z.string().nullable(),
+		length: z.number().int().nonnegative().nullable(),
+		expiresAt: unixTimestampMsSchema.nullable(),
+	}),
+});
+
+export type AudioMessage = z.infer<typeof audioMessageSchema>;
+
+export const videoMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Video"),
+	body: z.object({
+		mediaId: z.number().int().nonnegative().nullable(),
+		url: z.url().nullable(),
+		fileCacheKey: z.string(),
+		contentType: z.string().nullable(),
+		length: z.number().int().nonnegative(),
+		maxViews: z.number().int().nonnegative().nullable(),
+		looping: z.boolean().nullable(),
+		viewsRemaining: z.number().int().nonnegative().optional(),
+	}),
+});
+
+export type VideoMessage = z.infer<typeof videoMessageSchema>;
+
+export const nonExpiringVideoMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("NonExpiringVideo"),
+	body: z.unknown(),
+});
+
+export type NonExpiringVideoMessage = z.infer<
+	typeof nonExpiringVideoMessageSchema
+>;
+
+export const gaymojiMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Gaymoji"),
+	body: z.object({
+		imageHash: mediaHashPublicSchema,
+	}),
+});
+
+export type GaymojiMessage = z.infer<typeof gaymojiMessageSchema>;
+
+export const generativeMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Generative"),
+	body: z.unknown(),
+});
+
+export type GenerativeMessage = z.infer<typeof generativeMessageSchema>;
+
+export const giphyMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Giphy"),
+	body: z.object({
+		id: z.string(),
+		urlPath: z.url(),
+		stillPath: z.url(),
+		previewPath: z.string(),
+		width: z.number().int().nonnegative(),
+		height: z.number().int().nonnegative(),
+		imageHash: z.string(),
+	}),
+});
+
+export type GiphyMessage = z.infer<typeof giphyMessageSchema>;
 
 const imageBaseMessageSchema = messageBaseSchema.safeExtend({
 	body: z.object({
@@ -82,11 +195,99 @@ export const expiringImageMessageSchema = imageBaseMessageSchema.safeExtend({
 
 export type ExpiringImageMessage = z.infer<typeof expiringImageMessageSchema>;
 
+export const locationMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Location"),
+	body: z.object({
+		lat: z.number(),
+		lon: z.number(),
+	}),
+});
+
+export type LocationMessage = z.infer<typeof locationMessageSchema>;
+
+export const privateVideoMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("PrivateVideo"),
+	body: z.object({
+		...videoMessageSchema.shape.body.shape,
+		viewCount: z.number().int().nonnegative().nullable(),
+	}),
+});
+
+export type PrivateVideoMessage = z.infer<typeof privateVideoMessageSchema>;
+
+export const profileLinkMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("ProfileLink"),
+	body: z.unknown(),
+});
+
+export type ProfileLinkMessage = z.infer<typeof profileLinkMessageSchema>;
+
+export const profilePhotoReplyMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("ProfilePhotoReply"),
+	body: z.object({
+		imageHash: mediaHashPublicSchema,
+		photoContentReply: z.string(),
+	}),
+});
+
+export type ProfilePhotoReplyMessage = z.infer<
+	typeof profilePhotoReplyMessageSchema
+>;
+
+export const retractMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Retract"),
+	body: z.object({
+		targetMessageId: z.string(),
+	}),
+});
+
+export type RetractMessage = z.infer<typeof retractMessageSchema>;
+
+export const textMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Text"),
+	body: z.object({
+		text: z.string(),
+	}),
+});
+
+export type TextMessage = z.infer<typeof textMessageSchema>;
+
+export const unknownMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("Unknown"),
+	body: z.unknown(),
+});
+
+export type UnknownMessage = z.infer<typeof unknownMessageSchema>;
+
+export const videoCallMessageSchema = messageBaseSchema.safeExtend({
+	type: z.literal("VideoCall"),
+	body: z.unknown(),
+});
+
+export type VideoCallMessage = z.infer<typeof videoCallMessageSchema>;
+
 export const messageSchema = z.discriminatedUnion("type", [
-	textMessageSchema,
 	albumMessageSchema,
-	imageMessageSchema,
+	albumContentReactionMessageSchema,
+	albumContentReplyMessageSchema,
+	audioMessageSchema,
+	expiringAlbumMessageSchema,
+	expiringAlbumV2MessageSchema,
 	expiringImageMessageSchema,
+	gaymojiMessageSchema,
+	generativeMessageSchema,
+	giphyMessageSchema,
+	imageMessageSchema,
+	locationMessageSchema,
+	privateVideoMessageSchema,
+	profileLinkMessageSchema,
+	profilePhotoReplyMessageSchema,
+	retractMessageSchema,
+	textMessageSchema,
+	unknownMessageSchema,
+	nonExpiringVideoMessageSchema,
+	videoCallMessageSchema,
+	videoMessageSchema,
 ]);
 
 export const apiResponseMessageSchema = z.intersection(

@@ -1,6 +1,11 @@
 import z from "zod";
 import { fetchRest } from "$lib/api";
-import { profileSchema, type Profile } from "$lib/model/profile";
+import {
+	profileRightNowSchema,
+	profileSchema,
+	profileShortSchema,
+	type Profile,
+} from "$lib/model/profile";
 
 const profileResponseSchema = z.object({
 	profiles: z.array(profileSchema).length(1),
@@ -22,4 +27,25 @@ export async function getProfile(profileId: number) {
 	).profiles[0];
 	profilesCache.set(profileId, { profile, updatedAt: Date.now() });
 	return profile;
+}
+
+const getProfilesResponseSchema = z.object({
+	profiles: z.array(
+		z.object({
+			...profileShortSchema.shape,
+			...profileRightNowSchema.shape,
+		}),
+	),
+});
+
+export async function getProfiles(
+	profileIds: number[],
+): Promise<z.infer<typeof getProfilesResponseSchema>["profiles"]> {
+	if (profileIds.length === 0) return [];
+	return await fetchRest("/v3/profiles", {
+		method: "POST",
+		body: {
+			targetProfileIds: profileIds,
+		},
+	}).then((res) => res.jsonParsed(getProfilesResponseSchema).profiles);
 }
