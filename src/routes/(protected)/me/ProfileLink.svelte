@@ -15,7 +15,7 @@
 	const myProfilePhotos = $derived(myProfile.then((profile) => profile.medias));
 </script>
 
-<Item.Root variant="outline" size="sm">
+<Item.Root variant="outline">
 	{#snippet child({ props })}
 		<a href="/profile/{id}" {...props} class={["rounded-full", props.class, "flex-nowrap!"]}>
 			<Item.Media class="size-14 bg-neutral-700 rounded-full translate-y-none">

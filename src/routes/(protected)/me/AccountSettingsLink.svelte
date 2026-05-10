@@ -3,7 +3,7 @@
 	import * as Item from "$lib/components/ui/item";
 </script>
 
-<Item.Root variant="outline" size="sm">
+<Item.Root variant="outline">
 	{#snippet child({ props })}
 		<a href="/settings/account" {...props}>
 			<Item.Media>

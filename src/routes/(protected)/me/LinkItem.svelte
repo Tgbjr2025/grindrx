@@ -42,7 +42,7 @@
 		<ArrowSquareOutIcon class="size-4" />
 	</Item.Actions>
 {/snippet}
-<Item.Root variant="default" size="xs">
+<Item.Root variant="default" size="sm">
 	{#snippet child({ props })}
 		{#if warning}
 			<ButtonItemContent

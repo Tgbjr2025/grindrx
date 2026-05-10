@@ -16,7 +16,7 @@
 	}
 </script>
 
-<Item.Root variant="outline" size="sm">
+<Item.Root variant="outline">
 	{#snippet child({ props })}
 		<ButtonItemContent {...props} variant="outline" onclick={() => onSignOut()}>
 			<Item.Media>
