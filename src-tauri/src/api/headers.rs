@@ -66,3 +66,46 @@ pub fn build_default_headers(device: &DeviceInfo, subscription_tier: &str) -> He
 
     headers
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_device() -> DeviceInfo {
+        DeviceInfo {
+            device_type: 2,
+            device_id: "device123".to_owned(),
+            android_version: "14",
+            screen_resolution: "1080x2400",
+            total_ram: "8026152960",
+            advertising_id: "ad-id-123".to_owned(),
+            device_model: "Pixel 8",
+            manufacturer: "Google",
+        }
+    }
+
+    #[test]
+    fn default_headers_include_grindr_device_identity() {
+        let headers = build_default_headers(&test_device(), "Free");
+
+        assert_eq!(
+            headers.get("L-Device-Info").unwrap(),
+            "device123;GLOBAL;2;8026152960;1080x2400;ad-id-123"
+        );
+        assert_eq!(
+            headers.get("User-Agent").unwrap(),
+            "grindr3/26.7.0.159416;147239;Free;Android 14;Pixel 8;Google"
+        );
+        assert_eq!(headers.get("requireRealDeviceInfo").unwrap(), "true");
+    }
+
+    #[test]
+    fn default_headers_include_locale_timezone_and_json_accepts() {
+        let headers = build_default_headers(&test_device(), "Unlimited");
+
+        assert_eq!(headers.get("L-Time-Zone").unwrap(), "Europe/Madrid");
+        assert_eq!(headers.get("L-Locale").unwrap(), "en_US");
+        assert_eq!(headers.get("Accept-Language").unwrap(), "en-US");
+        assert_eq!(headers.get("Accept").unwrap(), "application/json");
+    }
+}
