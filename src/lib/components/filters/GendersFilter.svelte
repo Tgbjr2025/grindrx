@@ -49,7 +49,7 @@
 				class="flex-wrap w-full gap-1"
 				bind:value={
 					() => value.map(String),
-					(v) => ((checked = v.length > 0), (value = v.map(Number)))
+					(v: string[]) => ((checked = v.length > 0), (value = v.map(Number)))
 				}
 			>
 				{#each genders as { genderId, excludeOnFilterSelection, genderPlural, displayGroup } (genderId)}

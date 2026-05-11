@@ -110,7 +110,7 @@
 			placeholder="Search places..."
 			bind:value={
 				() => searchQuery,
-				(v) => {
+				(v: string) => {
 					searchQuery = v;
 					showSearchResults = true;
 				}
