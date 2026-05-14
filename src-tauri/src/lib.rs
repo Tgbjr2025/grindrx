@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::state::AppState;
 use api::client::GrindrClient;
+#[cfg(all(target_os = "macos", not(feature = "keychain")))]
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -36,6 +38,8 @@ pub fn run() {
             api::ws::ws_send,
         ])
         .setup(|app| {
+            #[cfg(all(target_os = "macos", not(feature = "keychain")))]
+            storage::init_file_store(app.path().app_data_dir()?);
             api::ws::spawn_ws_task(app.handle().clone());
             Ok(())
         })
