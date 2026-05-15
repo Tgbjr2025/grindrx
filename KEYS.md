@@ -1,6 +1,6 @@
 # Open Grind Signing Keys
 
-See also [BUILDING.md](./BUILDING.md) for reproducable builds.
+See also [BUILDING.md](./BUILDING.md) for reproducable builds. This document (KEYS.md) is signed (KEYS.md.asc) with Open Grind's PGP key below, you can verify it using `gpg --verify KEYS.md.asc KEYS.md`.
 
 ## PGP Public Key
 
@@ -33,7 +33,7 @@ n9ALznossxQtTWKrTg6+kwpmc/7ZVXzhGCXcHUAZWwo=
 -----END PGP PUBLIC KEY BLOCK-----
 ```
 
-Verify APK:
+Verify release:
 
 ```bash
 gpg --fetch-keys https://opengrind.org/pgp.asc
@@ -48,11 +48,7 @@ Certificate's SHA-256 fingerprint:
 28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C
 ```
 
-Verify APK:
-
-```bash
-apksigner verify --print-certs opengrind.apk
-```
+[Guide on verifying release APKs](./BUILDING.md#verifying-a-published-release): apksigner should output `Signer #1 certificate SHA-256 digest: 2805fdd8f0badb9424d3244c5e5b3473cef5b8798ec1117382e89eda45c3658c` matching certificate's SHA-256 above.
 
 ## Governance certification
 

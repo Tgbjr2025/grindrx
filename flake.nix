@@ -78,6 +78,7 @@
           androidSdk = androidComposition.androidsdk;
           androidSdkRoot = "${androidSdk}/libexec/android-sdk";
           ndkRoot = "${androidSdkRoot}/ndk/${androidNdkVersion}";
+          buildToolsBin = "${androidSdkRoot}/build-tools/${androidBuildToolsVersion}";
 
           jdk = pkgs.jdk21_headless;
 
@@ -89,11 +90,10 @@
             pkgs.gradle_8
             androidSdk
             pkgs.pkg-config
-            pkgs.git
           ];
 
           buildEnv = {
-            JAVA_HOME = "${jdk}/lib/openjdk";
+            JAVA_HOME = jdk.home;
             ANDROID_HOME = androidSdkRoot;
             ANDROID_SDK_ROOT = androidSdkRoot;
             ANDROID_NDK_HOME = ndkRoot;
@@ -113,6 +113,7 @@
               set -euo pipefail
 
               ${envExports}
+              export PATH="${buildToolsBin}:$PATH"
 
               # Project root: the directory containing this flake.
               ROOT="''${OPEN_GRIND_ROOT:-$PWD}"
@@ -141,6 +142,10 @@
             // {
               packages = toolchainInputs;
               shellHook = ''
+                # Put apksigner, zipalign, aapt2 on PATH — androidenv
+                # only exposes the SDK's top-level bin (adb, sdkmanager).
+                export PATH="${buildToolsBin}:$PATH"
+
                 echo "Open Grind dev shell: Android toolchain pinned via Nix."
                 echo "  Rust:      $(rustc --version)"
                 echo "  JDK:       $JAVA_HOME"

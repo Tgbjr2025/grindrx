@@ -19,6 +19,11 @@ fun prop(key: String): String =
         ?: error("Missing required property `$key`. " +
             "Add it to src-tauri/gen/android/gradle.properties.")
 
+fun expandHome(path: String): String =
+    if (path == "~" || path.startsWith("~/")) {
+        System.getProperty("user.home") + path.substring(1)
+    } else path
+
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val hasKeystore = keystorePropertiesFile.exists()
 
@@ -43,7 +48,7 @@ android {
 
 				keyAlias = keystoreProperties["keyAlias"] as String
 				keyPassword = keystoreProperties["password"] as String
-				storeFile = file(keystoreProperties["storeFile"] as String)
+				storeFile = file(expandHome(keystoreProperties["storeFile"] as String))
 				storePassword = keystoreProperties["password"] as String
 			}
 		}
@@ -73,11 +78,22 @@ android {
 			}
         }
     }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
     buildFeatures {
         buildConfig = true
+    }
+}
+
+// Reproducibility: disable assets/dexopt/baseline.prof[m] and kotlin-tooling-metadata.json
+tasks.whenTaskAdded {
+    if (name.contains("ArtProfile") || name == "buildKotlinToolingMetadata") {
+        enabled = false
     }
 }
 

@@ -4,11 +4,13 @@
 
 Unofficial Grindr client. Crossplatform, free, libre, ad-free, tracker-free, privacy-centered and community-driven.
 
-Status as of 13th May, 2026: **🚧 MVP 🚧**, only Grid and partially messaging are implemented. [More information...](https://git.opengrind.org/open-grind/open-grind/milestones)
+Status as of 15th May, 2026: **🚧 MVP 🚧**, only Grid, profile search, profile page, text messaging and media viewing are implemented. [More information...](https://git.opengrind.org/open-grind/open-grind/milestones)
 
 ## Usage
 
-Download the latest version from [releases](https://git.opengrind.org/open-grind/open-grind/releases).
+<!-- Download the latest version from [releases](https://git.opengrind.org/open-grind/open-grind/releases). -->
+
+There are no downloadable releases at the moment. Follow announcements in [#announcements:opengrind.org](https://matrix.to/#/#announcements:opengrind.org) for release news.
 
 ## Security
 
@@ -19,6 +21,8 @@ PGP Public Key: <https://opengrind.org/pgp> (`CB722EE967E4FCAD7C658FC69A1F7F5F59
 Android releases are additionally signed with Java KeyStore with the following SHA-256 fingerprint: `28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C`
 
 Signing keys and verification instructions are documented in [KEYS.md](KEYS.md), itself signed by the PGP key above (verify with `gpg --verify KEYS.md.asc KEYS.md`).
+
+Open Grind supports reproducable builds. Read more in [BUILDING.md](./BUILDING.md#verifying-a-published-release).
 
 ## Development
 
