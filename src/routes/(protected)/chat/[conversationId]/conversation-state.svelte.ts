@@ -1,4 +1,4 @@
-import toast from "svelte-french-toast";
+import { toast } from "svelte-sonner";
 import z from "zod";
 
 import { markConversationAsRead } from "$lib/api/conversation";

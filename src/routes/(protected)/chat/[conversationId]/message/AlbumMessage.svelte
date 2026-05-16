@@ -1,7 +1,7 @@
 <script lang="ts">
 	import "photoswipe/style.css";
 	import { ImagesIcon, LockIcon, VideoIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import { type AlbumContentResponse, getAlbumContent } from "$lib/api/album";

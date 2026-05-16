@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { CaretRightIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 
+	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import * as Item from "$lib/components/ui/item";
 </script>
 
@@ -14,7 +15,12 @@
 						href="#/"
 						{...props}
 						onclick={() =>
-							toast.error("TODO: Account settings not implemented yet")}
+							toast(ToastUnimplemented, {
+								componentProps: {
+									feature: "Account settings",
+									issue: 47,
+								},
+							})}
 					>
 						<Item.Content class="max-xxxxs:min-w-0">
 							<Item.Title class="min-w-0 max-w-full truncate inline-block">

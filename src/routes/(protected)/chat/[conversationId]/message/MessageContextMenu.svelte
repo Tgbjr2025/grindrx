@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 	import { CopyIcon, FlagIcon, TrashIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import type { ComponentProps } from "svelte";
 
 	import fireEmoji from "$lib/assets/emojis/fire-sm.avif";

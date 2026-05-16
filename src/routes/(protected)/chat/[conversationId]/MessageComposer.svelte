@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 

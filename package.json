@@ -38,7 +38,7 @@
 		"paneforge": "^1.0.2",
 		"photoswipe": "^5.4.4",
 		"sveaflet": "^0.1.4",
-		"svelte-french-toast": "^1.2.0",
+		"svelte-sonner": "^1.1.1",
 		"tailwindcss": "^4.2.4",
 		"zod": "^4.4.3"
 	},

@@ -8,7 +8,7 @@
 	import GpsFixIcon from "phosphor-svelte/lib/GpsFixIcon";
 	import MagnifyingGlassIcon from "phosphor-svelte/lib/MagnifyingGlassIcon";
 	import NavigationArrowIcon from "phosphor-svelte/lib/NavigationArrowIcon";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 
 	import { setPreferences } from "$lib/app-data/preferences.svelte";
 	import LocationChooser from "$lib/components/location-chooser/LocationChooser.svelte";

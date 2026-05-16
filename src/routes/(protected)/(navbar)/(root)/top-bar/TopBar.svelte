@@ -1,7 +1,7 @@
 <script lang="ts">
 	import isEqual from "lodash-es/isEqual";
 	import { onMount, untrack } from "svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { Tween } from "svelte/motion";
 

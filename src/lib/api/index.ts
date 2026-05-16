@@ -1,8 +1,9 @@
 import { decode, encode } from "@msgpack/msgpack";
 import { invoke } from "@tauri-apps/api/core";
 import { goto } from "$app/navigation";
-import toast from "svelte-french-toast";
+import { toast } from "svelte-sonner";
 import z from "zod";
+
 import { fromBase64, toBase64 } from "$lib/base64";
 
 export const methods = {

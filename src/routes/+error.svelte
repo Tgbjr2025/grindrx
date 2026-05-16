@@ -4,7 +4,7 @@
 	import ArrowUpRightIcon from "phosphor-svelte/lib/ArrowUpRightIcon";
 	import ExclamationMarkIcon from "phosphor-svelte/lib/ExclamationMarkIcon";
 	import QuestionMarkIcon from "phosphor-svelte/lib/QuestionMarkIcon";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import { Tween } from "svelte/motion";
 
 	import clippy from "$lib/assets/clippy.avif";

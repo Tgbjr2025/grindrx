@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { CaretRightIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 
 	import * as Item from "$lib/components/ui/item";
 	import RevealMessageReadSetting from "./RevealMessageReadSetting.svelte";

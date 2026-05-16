@@ -8,7 +8,7 @@
 	import { divIcon } from "leaflet";
 	import { GpsFixIcon } from "phosphor-svelte";
 	import { ControlAttribution, Map, Marker, TileLayer } from "sveaflet";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import type { Map as LeafletMap, LeafletMouseEventHandlerFn } from "leaflet";
 
 	import { getPlaces } from "$lib/api/places";

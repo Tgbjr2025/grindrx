@@ -5,7 +5,7 @@
 
 	import "../layout.css";
 	import { onMount } from "svelte";
-	import { Toaster } from "svelte-french-toast";
+	import { Toaster } from "svelte-sonner";
 
 	import { applyAndroidInsets } from "$lib/utils";
 
@@ -34,10 +34,11 @@
 <Toaster
 	position="bottom-center"
 	toastOptions={{
-		style: "background-color: var(--accent); color: var(--popover)",
+		style:
+			"background-color: var(--accent); color: var(--popover); border: 1px solid var(--border);",
 	}}
+	expand
 />
-<!-- TODO: migrate to svelte-sonner (svelte-french-toast is dead) -->
 <IconContext values={{}}>
 	{@render children?.()}
 </IconContext>

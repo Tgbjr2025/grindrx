@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { uniqBy } from "lodash-es";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import z from "zod";
 
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
