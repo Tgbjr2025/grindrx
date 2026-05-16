@@ -35,12 +35,12 @@
 		</a>
 		<a
 			href="/right-now"
-			data-active={page.route.id === "/(protected)/right-now"}
+			data-active={page.route.id === "/(protected)/(navbar)/right-now"}
 		>
 			<DropIcon weight="fill" />
 			Right Now
 		</a>
-		<a href="/interest" data-active={page.route.id === "/(protected)/interest"}>
+		<a href="/interest" data-active={page.route.id === "/(protected)/(navbar)/interest"}>
 			<FireIcon weight="fill" />
 			Interest
 		</a>
