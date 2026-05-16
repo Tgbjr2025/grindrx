@@ -90,6 +90,7 @@
             pkgs.gradle_8
             androidSdk
             pkgs.pkg-config
+            pkgs.stdenv.cc
           ];
 
           buildEnv = {
