@@ -55,7 +55,7 @@
 </script>
 
 <ChatNavBar {conversationState} />
-<Card.Content class="flex flex-col flex-1 pb-2 px-0 max-h-full min-h-0">
+<Card.Content class="flex flex-col flex-1 pb-2 px-0 min-h-0">
 	<MessagesList {conversationState} />
 	<MessageComposer
 		onSend={(message: Message) => conversationState.send(message)}

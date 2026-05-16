@@ -1,8 +1,8 @@
 <script lang="ts">
 	import "photoswipe/style.css";
 	import { ImagesIcon, LockIcon, VideoIcon } from "phosphor-svelte";
-	import PhotoSwipeLightbox from "photoswipe/lightbox";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
+	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import { type AlbumContentResponse, getAlbumContent } from "$lib/api/album";
 	import type { AlbumMessage } from "$lib/model/message";
@@ -130,43 +130,48 @@
 	$effect(() => {
 		if (albumState.status !== "open") return;
 		const { album } = albumState;
-		const lightbox = new PhotoSwipeLightbox({
-			showHideAnimationType: "fade",
-			pswpModule: () => import("photoswipe"),
-			mainClass: `pswp--buttons-visible`,
-		});
-		lightbox.addFilter("numItems", () => album.content.length);
-		lightbox.addFilter("itemData", (_, index) => {
-			const { url, width, height } = album.content[index];
-			return { src: url, width, height };
-		});
-		lightbox.on("contentLoad", (event) => {
-			const { content } = event;
-			const slide = album.content[content.index];
-			if (slide?.contentType.startsWith("video/")) {
-				event.preventDefault();
-				content.element = document.createElement("div");
-				const video = document.createElement("video");
-				video.src = slide.url;
-				video.controls = true;
-				video.playsInline = true;
-				video.className = "max-w-full max-h-[80vh]";
-				content.element.appendChild(video);
-				content.state = "loading";
-				if (video.readyState >= 3) {
-					content.onLoaded();
-				} else {
-					video.addEventListener("loadeddata", () => content.onLoaded());
-					video.addEventListener("error", () => content.onError());
-				}
-			}
-		});
-		lightbox.on("closingAnimationEnd", () => {
-			albumState = { status: "idle" };
-		});
-		lightbox.init();
-		lightbox.loadAndOpen(0);
-		return () => lightbox.destroy();
+		let lightbox: PhotoSwipeLightbox | undefined;
+		import("photoswipe/lightbox")
+			.then(({ default: PhotoSwipeLightbox }) => {
+				lightbox = new PhotoSwipeLightbox({
+					showHideAnimationType: "fade",
+					pswpModule: () => import("photoswipe"),
+					mainClass: `pswp--buttons-visible`,
+				});
+				lightbox.addFilter("numItems", () => album.content.length);
+				lightbox.addFilter("itemData", (_, index) => {
+					const { url, width, height } = album.content[index];
+					return { src: url, width, height };
+				});
+				lightbox.on("contentLoad", (event) => {
+					const { content } = event;
+					const slide = album.content[content.index];
+					if (slide?.contentType.startsWith("video/")) {
+						event.preventDefault();
+						content.element = document.createElement("div");
+						const video = document.createElement("video");
+						video.src = slide.url;
+						video.controls = true;
+						video.playsInline = true;
+						video.className = "max-w-full max-h-[80vh]";
+						content.element.appendChild(video);
+						content.state = "loading";
+						if (video.readyState >= 3) {
+							content.onLoaded();
+						} else {
+							video.addEventListener("loadeddata", () => content.onLoaded());
+							video.addEventListener("error", () => content.onError());
+						}
+					}
+				});
+				lightbox.on("closingAnimationEnd", () => {
+					albumState = { status: "idle" };
+				});
+				lightbox.init();
+				lightbox.loadAndOpen(0);
+			})
+			.catch((error) => console.error(error));
+		return () => lightbox?.destroy();
 	});
 </script>
 
@@ -220,7 +225,10 @@
 {:else}
 	<div class={[className, contentClass]} bind:this={media.el}>
 		<div
-			class="size-full flex justify-center items-center bg-card-foreground/10 rounded-lg"
+			class={[
+				"size-full flex justify-center items-center bg-card-foreground/10 rounded-xl",
+				media.cornerClass,
+			]}
 		>
 			<LockIcon weight="fill" size={36} color="var(--color-neutral-600)" />
 		</div>

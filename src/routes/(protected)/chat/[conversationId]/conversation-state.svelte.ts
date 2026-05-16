@@ -1,4 +1,4 @@
-import toast from "svelte-french-toast";
+import { toast } from "svelte-sonner";
 import z from "zod";
 
 import { markConversationAsRead } from "$lib/api/conversation";
@@ -101,6 +101,20 @@ export class ConversationState {
 	}
 
 	async #initialLoad(): Promise<void> {
+		const cached = this.#conversations.getCachedConversation(
+			this.conversationId,
+		);
+		if (cached) {
+			this.messages = cached.messages.map((m) => ({
+				...m,
+				status: "sent" as const,
+			}));
+			this.profile = cached.profile;
+			this.pageKey = cached.pageKey;
+			this.loading = false;
+			this.#conversations.markRead(this.conversationId);
+			return;
+		}
 		this.loading = true;
 		this.error = null;
 		try {
@@ -117,6 +131,12 @@ export class ConversationState {
 			this.pageKey = result.pageKey;
 			this.#updatePreview(this.messages.at(0));
 			this.#conversations.markRead(this.conversationId);
+			this.#conversations.setCachedConversation(this.conversationId, {
+				messages: result.messages,
+				profile: result.profile,
+				pageKey: result.pageKey,
+				cachedAt: Date.now(),
+			});
 		} catch (err) {
 			this.error = err instanceof Error ? err : new Error(String(err));
 		} finally {
@@ -137,6 +157,17 @@ export class ConversationState {
 				...result.messages.map((m) => ({ ...m, status: "sent" as const })),
 			]);
 			this.pageKey = result.pageKey;
+			if (this.profile) {
+				const cachedMessages: ApiResponseMessage[] = this.messages
+					.filter((m) => m.status === "sent")
+					.map(({ status: _status, ...rest }) => rest);
+				this.#conversations.setCachedConversation(this.conversationId, {
+					messages: cachedMessages,
+					profile: this.profile,
+					pageKey: this.pageKey,
+					cachedAt: Date.now(),
+				});
+			}
 		} catch (err) {
 			toast.error("Failed to load more messages");
 			console.error(err);
@@ -148,7 +179,7 @@ export class ConversationState {
 	send(message: MessageType): void {
 		if (!this.profile) return;
 		const tempId = `pending-${crypto.randomUUID()}`;
-		const optimistic = {
+		const optimistic: OptimisticMessage = {
 			...message,
 			messageId: tempId,
 			conversationId: this.conversationId,
@@ -157,7 +188,7 @@ export class ConversationState {
 			unsent: false,
 			reactions: [],
 			status: "pending" as const,
-		} as OptimisticMessage;
+		};
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
 		void this.#resolveMessage({ tempId, message });

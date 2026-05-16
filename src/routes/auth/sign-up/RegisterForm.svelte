@@ -3,19 +3,18 @@
 
 	import * as Alert from "$lib/components/ui/alert";
 	import { Button } from "$lib/components/ui/button";
+	import Link from "$lib/components/ui/link/Link.svelte";
 </script>
 
 <Alert.Root class="w-full max-w-sm m-auto">
 	<SmileySadIcon size="2em" color="#ffba20" weight="fill" />
 	<Alert.Title>Unimplemented</Alert.Title>
 	<Alert.Description>
-		Registration is not implemented yet, track <a
+		Registration is not implemented yet, track <Link
 			href="https://git.opengrind.org/open-grind/open-grind/issues/21"
-			target="_blank"
-			rel="noopener noreferrer"
 		>
 			#21
-		</a>.
+		</Link>.
 		<Button
 			variant="link"
 			href="/auth/sign-in"

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
+	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
 	import type { Message } from "$lib/model/message";
@@ -56,7 +57,12 @@
 				size="icon"
 				class="size-full cursor-pointer p-2"
 				onclick={() => {
-					toast.error("TODO: Voice messages not implemented yet");
+					toast(ToastUnimplemented, {
+						componentProps: {
+							feature: "Voice messages",
+							issue: 35,
+						},
+					});
 				}}
 			>
 				<MicrophoneIcon

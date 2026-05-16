@@ -1,6 +1,6 @@
 <script lang="ts">
 	import "photoswipe/style.css";
-	import PhotoSwipeLightbox from "photoswipe/lightbox";
+	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import type { ExpiringImageMessage, ImageMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
@@ -15,89 +15,94 @@
 	$effect(() => {
 		const gallery = media.el;
 		if (!gallery) return;
-		const lightbox = new PhotoSwipeLightbox({
-			gallery,
-			children: "a",
-			pswpModule: () => import("photoswipe"),
-			mainClass: "pswp--buttons-visible",
-			showAnimationDuration: 500,
-			hideAnimationDuration: 500,
-		});
-		lightbox.addFilter("itemData", (itemData) => {
-			const img = itemData.element?.querySelector("img");
-			if (img?.naturalWidth) {
-				itemData.width = img.naturalWidth;
-				itemData.height = img.naturalHeight;
-			}
-			return itemData;
-		});
+		let lightbox: PhotoSwipeLightbox | undefined;
+		import("photoswipe/lightbox")
+			.then(({ default: PhotoSwipeLightbox }) => {
+				lightbox = new PhotoSwipeLightbox({
+					gallery,
+					children: "a",
+					pswpModule: () => import("photoswipe"),
+					mainClass: "pswp--buttons-visible",
+					showAnimationDuration: 500,
+					hideAnimationDuration: 500,
+				});
+				lightbox.addFilter("itemData", (itemData) => {
+					const img = itemData.element?.querySelector("img");
+					if (img?.naturalWidth) {
+						itemData.width = img.naturalWidth;
+						itemData.height = img.naturalHeight;
+					}
+					return itemData;
+				});
 
-		function setScaledRadius(img: Element) {
-			if (!(img instanceof HTMLImageElement)) return;
+				function setScaledRadius(img: Element) {
+					if (!(img instanceof HTMLImageElement)) return;
 
-			const radius = parseFloat(getComputedStyle(img).borderRadius);
+					const radius = parseFloat(getComputedStyle(img).borderRadius);
 
-			const rect = img.getBoundingClientRect();
-			const thumbW = rect.width;
+					const rect = img.getBoundingClientRect();
+					const thumbW = rect.width;
 
-			const pswpScale = Math.min(
-				window.innerWidth / img.naturalWidth,
-				window.innerHeight / img.naturalHeight,
-			);
-			const pswpDisplayW = img.naturalWidth * pswpScale;
+					const pswpScale = Math.min(
+						window.innerWidth / img.naturalWidth,
+						window.innerHeight / img.naturalHeight,
+					);
+					const pswpDisplayW = img.naturalWidth * pswpScale;
 
-			const scaledRadius = radius * (pswpDisplayW / thumbW);
+					const scaledRadius = radius * (pswpDisplayW / thumbW);
 
-			document.documentElement.style.setProperty(
-				"--pswp-thumb-radius",
-				`${radius * 1.6}px`, // FIXME: no idea how this is calculated
-			);
-			document.documentElement.style.setProperty(
-				"--pswp-border-radius",
-				`${scaledRadius}px`,
-			);
-		}
-
-		lightbox.on("afterInit", () => {
-			gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
-		});
-		lightbox.on("openingAnimationStart", () => {
-			gallery?.querySelectorAll(".item").forEach((item) => {
-				if (item instanceof HTMLElement) {
-					item.style.visibility = "hidden";
+					document.documentElement.style.setProperty(
+						"--pswp-thumb-radius",
+						`${radius * 1.6}px`, // FIXME: no idea how this is calculated
+					);
+					document.documentElement.style.setProperty(
+						"--pswp-border-radius",
+						`${scaledRadius}px`,
+					);
 				}
-			});
-		});
-		lightbox.on("openingAnimationEnd", () => {
-			document.documentElement.style.removeProperty("--pswp-border-radius");
-		});
 
-		lightbox.on("close", () => {
-			gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
-			lightbox?.pswp?.element?.classList.add("pswp--closing");
-		});
-		lightbox.on("closingAnimationStart", () => {
-			gallery?.querySelectorAll(".item").forEach((item) => {
-				if (item instanceof HTMLElement) {
-					item.style.visibility = "hidden";
-				}
-			});
-		});
-		lightbox.on("closingAnimationEnd", () => {
-			document.documentElement.style.removeProperty("--pswp-border-radius");
-			lightbox?.pswp?.element?.classList.remove("pswp--closing");
-		});
+				lightbox.on("afterInit", () => {
+					gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
+				});
+				lightbox.on("openingAnimationStart", () => {
+					gallery?.querySelectorAll(".item").forEach((item) => {
+						if (item instanceof HTMLElement) {
+							item.style.visibility = "hidden";
+						}
+					});
+				});
+				lightbox.on("openingAnimationEnd", () => {
+					document.documentElement.style.removeProperty("--pswp-border-radius");
+				});
 
-		lightbox.on("destroy", () => {
-			gallery?.querySelectorAll(".item").forEach((item) => {
-				if (item instanceof HTMLElement) {
-					item.style.visibility = "visible";
-				}
-			});
-		});
+				lightbox.on("close", () => {
+					gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
+					lightbox?.pswp?.element?.classList.add("pswp--closing");
+				});
+				lightbox.on("closingAnimationStart", () => {
+					gallery?.querySelectorAll(".item").forEach((item) => {
+						if (item instanceof HTMLElement) {
+							item.style.visibility = "hidden";
+						}
+					});
+				});
+				lightbox.on("closingAnimationEnd", () => {
+					document.documentElement.style.removeProperty("--pswp-border-radius");
+					lightbox?.pswp?.element?.classList.remove("pswp--closing");
+				});
 
-		lightbox.init();
-		return () => lightbox.destroy();
+				lightbox.on("destroy", () => {
+					gallery?.querySelectorAll(".item").forEach((item) => {
+						if (item instanceof HTMLElement) {
+							item.style.visibility = "visible";
+						}
+					});
+				});
+
+				lightbox.init();
+			})
+			.catch((error) => console.error(error));
+		return () => lightbox?.destroy();
 	});
 </script>
 

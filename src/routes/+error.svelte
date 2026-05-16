@@ -4,12 +4,13 @@
 	import ArrowUpRightIcon from "phosphor-svelte/lib/ArrowUpRightIcon";
 	import ExclamationMarkIcon from "phosphor-svelte/lib/ExclamationMarkIcon";
 	import QuestionMarkIcon from "phosphor-svelte/lib/QuestionMarkIcon";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import { Tween } from "svelte/motion";
 
 	import clippy from "$lib/assets/clippy.avif";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
+	import Link from "$lib/components/ui/link/Link.svelte";
 	import * as Tooltip from "$lib/components/ui/tooltip";
 
 	let flip = $state(false);
@@ -133,13 +134,11 @@
 			</div>
 		</Empty.Content>
 		<Button variant="link" class="text-muted-foreground" size="sm">
-			<a
+			<Link
 				href="https://git.opengrind.org/open-grind/open-grind/issues/new?title=%5BBUG%5D+Short+description+of+the+issue"
-				target="_blank"
-				rel="noopener noreferrer"
 			>
 				Report an issue <ArrowUpRightIcon class="inline" />
-			</a>
+			</Link>
 		</Button>
 	</Empty.Root>
 </main>

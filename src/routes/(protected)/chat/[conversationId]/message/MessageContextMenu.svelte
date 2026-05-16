@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 	import { CopyIcon, FlagIcon, TrashIcon } from "phosphor-svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import type { ComponentProps } from "svelte";
 
 	import fireEmoji from "$lib/assets/emojis/fire-sm.avif";
 	import ContextMenu from "$lib/components/ContextMenu.svelte";
+	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 
 	let {
@@ -70,7 +71,12 @@
 			<Button
 				variant="ghost"
 				onclick={() => {
-					toast.error("TODO: Report message not implemented yet");
+					toast(ToastUnimplemented, {
+						componentProps: {
+							feature: "Report message",
+							issue: 41,
+						},
+					});
 					props.onClose();
 				}}
 			>

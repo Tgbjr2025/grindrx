@@ -1,9 +1,10 @@
 import { decode, encode } from "@msgpack/msgpack";
 import { invoke } from "@tauri-apps/api/core";
-import toast from "svelte-french-toast";
+import { goto } from "$app/navigation";
+import { toast } from "svelte-sonner";
 import z from "zod";
 
-import { goto } from "$app/navigation";
+import { fromBase64, toBase64 } from "$lib/base64";
 
 export const methods = {
 	login: {
@@ -76,9 +77,17 @@ export async function fetchRest(
 			path,
 			body: options.body === undefined ? null : encode(options.body),
 		});
-		const packed = await invoke("request", payload).then((res) =>
-			z.instanceof(ArrayBuffer).parse(res),
-		);
+		const packed = await invoke("request", {
+			// https://github.com/tauri-apps/tauri/issues/10573
+			payload: toBase64(payload),
+		}).then((res) => {
+			if (typeof res === "string") {
+				// https://github.com/tauri-apps/tauri/issues/10573
+				return fromBase64(res);
+			} else {
+				throw new Error("Invalid response from backend");
+			}
+		});
 		if (options.abortController?.signal.aborted) {
 			throw new Error("Request aborted");
 		}

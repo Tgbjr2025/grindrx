@@ -1,9 +1,8 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-
-use tauri::ipc::Response;
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -96,16 +95,13 @@ struct RequestPayload {
 #[tauri::command]
 pub async fn request(
     state: tauri::State<'_, AppState>,
-    request: tauri::ipc::Request<'_>,
-) -> Result<Response, AppError> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err(AppError::Api {
-            code: 400,
-            message: "Expected raw msgpack body".to_owned(),
-        });
-    };
+    payload: String,
+) -> Result<String, AppError> {
+    let bytes = STANDARD
+        .decode(&payload)
+        .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;
 
-    let payload: RequestPayload = rmp_serde::from_slice(bytes)
+    let payload: RequestPayload = rmp_serde::from_slice(&bytes)
         .map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
 
     let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
@@ -125,7 +121,8 @@ pub async fn request(
         .request_raw(method, &payload.path, payload.body)
         .await?;
 
-    Ok(Response::new(
-        rmp_serde::encode::to_vec_named(&raw).map_err(|e| AppError::Http(e.to_string()))?,
-    ))
+    let response_bytes =
+        rmp_serde::encode::to_vec_named(&raw).map_err(|e| AppError::Http(e.to_string()))?;
+
+    Ok(STANDARD.encode(&response_bytes))
 }

@@ -1,4 +1,4 @@
-import toast from "svelte-french-toast";
+import { toast } from "svelte-sonner";
 
 import {
 	getConversations,
@@ -11,16 +11,33 @@ import {
 	ws,
 } from "$lib/ws.svelte";
 import type { Conversation } from "$lib/model/conversation";
+import type { ApiResponseMessage } from "$lib/model/message";
+
+export type CachedConversation = {
+	messages: ApiResponseMessage[];
+	profile: {
+		distance: number | null;
+		mediaHash: string | null;
+		name: string | null;
+		onlineUntil: number | null;
+		profileId: number;
+		showDistance: boolean;
+	};
+	pageKey: string | null;
+	cachedAt: number;
+};
 
 class ConversationsState {
 	entries = $state<Conversation[]>([]);
 	nextPage = $state<number | null>(null);
 	loadingMore = $state(false);
 	initial: Promise<void>;
+	listScrollY = 0;
 
 	readonly ourProfileId: number;
 	#activeConversationId: string | null = null;
 	#wsPromises: Promise<() => void>[] = [];
+	#messageCache = new Map<string, CachedConversation>();
 
 	constructor(ourProfileId: number) {
 		this.ourProfileId = ourProfileId;
@@ -103,6 +120,7 @@ class ConversationsState {
 	}
 
 	remove(conversationId: string) {
+		this.#messageCache.delete(conversationId);
 		const index = this.entries.findIndex(
 			(e) => e.data.conversationId === conversationId,
 		);
@@ -163,6 +181,18 @@ class ConversationsState {
 		if (!entry) return;
 		entry.data.preview = preview;
 		entry.data.lastActivityTimestamp = timestamp;
+	}
+
+	getCachedConversation(id: string): CachedConversation | undefined {
+		return this.#messageCache.get(id);
+	}
+
+	setCachedConversation(id: string, data: CachedConversation): void {
+		this.#messageCache.set(id, data);
+	}
+
+	invalidateConversation(id: string): void {
+		this.#messageCache.delete(id);
 	}
 }
 

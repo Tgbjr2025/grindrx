@@ -1,12 +1,24 @@
 <script lang="ts">
 	import { ChatCircleSlashIcon } from "phosphor-svelte";
+	import { onMount, tick } from "svelte";
 
 	import * as Empty from "$lib/components/ui/empty";
 	import Skeleton from "$lib/components/ui/skeleton/skeleton.svelte";
 	import Conversation from "./Conversation.svelte";
 	import { getConversations } from "./conversations-context.svelte";
+	import type { ConversationsState } from "./conversations.svelte";
 
-	const conversations = getConversations();
+	const conversations: ConversationsState = getConversations();
+
+	let container: HTMLDivElement | null = $state(null);
+
+	onMount(() => {
+		void conversations.initial.then(tick).then(() => {
+			if (container && conversations.listScrollY > 0) {
+				container.scrollTop = conversations.listScrollY;
+			}
+		});
+	});
 
 	let {
 		class: className,
@@ -32,10 +44,12 @@
 </script>
 
 <div
+	bind:this={container}
 	class={[
-		"flex flex-col gap-1 p-4 w-full h-full overflow-auto min-w-29.25",
+		"flex flex-col gap-1 p-4 pb-[calc(0.5rem+var(--content-pb))] w-full h-full overflow-auto min-w-29.25",
 		className,
 	]}
+	onscroll={() => (conversations.listScrollY = container?.scrollTop ?? 0)}
 >
 	{#await conversations.initial}
 		{#each Array(8)}

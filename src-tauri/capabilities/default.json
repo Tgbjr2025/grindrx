@@ -31,6 +31,7 @@
 					"path": "$APPDATA/preferences.json"
 				}
 			]
-		}
+		},
+		"opener:default"
 	]
 }

@@ -8,3 +8,13 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Nix
+/result
+/result-*
+.direnv/
+
+# Android signing
+keystore.properties
+*.jks
+*.keystore

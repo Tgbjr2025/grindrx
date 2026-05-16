@@ -36,5 +36,8 @@
 	},
 	"editor.quickSuggestions": {
 		"strings": "on"
+	},
+	"[nix]": {
+		"editor.defaultFormatter": "jnoortheen.nix-ide"
 	}
 }

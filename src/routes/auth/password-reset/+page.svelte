@@ -5,6 +5,4 @@
 <svelte:head>
 	<title>Password Reset</title>
 </svelte:head>
-<main class="w-full min-h-dvh flex p-8">
-	<ForgotPasswordForm />
-</main>
+<ForgotPasswordForm />

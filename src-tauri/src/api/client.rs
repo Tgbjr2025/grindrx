@@ -42,6 +42,7 @@ impl GrindrClient {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn reload_session(&self) {
         match super::auth::AuthStorage::get_session() {
             Ok(s) => *self.session.write().await = s,

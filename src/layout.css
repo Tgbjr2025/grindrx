@@ -110,6 +110,7 @@ body {
 	overscroll-behavior: none;
 	user-select: none;
 	-webkit-user-select: none;
+	--content-pb: calc(4rem + var(--safe-area-bottom));
 }
 
 a {

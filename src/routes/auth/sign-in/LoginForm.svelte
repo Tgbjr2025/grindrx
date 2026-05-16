@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 	import z from "zod";
 
 	import { asAppError, callMethod } from "$lib/api";

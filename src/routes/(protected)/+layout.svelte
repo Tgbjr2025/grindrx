@@ -1,8 +1,0 @@
-<script lang="ts">
-	import NavBar from "$lib/components/NavBar.svelte";
-
-	let { children }: import("./$types").LayoutProps = $props();
-</script>
-
-{@render children?.()}
-<NavBar />

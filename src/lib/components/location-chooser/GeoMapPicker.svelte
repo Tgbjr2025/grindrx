@@ -6,10 +6,10 @@
 	} from "@tauri-apps/plugin-geolocation";
 	import { platform } from "@tauri-apps/plugin-os";
 	import { divIcon } from "leaflet";
-	import type { Map as LeafletMap, LeafletMouseEventHandlerFn } from "leaflet";
 	import { GpsFixIcon } from "phosphor-svelte";
 	import { ControlAttribution, Map, Marker, TileLayer } from "sveaflet";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
+	import type { Map as LeafletMap, LeafletMouseEventHandlerFn } from "leaflet";
 
 	import { getPlaces } from "$lib/api/places";
 	import Alert from "$lib/components/ui/alert/alert.svelte";
@@ -24,6 +24,7 @@
 	} = $props();
 
 	let map: LeafletMap | undefined = $state();
+	let gpsRequestInProgress = $state(false);
 
 	$effect(() => {
 		if (map) {
@@ -104,7 +105,7 @@
 			/>
 		{/if}
 	</Map>
-	<div class="absolute bottom-4 w-full z-1010 p-2">
+	<div class="absolute bottom-4 w-full max-w-[calc(100%-2.5rem)] z-1010 p-2">
 		<Input
 			id="search-place"
 			type="search"
@@ -116,7 +117,7 @@
 					showSearchResults = true;
 				}
 			}
-			class=" bg-popover-foreground text-background shadow-md"
+			class="bg-popover-foreground text-background shadow-md"
 			maxlength={100}
 			onfocus={() => {
 				if (searchQuery.trim()) {
@@ -127,7 +128,7 @@
 		<!-- bottom-2 w-[calc(100%-8rem)]  -->
 	</div>
 	{#if showSearchResults}
-		<div class="size-full z-1000 top-0 left-0 absolute p-1 pb-16">
+		<div class="size-full z-1000 top-0 left-0 absolute p-1">
 			<div
 				class="bg-popover-foreground backdrop-blur-xl w-full h-full rounded-md flex flex-col text-popover shadow-md px-1 py-3 overflow-auto gap-2"
 			>
@@ -169,22 +170,31 @@
 				aria-label="Locate me"
 				variant="default"
 				class="cursor-pointer bg-white text-black hover:bg-neutral-100 shadow-sm"
+				disabled={gpsRequestInProgress}
 				onclick={async () => {
 					if (map) {
-						let permissions = await checkPermissions();
-						if (
-							permissions.location === "prompt" ||
-							permissions.location === "prompt-with-rationale"
-						) {
-							permissions = await requestPermissions(["location"]);
-						}
-						if (permissions.location === "granted") {
-							const pos = await getCurrentPosition();
-							map.setView([pos.coords.latitude, pos.coords.longitude], 13);
-						} else {
-							toast.error(
-								"Location permission denied. Change this in your system settings to use this button.",
-							);
+						gpsRequestInProgress = true;
+						try {
+							let permissions = await checkPermissions();
+							if (
+								permissions.location === "prompt" ||
+								permissions.location === "prompt-with-rationale"
+							) {
+								permissions = await requestPermissions(["location"]);
+							}
+							if (permissions.location === "granted") {
+								const pos = await getCurrentPosition();
+								map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+							} else {
+								toast.error(
+									"Location permission denied. Change this in your system settings to use this button.",
+								);
+							}
+						} catch (e) {
+							console.error(e);
+							toast.error("Failed to get current location");
+						} finally {
+							gpsRequestInProgress = false;
 						}
 					}
 				}}

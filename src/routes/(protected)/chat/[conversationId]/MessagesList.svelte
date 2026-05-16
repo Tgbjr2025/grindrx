@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from "svelte";
-	import toast from "svelte-french-toast";
+	import { toast } from "svelte-sonner";
 
 	import { deleteMessageForMe } from "$lib/api/messages";
 	import { Skeleton } from "$lib/components/ui/skeleton";

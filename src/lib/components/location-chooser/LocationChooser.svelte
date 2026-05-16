@@ -53,7 +53,7 @@
 {#if isDesktop.current}
 	<Dialog.Root bind:open>
 		<Dialog.Content
-			class="sm:max-w-200 h-[calc(100%-4rem)] flex flex-col"
+			class="sm:max-w-200 h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-4rem)] flex flex-col"
 			preventOverflowTextSelection={false}
 			showCloseButton={false}
 		>
@@ -77,7 +77,7 @@
 	<Drawer.Root bind:open>
 		<Drawer.Content
 			preventOverflowTextSelection={false}
-			class="h-full max-h-dvh!"
+			class="h-full mt-0! mb-(--safe-area-bottom)"
 		>
 			<div
 				class="h-full touch-manipulation rounded-lg overflow-clip mt-4 mb-2"
@@ -85,7 +85,7 @@
 			>
 				<GeoMapPicker bind:pinPos bind:this={geoMapPicker} />
 			</div>
-			<Drawer.Footer class="pt-2">
+			<Drawer.Footer class="pt-2 pb-(--safe-area-bottom)">
 				<Button type="submit" disabled={!pinPos} onclick={onSubmitPin}>
 					Save
 				</Button>

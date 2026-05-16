@@ -3,8 +3,8 @@
 		computePosition,
 		flip,
 		offset,
-		shift,
 		type Placement,
+		shift,
 	} from "@floating-ui/dom";
 
 	let {
