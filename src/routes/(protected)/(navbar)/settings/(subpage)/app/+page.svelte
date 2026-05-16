@@ -2,6 +2,7 @@
 	import { CaretRightIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
+	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import * as Item from "$lib/components/ui/item";
 	import RevealMessageReadSetting from "./RevealMessageReadSetting.svelte";
 	import RevealProfileViewSetting from "./RevealProfileViewSetting.svelte";
@@ -16,7 +17,12 @@
 						href="#/"
 						{...props}
 						onclick={() =>
-							toast.error("TODO: App settings not implemented yet")}
+							toast(ToastUnimplemented, {
+								componentProps: {
+									feature: "App settings",
+									issue: 46,
+								},
+							})}
 					>
 						<Item.Content class="max-xxxxs:min-w-0">
 							<Item.Title class="min-w-0 max-w-full truncate inline-block">

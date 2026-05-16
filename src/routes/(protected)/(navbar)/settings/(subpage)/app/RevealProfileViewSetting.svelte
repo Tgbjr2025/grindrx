@@ -6,6 +6,7 @@
 		getPreferences,
 		// setPreferences,
 	} from "$lib/app-data/preferences.svelte";
+	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import SwitchField from "$lib/components/ui/switch-field/SwitchField.svelte";
 
 	let value = $state(false);
@@ -27,7 +28,12 @@
 		() => value,
 		// (v: boolean) => {
 		() => {
-			toast.error("TODO: This setting is not implemented yet");
+			toast(ToastUnimplemented, {
+				componentProps: {
+					feature: "This setting",
+					issue: 42,
+				},
+			});
 			// value = v;
 			// setPreferences({ revealProfileViews: v }).catch((e) => {
 			// 	console.error("Failed to save preferences", e);
