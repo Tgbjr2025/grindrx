@@ -17,19 +17,22 @@ function readEnvInset(prop: string): number {
 }
 
 export function applyAndroidInsets() {
-	const ai = (window as unknown as Record<string, unknown>).__AndroidInsets as
+	if (!("__AndroidInsets" in window)) return;
+	const ai = window.__AndroidInsets as
 		| { top(): number; bottom(): number; left(): number; right(): number }
 		| undefined;
 
 	for (const side of ["top", "bottom", "left", "right"] as const) {
 		const cssInset = readEnvInset(`safe-area-inset-${side}`);
 		const nativeInset = ai?.[side]();
-		let value: string
+		let value: string;
 		if (cssInset !== 0) value = `env(safe-area-inset-${side}, 0px)`;
-		else if(nativeInset !== undefined) value = `${nativeInset}px`;
+		else if (nativeInset !== undefined) value = `${nativeInset}px`;
 		else value = "0px";
 		document.documentElement.style.setProperty(`--safe-area-${side}`, value);
 	}
+
+	window.__reapplyInsets = applyAndroidInsets;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

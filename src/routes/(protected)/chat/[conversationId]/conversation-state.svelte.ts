@@ -148,7 +148,7 @@ export class ConversationState {
 	send(message: MessageType): void {
 		if (!this.profile) return;
 		const tempId = `pending-${crypto.randomUUID()}`;
-		const optimistic = {
+		const optimistic: OptimisticMessage = {
 			...message,
 			messageId: tempId,
 			conversationId: this.conversationId,
@@ -157,7 +157,7 @@ export class ConversationState {
 			unsent: false,
 			reactions: [],
 			status: "pending" as const,
-		} as OptimisticMessage;
+		};
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
 		void this.#resolveMessage({ tempId, message });
