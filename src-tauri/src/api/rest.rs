@@ -77,23 +77,25 @@ impl GrindrClient {
 
         let request = request.build().map_err(|e| AppError::Http(e.to_string()))?;
 
-        println!("=== OUTGOING REQUEST ===");
-        println!("Method: {}", request.method());
-        println!("URL:    {}", request.url());
-        println!("Headers:");
-        // Default headers live on the Client, not on the Request — merge both.
-        for (name, value) in self.default_headers.iter().chain(request.headers()) {
-            println!("  {}: {}", name, value.to_str().unwrap_or("<binary>"));
-        }
-        if let Some(b) = request.body() {
-            match b.as_bytes() {
-                Some(bytes) => println!("Body: {}", String::from_utf8_lossy(bytes)),
-                None => println!("Body: <streaming>"),
+        #[cfg(debug_assertions)]
+        {
+            println!("=== OUTGOING REQUEST ===");
+            println!("Method: {}", request.method());
+            println!("URL:    {}", request.url());
+            println!("Headers:");
+            for (name, value) in self.default_headers.iter().chain(request.headers()) {
+                println!("  {}: {}", name, value.to_str().unwrap_or("<binary>"));
             }
-        } else {
-            println!("Body: <none>");
+            if let Some(b) = request.body() {
+                match b.as_bytes() {
+                    Some(bytes) => println!("Body: {}", String::from_utf8_lossy(bytes)),
+                    None => println!("Body: <streaming>"),
+                }
+            } else {
+                println!("Body: <none>");
+            }
+            println!("========================");
         }
-        println!("========================");
 
         let response = self.http.execute(request).await?;
         let status = response.status().as_u16();
