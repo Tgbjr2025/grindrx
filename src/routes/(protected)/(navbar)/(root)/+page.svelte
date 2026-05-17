@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
+	import { gridState } from "./grid-state.svelte";
 	import Grid from "./Grid.svelte";
 	import LocationChooser from "./LocationEmpty.svelte";
 	import TopBar from "./top-bar/TopBar.svelte";
 
 	let preferences = $state(getPreferences());
-	let grid: Grid | null = $state(null);
 </script>
 
 <svelte:head>
@@ -20,9 +20,9 @@
 		<main class="flex flex-col p-4 gap-4">
 			<TopBar
 				onUpdatePreferences={() => (preferences = getPreferences())}
-				onRefreshGrid={() => grid?.refresh()}
+				onRefreshGrid={() => gridState.refresh()}
 			/>
-			<Grid {geohash} bind:this={grid} />
+			<Grid {geohash} />
 		</main>
 	{/if}
 {/await}

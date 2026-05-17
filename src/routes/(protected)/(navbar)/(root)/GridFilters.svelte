@@ -121,7 +121,7 @@
 		side="bottom"
 		showCloseButton={false}
 		preventOverflowTextSelection={false}
-		class="max-h-dvh"
+		class="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom))] mt-(--safe-area-top) mb-(--safe-area-bottom)"
 	>
 		<Sheet.Header
 			class={[
