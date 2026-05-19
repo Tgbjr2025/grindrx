@@ -117,7 +117,8 @@ impl AuthStorage {
             .map(Some)
     }
     pub fn set_session(session: &Session) -> Result<(), AppError> {
-        let session_bytes = rmp_serde::encode::to_vec(session).unwrap();
+        let session_bytes = rmp_serde::encode::to_vec(session)
+            .map_err(|e| AppError::Auth(format!("Failed to encode session: {e}")))?;
         Self::get_session_entry()?
             .set_secret(&session_bytes)
             .map_err(|e| AppError::Auth(e.to_string()))
