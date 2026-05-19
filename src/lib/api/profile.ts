@@ -17,6 +17,11 @@ const profilesCache = new Map<
 	number,
 	{ profile: Profile; updatedAt: number }
 >();
+
+export function clearProfileCache(profileId: number) {
+	profilesCache.delete(profileId);
+}
+
 export async function getProfile(profileId: number) {
 	const cached = profilesCache.get(profileId);
 	if (cached && Date.now() - cached.updatedAt < 1000 * 60) {

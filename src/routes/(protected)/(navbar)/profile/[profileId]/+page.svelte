@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import { ChatCircleIcon, HeartIcon, HeartStraightIcon } from "phosphor-svelte";
+	import { ChatCircleIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
-	import { getProfile } from "$lib/api/profile";
+	import { clearProfileCache, getProfile } from "$lib/api/profile";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import AboutMe from "./AboutMe.svelte";
 	import Distance from "./Distance.svelte";
+	import EditProfileSheet from "./EditProfileSheet.svelte";
 	import Ethnicity from "./Ethnicity.svelte";
 	import Genders from "./GendersPronouns.svelte";
 	import HealthPractices from "./HealthPractices.svelte";
@@ -35,7 +36,19 @@
 		[profileId, ourProfileId].toSorted((a, b) => a - b).join(":"),
 	);
 
-	const profile = $derived(getProfile(profileId));
+	let editOpen = $state(false);
+	let refetchTick = $state(0);
+
+	const profile = $derived.by(() => {
+		// refetchTick read here so the derived re-runs after a save
+		void refetchTick;
+		return getProfile(profileId);
+	});
+
+	function handleProfileSaved() {
+		clearProfileCache(profileId);
+		refetchTick++;
+	}
 
 	let favoriteOverride = $state<boolean | null>(null);
 
@@ -114,6 +127,34 @@
 						<ChatCircleIcon weight="fill" class="size-8" />
 					</Button>
 				</nav>
+			{:else}
+				<nav class="absolute -translate-y-1/2 right-2 flex items-center gap-2">
+					<Button
+						size="icon-lg"
+						class="size-14"
+						variant="outline"
+						onclick={() => (editOpen = true)}
+						aria-label="Edit profile"
+					>
+						<PencilSimpleIcon class="size-6" />
+					</Button>
+				</nav>
+				<EditProfileSheet
+					bind:open={editOpen}
+					profileData={{
+						displayName,
+						aboutMe,
+						sexualPosition: sexualPosition ?? null,
+						bodyType: bodyType ?? null,
+						height,
+						weight,
+						ethnicity: ethnicity ?? null,
+						relationshipStatus: relationshipStatus ?? null,
+						lookingFor,
+						grindrTribes,
+					}}
+					onSave={handleProfileSaved}
+				/>
 			{/if}
 			<div class="flex flex-col p-4 pb-12">
 				<h1 class="text-3xl wrap-break-word font-bold tracking-tight">
