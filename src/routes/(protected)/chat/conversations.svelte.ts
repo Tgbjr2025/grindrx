@@ -127,12 +127,17 @@ class ConversationsState {
 		await this.initial.catch(() => {});
 
 		const activeId = this.#activeConversationId;
-		for (const id of [...this.#messageCache.keys()]) {
-			if (id !== activeId) this.#messageCache.delete(id);
-		}
 
 		try {
 			const result = await getConversations(1);
+
+			const freshIds = new Set(
+				result.entries.map((e) => e.data.conversationId),
+			);
+			for (const id of [...this.#messageCache.keys()]) {
+				if (id !== activeId && !freshIds.has(id)) this.#messageCache.delete(id);
+			}
+
 			for (const incoming of result.entries) {
 				const existing = this.entries.find(
 					(e) => e.data.conversationId === incoming.data.conversationId,

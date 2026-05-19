@@ -68,6 +68,7 @@ export class ConversationState {
 			"chat.v1.message_sent",
 			chatV1MessageSentEventSchema,
 			(event) => {
+				if (this.#destroyed) return;
 				if (event.payload.conversationId !== this.conversationId) return;
 				if (event.payload.senderId === this.ourProfileId) {
 					const pending = this.messages.find((m) => m.status === "pending");

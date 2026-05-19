@@ -84,9 +84,9 @@ class GridState {
 		if (this.#loadingBatches.has(batchIndex)) return;
 		this.#loadingBatches.add(batchIndex);
 		try {
-			const profileIds = this.partialBatches[batchIndex].batch.map(
-				(p) => p.profileId,
-			);
+			const batch = this.partialBatches[batchIndex];
+			if (!batch) return;
+			const profileIds = batch.batch.map((p) => p.profileId);
 			const uncachedIds: number[] = [];
 
 			for (const id of profileIds) {
