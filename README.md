@@ -1,4 +1,11 @@
-# Open Grind
+# Open Grind — dominus fork
+
+> **This is a personal fork** with additional features on top of [upstream open-grind](https://git.opengrind.org/open-grind/open-grind).
+> Pre-built APKs for this fork are on the [Releases](https://git.dominusaxis.com/dominus/open-grind/releases) page.
+>
+> **Extra features in this fork:** distance radar map · chat media gallery · send taps · favorites · inbox search · delete conversations · profile photo management · Post Right Now · km/mi toggle · keyring session storage
+
+---
 
 [![Matrix space](https://img.shields.io/matrix/opengrind:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=matrix%20space)](https://matrix.to/#/#opengrind:opengrind.org) [![chat](https://img.shields.io/matrix/general:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=chat)](https://matrix.to/#/#general:opengrind.org) [![Announcements](https://img.shields.io/matrix/announcements:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=announcements)](https://matrix.to/#/#announcements:opengrind.org)
 
@@ -37,3 +44,7 @@ Check out [issues](https://git.opengrind.org/open-grind/open-grind/issues) and t
 ## Donate
 
 See [FUNDING.md](./FUNDING.md)
+
+If this fork is useful to you, you can also support it directly:
+
+[![Support via PayPal](https://img.shields.io/badge/Support-PayPal-003087?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/tbateman2025)
