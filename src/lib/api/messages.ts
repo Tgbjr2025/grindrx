@@ -58,6 +58,35 @@ export async function sendMessage({
 	}).then((res) => res.jsonParsed(apiResponseMessageSchema));
 }
 
+export async function sendProfilePhotoMessage({
+	toUserId,
+	mediaId,
+	mediaHash,
+	createdAt,
+}: {
+	toUserId: number;
+	mediaId: number;
+	mediaHash: string;
+	createdAt: number | null;
+}) {
+	return await fetchRest("/v4/chat/message/send", {
+		method: "POST",
+		body: {
+			type: "Image",
+			target: { type: "Direct", targetId: toUserId },
+			body: {
+				mediaId,
+				url: `https://cdns.grindr.com/images/${mediaHash}`,
+				width: null,
+				height: null,
+				imageHash: mediaHash,
+				takenOnGrindr: false,
+				createdAt,
+			},
+		},
+	}).then((res) => res.jsonParsed(apiResponseMessageSchema));
+}
+
 export async function reactToMessage({
 	conversationId,
 	messageId,

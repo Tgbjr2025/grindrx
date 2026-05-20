@@ -3,6 +3,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { getMyAlbums, type MyAlbum } from "$lib/api/album";
+	import { getProfileUploadedPhotos, type ProfilePhoto } from "$lib/api/profile";
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -11,10 +12,15 @@
 	let {
 		open = $bindable(false),
 		onShare,
+		onSendPhoto,
 	}: {
 		open: boolean;
 		onShare: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
+		onSendPhoto: (photo: ProfilePhoto & { mediaId: number }) => Promise<void>;
 	} = $props();
+
+	type Tab = "albums" | "photos";
+	let activeTab = $state<Tab>("albums");
 
 	type AlbumsState =
 		| { status: "idle" }
@@ -22,10 +28,18 @@
 		| { status: "loaded"; albums: MyAlbum[] }
 		| { status: "error"; message: string };
 
+	type PhotosState =
+		| { status: "idle" }
+		| { status: "loading" }
+		| { status: "loaded"; photos: ProfilePhoto[] }
+		| { status: "error"; message: string };
+
 	let albumsState = $state<AlbumsState>({ status: "idle" });
+	let photosState = $state<PhotosState>({ status: "idle" });
 	let selectedAlbumId = $state<number | null>(null);
 	let expirationType = $state<AlbumExpirationType>("INDEFINITE");
 	let sharing = $state(false);
+	let sendingHash = $state<string | null>(null);
 
 	const expirationOptions: { value: AlbumExpirationType; label: string }[] = [
 		{ value: "INDEFINITE", label: "Indefinitely" },
@@ -37,23 +51,39 @@
 
 	$effect(() => {
 		if (!open) return;
-		if (albumsState.status !== "idle") return;
-		albumsState = { status: "loading" };
-		getMyAlbums()
-			.then(({ albums }) => {
-				albumsState = { status: "loaded", albums };
-				if (albums.length > 0 && selectedAlbumId === null) {
-					selectedAlbumId = albums[0].albumId;
-				}
-			})
-			.catch((err: unknown) => {
-				console.error("Failed to load albums", err);
-				albumsState = { status: "error", message: "Failed to load albums" };
-			});
+		if (activeTab === "albums" && albumsState.status === "idle") {
+			albumsState = { status: "loading" };
+			getMyAlbums()
+				.then(({ albums }) => {
+					albumsState = { status: "loaded", albums };
+					if (albums.length > 0 && selectedAlbumId === null) {
+						selectedAlbumId = albums[0].albumId;
+					}
+				})
+				.catch((err: unknown) => {
+					console.error("Failed to load albums", err);
+					albumsState = { status: "error", message: "Failed to load albums" };
+				});
+		}
+		if (activeTab === "photos" && photosState.status === "idle") {
+			photosState = { status: "loading" };
+			getProfileUploadedPhotos()
+				.then(({ medias }) => {
+					photosState = { status: "loaded", photos: medias };
+				})
+				.catch((err: unknown) => {
+					console.error("Failed to load photos", err);
+					photosState = { status: "error", message: "Failed to load photos" };
+				});
+		}
 	});
 
 	$effect(() => {
-		if (!open) albumsState = { status: "idle" };
+		if (!open) {
+			albumsState = { status: "idle" };
+			photosState = { status: "idle" };
+			activeTab = "albums";
+		}
 	});
 
 	async function handleShare() {
@@ -66,6 +96,22 @@
 			toast.error("Failed to share album");
 		} finally {
 			sharing = false;
+		}
+	}
+
+	async function handleSendPhoto(photo: ProfilePhoto) {
+		if (photo.mediaId === undefined) {
+			toast.error("Can't send this photo — Grindr didn't return a media ID for it");
+			return;
+		}
+		sendingHash = photo.mediaHash;
+		try {
+			await onSendPhoto({ ...photo, mediaId: photo.mediaId });
+			open = false;
+		} catch {
+			toast.error("Failed to send photo");
+		} finally {
+			sendingHash = null;
 		}
 	}
 
@@ -90,94 +136,166 @@
 <Drawer.Root bind:open>
 	<Drawer.Content>
 		<Drawer.Header>
-			<Drawer.Title>Share album</Drawer.Title>
+			<Drawer.Title>Send photo</Drawer.Title>
 		</Drawer.Header>
 
-		<div class="px-4 pb-4 flex flex-col gap-4">
-			{#if albumsState.status === "loading"}
-				<div class="flex justify-center py-8">
-					<Spinner class="size-6" />
-				</div>
-			{:else if albumsState.status === "error"}
-				<p class="text-destructive text-sm text-center py-4">
-					{albumsState.message}
-				</p>
-			{:else if albumsState.status === "loaded"}
-				{#if albumsState.albums.length === 0}
-					<div class="flex flex-col items-center gap-2 py-8 text-muted-foreground">
-						<ImagesIcon class="size-10" weight="duotone" />
-						<p class="text-sm">No albums yet</p>
-					</div>
-				{:else}
-					<div class="flex flex-col gap-2">
-						{#each albumsState.albums as album (album.albumId)}
-							{@const cover = coverUrl(album)}
-							<button
-								type="button"
-								class={[
-									"flex items-center gap-3 p-2 rounded-xl border transition-colors cursor-pointer",
-									selectedAlbumId === album.albumId
-										? "border-primary bg-primary/10"
-										: "border-border",
-								]}
-								onclick={() => (selectedAlbumId = album.albumId)}
-							>
-								<div class="size-14 rounded-lg overflow-hidden shrink-0 bg-muted">
-									{#if cover}
-										<img
-											src={cover}
-											alt=""
-											class="size-full object-cover"
-											loading="lazy"
-										/>
-									{:else}
-										<div class="size-full flex items-center justify-center">
-											<ImagesIcon class="size-6 text-muted-foreground" />
-										</div>
-									{/if}
-								</div>
-								<div class="flex flex-col items-start min-w-0">
-									<span class="text-sm font-medium truncate">
-										{album.albumName ?? "My album"}
-									</span>
-									<span class="text-xs text-muted-foreground">
-										{contentLabel(album)}
-									</span>
-								</div>
-							</button>
-						{/each}
-					</div>
+		<!-- Tab bar -->
+		<div class="flex gap-1 mx-4 mb-3 p-1 bg-muted rounded-xl">
+			<button
+				type="button"
+				class={[
+					"flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+					activeTab === "albums" ? "bg-background shadow-sm" : "text-muted-foreground",
+				]}
+				onclick={() => (activeTab = "albums")}
+			>
+				Albums
+			</button>
+			<button
+				type="button"
+				class={[
+					"flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+					activeTab === "photos" ? "bg-background shadow-sm" : "text-muted-foreground",
+				]}
+				onclick={() => (activeTab = "photos")}
+			>
+				My Photos
+			</button>
+		</div>
 
-					<div class="flex flex-col gap-1.5">
-						<p class="text-sm text-muted-foreground">Expires</p>
-						<div class="flex flex-wrap gap-2">
-							{#each expirationOptions as opt (opt.value)}
+		<div class="px-4 pb-4 flex flex-col gap-4">
+			{#if activeTab === "albums"}
+				{#if albumsState.status === "loading"}
+					<div class="flex justify-center py-8">
+						<Spinner class="size-6" />
+					</div>
+				{:else if albumsState.status === "error"}
+					<p class="text-destructive text-sm text-center py-4">
+						{albumsState.message}
+					</p>
+				{:else if albumsState.status === "loaded"}
+					{#if albumsState.albums.length === 0}
+						<div class="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+							<ImagesIcon class="size-10" weight="duotone" />
+							<p class="text-sm">No albums yet</p>
+						</div>
+					{:else}
+						<div class="flex flex-col gap-2">
+							{#each albumsState.albums as album (album.albumId)}
+								{@const cover = coverUrl(album)}
 								<button
 									type="button"
 									class={[
-										"px-3 py-1.5 rounded-full text-sm border transition-colors cursor-pointer",
-										expirationType === opt.value
-											? "border-primary bg-primary/10 text-primary"
+										"flex items-center gap-3 p-2 rounded-xl border transition-colors cursor-pointer",
+										selectedAlbumId === album.albumId
+											? "border-primary bg-primary/10"
 											: "border-border",
 									]}
-									onclick={() => (expirationType = opt.value)}
+									onclick={() => (selectedAlbumId = album.albumId)}
 								>
-									{opt.label}
+									<div class="size-14 rounded-lg overflow-hidden shrink-0 bg-muted">
+										{#if cover}
+											<img
+												src={cover}
+												alt=""
+												class="size-full object-cover"
+												loading="lazy"
+											/>
+										{:else}
+											<div class="size-full flex items-center justify-center">
+												<ImagesIcon class="size-6 text-muted-foreground" />
+											</div>
+										{/if}
+									</div>
+									<div class="flex flex-col items-start min-w-0">
+										<span class="text-sm font-medium truncate">
+											{album.albumName ?? "My album"}
+										</span>
+										<span class="text-xs text-muted-foreground">
+											{contentLabel(album)}
+										</span>
+									</div>
 								</button>
 							{/each}
 						</div>
-					</div>
 
-					<Button
-						class="w-full cursor-pointer"
-						disabled={selectedAlbumId === null || sharing}
-						onclick={handleShare}
-					>
-						{#if sharing}
-							<Spinner class="size-4 mr-2" />
-						{/if}
-						Share
-					</Button>
+						<div class="flex flex-col gap-1.5">
+							<p class="text-sm text-muted-foreground">Expires</p>
+							<div class="flex flex-wrap gap-2">
+								{#each expirationOptions as opt (opt.value)}
+									<button
+										type="button"
+										class={[
+											"px-3 py-1.5 rounded-full text-sm border transition-colors cursor-pointer",
+											expirationType === opt.value
+												? "border-primary bg-primary/10 text-primary"
+												: "border-border",
+										]}
+										onclick={() => (expirationType = opt.value)}
+									>
+										{opt.label}
+									</button>
+								{/each}
+							</div>
+						</div>
+
+						<Button
+							class="w-full cursor-pointer"
+							disabled={selectedAlbumId === null || sharing}
+							onclick={handleShare}
+						>
+							{#if sharing}
+								<Spinner class="size-4 mr-2" />
+							{/if}
+							Share
+						</Button>
+					{/if}
+				{/if}
+
+			{:else if activeTab === "photos"}
+				{#if photosState.status === "loading"}
+					<div class="flex justify-center py-8">
+						<Spinner class="size-6" />
+					</div>
+				{:else if photosState.status === "error"}
+					<p class="text-destructive text-sm text-center py-4">
+						{photosState.message}
+					</p>
+				{:else if photosState.status === "loaded"}
+					{#if photosState.photos.length === 0}
+						<div class="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+							<ImagesIcon class="size-10" weight="duotone" />
+							<p class="text-sm">No photos on your profile</p>
+						</div>
+					{:else}
+						<p class="text-xs text-muted-foreground">
+							Tap a photo to send it directly in chat.
+						</p>
+						<div class="grid grid-cols-3 gap-1.5">
+							{#each photosState.photos as photo (photo.mediaHash)}
+								{@const isSending = sendingHash === photo.mediaHash}
+								<button
+									type="button"
+									class="relative aspect-square rounded-xl overflow-hidden bg-muted cursor-pointer active:opacity-70 transition-opacity"
+									disabled={isSending}
+									onclick={() => handleSendPhoto(photo)}
+								>
+									<img
+										src="https://cdns.grindr.com/images/thumb/320x320/{photo.mediaHash}"
+										alt="Profile photo"
+										class="w-full h-full object-cover"
+										class:opacity-40={isSending}
+										loading="lazy"
+									/>
+									{#if isSending}
+										<div class="absolute inset-0 flex items-center justify-center">
+											<Spinner class="size-5 text-white" />
+										</div>
+									{/if}
+								</button>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			{/if}
 		</div>

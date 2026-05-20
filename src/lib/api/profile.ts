@@ -69,6 +69,20 @@ export async function getMyProfile() {
 	const profile = await fetchRest("/v4/me/profile").then(
 		(res) => res.jsonParsed(getProfilesResponseSchema).profiles[0],
 	);
+	// /v4/me/profile sometimes omits medias for self — backfill from the images endpoint
+	if (profile.medias.length === 0) {
+		try {
+			const { medias } = await getProfileUploadedPhotos();
+			profile.medias = medias.map((m) => ({
+				...m,
+				reason: null,
+				takenOnGrindr: null,
+				createdAt: null,
+			}));
+		} catch {
+			// best-effort
+		}
+	}
 	myProfileCache = { profile, updatedAt: Date.now() };
 	return profile;
 }
@@ -80,11 +94,17 @@ export async function getProfileUploadedPhotos() {
 				medias: z.array(
 					z.object({
 						mediaHash: mediaHashPublicSchema,
+						mediaId: z.number().int().optional(),
 						type: z.number().int(),
 						state: z.number().int(),
+						createdAt: z.number().nonnegative().optional(),
 					}),
 				),
 			}),
 		),
 	);
 }
+
+export type ProfilePhoto = Awaited<
+	ReturnType<typeof getProfileUploadedPhotos>
+>["medias"][number];

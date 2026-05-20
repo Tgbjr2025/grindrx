@@ -5,6 +5,8 @@
 	import { fade } from "svelte/transition";
 
 	import { shareAlbum } from "$lib/api/album";
+	import { sendProfilePhotoMessage } from "$lib/api/messages";
+	import type { ProfilePhoto } from "$lib/api/profile";
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
@@ -41,6 +43,19 @@
 			return;
 		}
 		await shareAlbum({ albumId, profileId: recipientProfileId, expirationType });
+	}
+
+	async function onSendPhoto(photo: ProfilePhoto & { mediaId: number }) {
+		if (recipientProfileId === null) {
+			toast.error("Cannot send photo — conversation not loaded");
+			return;
+		}
+		await sendProfilePhotoMessage({
+			toUserId: recipientProfileId,
+			mediaId: photo.mediaId,
+			mediaHash: photo.mediaHash,
+			createdAt: photo.createdAt ?? null,
+		});
 	}
 </script>
 
@@ -126,7 +141,7 @@
 	</form>
 </div>
 
-<AlbumPicker bind:open={albumPickerOpen} onShare={onShareAlbum} />
+<AlbumPicker bind:open={albumPickerOpen} onShare={onShareAlbum} {onSendPhoto} />
 
 <style lang="postcss">
 	@reference "$layout";
