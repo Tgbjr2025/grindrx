@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">Open Grind</string>
-    <string name="main_activity_title">Open Grind</string>
+    <string name="app_name">GrindX</string>
+    <string name="main_activity_title">GrindX</string>
+    <string name="weather_app_name">Weather</string>
 </resources>

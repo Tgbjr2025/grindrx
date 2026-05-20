@@ -3,6 +3,7 @@
 
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import * as Item from "$lib/components/ui/item";
+	import DiscreetIconSetting from "./DiscreetIconSetting.svelte";
 	import DistanceUnitSetting from "./DistanceUnitSetting.svelte";
 	import RevealMessageReadSetting from "./RevealMessageReadSetting.svelte";
 	import RevealProfileViewSetting from "./RevealProfileViewSetting.svelte";
@@ -19,11 +20,6 @@
 			title: "Notifications",
 			description:
 				"Notification settings are not yet available in this version. Enable notifications from your device settings.",
-		},
-		"Discreet App Icon": {
-			title: "Discreet App Icon",
-			description:
-				"Discreet App Icon lets you change the app icon to a less recognizable one. This feature is coming soon.",
 		},
 		PIN: {
 			title: "PIN Lock",
@@ -62,7 +58,7 @@
 		<RevealMessageReadSetting />
 		<RevealProfileViewSetting />
 		<h2>Security</h2>
-		{@render item({ title: "Discreet App Icon" })}
+		<DiscreetIconSetting />
 		{@render item({ title: "PIN" })}
 	</main>
 </div>

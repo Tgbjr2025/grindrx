@@ -1,5 +1,10 @@
 package org.opengrind
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -23,11 +28,54 @@ class MainActivity : TauriActivity() {
 		@JavascriptInterface fun left() = insetsLeft
 		@JavascriptInterface fun right() = insetsRight
 	}
+
+	inner class DiscreetModeInterface {
+		private fun mainAlias()    = ComponentName(packageName, "$packageName.MainAlias")
+		private fun weatherAlias() = ComponentName(packageName, "$packageName.WeatherAlias")
+
+		@JavascriptInterface
+		fun isDiscreet(): Boolean {
+			return packageManager.getComponentEnabledSetting(weatherAlias()) ==
+				PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+		}
+
+		@JavascriptInterface
+		fun setDiscreet(discreet: Boolean) {
+			val flags = PackageManager.DONT_KILL_APP
+			packageManager.setComponentEnabledSetting(
+				mainAlias(),
+				if (discreet) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+				else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+				flags
+			)
+			packageManager.setComponentEnabledSetting(
+				weatherAlias(),
+				if (discreet) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+				else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+				flags
+			)
+		}
+	}
 	
+	private fun createNotificationChannel() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			val channel = NotificationChannel(
+				"grindx_messages",
+				"Messages",
+				NotificationManager.IMPORTANCE_HIGH
+			).apply {
+				description = "GrindX message notifications"
+			}
+			val manager = getSystemService(NotificationManager::class.java)
+			manager.createNotificationChannel(channel)
+		}
+	}
+
 	override fun onCreate(savedInstanceState: Bundle?) {
 		enableEdgeToEdge()
 		Keyring.initializeNdkContext(applicationContext)
 		super.onCreate(savedInstanceState)
+		createNotificationChannel()
 		
 		WindowInsetsControllerCompat(window, window.decorView).apply {
 			isAppearanceLightStatusBars = false
@@ -65,6 +113,7 @@ class MainActivity : TauriActivity() {
 		super.onWebViewCreate(webView)
 		webViewRef = webView
 		webView.addJavascriptInterface(InsetsInterface(), "__AndroidInsets")
+		webView.addJavascriptInterface(DiscreetModeInterface(), "__DiscreetMode")
 	}
 	
 	override fun onBackPressed() {

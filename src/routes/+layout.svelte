@@ -4,6 +4,8 @@
 	import "@fontsource-variable/ibm-plex-sans/wght-italic.css";
 
 	import "../layout.css";
+	import { invoke } from "@tauri-apps/api/core";
+	import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 	import { onMount } from "svelte";
 	import { Toaster } from "svelte-sonner";
 
@@ -15,6 +17,25 @@
 	onMount(() => {
 		applyAndroidInsets();
 		applyBackGestureHandler();
+
+		// Track foreground/background so Rust knows when to fire OS notifications
+		const syncForeground = () => {
+			invoke("set_foreground", { foreground: document.visibilityState === "visible" }).catch(
+				() => {},
+			);
+		};
+		document.addEventListener("visibilitychange", syncForeground);
+
+		// Request notification permission on Android 13+
+		isPermissionGranted()
+			.then((granted) => {
+				if (!granted) return requestPermission();
+			})
+			.catch(() => {});
+
+		return () => {
+			document.removeEventListener("visibilitychange", syncForeground);
+		};
 	});
 
 	import RequestBlockedAlert from "$lib/api/request-blocked/RequestBlockedAlert.svelte";

@@ -1,9 +1,11 @@
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 use tokio::time::sleep;
 use tokio_tungstenite::{
     connect_async,
@@ -128,6 +130,13 @@ async fn run_message_loop(
                         if let Some(event_type) = val["type"].as_str() {
                             let safe_type = event_type.replace('.', "_");
                             app.emit(&format!("grindr:{safe_type}"), &val).ok();
+
+                            if event_type == "chat.v1.message_sent" {
+                                let state = app.state::<crate::state::AppState>();
+                                if !state.is_foreground.load(Ordering::Relaxed) {
+                                    maybe_notify(app, &val);
+                                }
+                            }
                         }
                     }
                 }
@@ -161,6 +170,32 @@ async fn run_message_loop(
             }
         }
     }
+}
+
+fn maybe_notify(app: &AppHandle, val: &Value) {
+    let body = match val["payload"]["type"].as_str() {
+        Some("Text") => val["payload"]["body"]["text"]
+            .as_str()
+            .unwrap_or("New message")
+            .chars()
+            .take(80)
+            .collect::<String>(),
+        Some("Image") => "Sent you a photo".to_owned(),
+        Some("Album") | Some("ExpiringAlbum") | Some("ExpiringAlbumV2") => {
+            "Shared an album".to_owned()
+        }
+        Some("Audio") => "Sent you a voice message".to_owned(),
+        Some("Video") => "Sent you a video".to_owned(),
+        _ => "New message".to_owned(),
+    };
+
+    app.notification()
+        .builder()
+        .title("GrindX")
+        .body(&body)
+        .channel_id("grindx_messages")
+        .show()
+        .ok();
 }
 
 #[tauri::command]

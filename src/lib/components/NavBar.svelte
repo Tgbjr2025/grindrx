@@ -26,38 +26,34 @@
 		"fixed bottom-0 z-50 w-full pt-2 pb-[calc(0.5rem+var(--safe-area-bottom))]",
 	]}
 	bgClass="bg-linear-to-t from-background to-transparent"
-	contentClass="overflow-auto no-scrollbar left-1/2 -translate-x-1/2 m-auto flex justify-center gap-2 px-2"
+	contentClass="w-full flex items-center justify-center gap-1.5 px-2"
 >
 	<div
 		class={[
 			tabsListVariants({ variant: "default" }),
-			"links shrink-0 [&>a>svg]:size-5!",
+			"links w-full [&>a>svg]:size-5!",
 		]}
 	>
-		<a href="/" data-active={page.route.id === "/(protected)/(navbar)/(root)"}>
+		<a href="/" aria-label="Browse" data-active={page.route.id === "/(protected)/(navbar)/(root)"}>
 			<DotsNineIcon weight="fill" />
-			Browse
 		</a>
 		<a
 			href="/right-now"
+			aria-label="Right Now"
 			data-active={page.route.id === "/(protected)/(navbar)/right-now"}
 		>
 			<DropIcon weight="fill" />
-			Right Now
 		</a>
-		<a href="/interest" data-active={page.route.id === "/(protected)/(navbar)/interest"}>
+		<a href="/interest" aria-label="Interest" data-active={page.route.id === "/(protected)/(navbar)/interest"}>
 			<FireIcon weight="fill" />
-			Interest
 		</a>
-		<a href="/views" data-active={page.route.id === "/(protected)/(navbar)/views"}>
+		<a href="/views" aria-label="Views" data-active={page.route.id === "/(protected)/(navbar)/views"}>
 			<EyeIcon weight="fill" />
-			Views
 		</a>
-		<a href="/map" data-active={page.route.id === "/(protected)/(navbar)/map"}>
+		<a href="/map" aria-label="Map" data-active={page.route.id === "/(protected)/(navbar)/map"}>
 			<MapPinIcon weight="fill" />
-			Map
 		</a>
-		<a href="/chat" data-active={page.route.id === "/(protected)/chat"}>
+		<a href="/chat" aria-label="Inbox" data-active={page.route.id === "/(protected)/chat"}>
 			<span class="relative inline-flex">
 				<ChatCircleIcon weight="fill" />
 				{#if totalUnread > 0}
@@ -68,13 +64,13 @@
 					</span>
 				{/if}
 			</span>
-			Inbox
 		</a>
 	</div>
 	<a
 		href="/settings"
+		aria-label="Settings"
 		class={[
-			"size-14 flex shrink-0 rounded-full border p-1 bg-muted",
+			"size-11 flex shrink-0 rounded-full border p-0.5 bg-muted",
 			{
 				"border-accent border-2":
 					page.route.id === "/(protected)/(navbar)/settings/(me)",
@@ -89,13 +85,12 @@
 				<img
 					src="https://cdns.grindr.com/images/thumb/320x320/{mainPhoto.mediaHash}"
 					alt=""
-					width="56"
-					height="56"
+					width="44"
+					height="44"
 					class="rounded-full bg-neutral-600 border-transparent object-cover object-center"
 				/>
 			{/if}
 		{/await}
-		<!-- TODO: merge all avatars with fallbacks into single component -->
 	</a>
 </ProgressiveBlur>
 

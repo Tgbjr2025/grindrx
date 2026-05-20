@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sky background -->
+    <path android:fillColor="#4A90D9" android:pathData="M0,0h108v108h-108z"/>
+    <!-- Sun body -->
+    <path android:fillColor="#FFD54F"
+        android:pathData="M54,30 m-12,0 a12,12 0 1,0 24,0 a12,12 0 1,0 -24,0"/>
+    <!-- Sun rays -->
+    <path android:fillColor="#FFD54F" android:strokeColor="#FFD54F" android:strokeWidth="2.5"
+        android:pathData="M54,14 L54,10 M54,52 L54,56 M38,30 L34,30 M70,30 L74,30 M43,19 L40,16 M65,41 L68,44 M43,41 L40,44 M65,19 L68,16"/>
+    <!-- Cloud main body -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M72,58 a10,10 0 0,0 -20,0 a8,8 0 0,0 0,16 l20,0 a10,10 0 0,0 0,-16z"/>
+    <!-- Cloud puff left -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M40,66 a8,8 0 0,1 16,0 a7,7 0 0,1 0,8 l-16,0 a8,8 0 0,1 0,-8z"/>
+</vector>
