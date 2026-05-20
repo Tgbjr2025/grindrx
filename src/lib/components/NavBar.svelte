@@ -5,6 +5,7 @@
 	import DropIcon from "phosphor-svelte/lib/DropIcon";
 	import EyeIcon from "phosphor-svelte/lib/EyeIcon";
 	import FireIcon from "phosphor-svelte/lib/FireIcon";
+	import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
 
 	import { getMyProfile } from "$lib/api/profile";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
@@ -51,6 +52,10 @@
 		<a href="/views" data-active={page.route.id === "/(protected)/(navbar)/views"}>
 			<EyeIcon weight="fill" />
 			Views
+		</a>
+		<a href="/map" data-active={page.route.id === "/(protected)/(navbar)/map"}>
+			<MapPinIcon weight="fill" />
+			Map
 		</a>
 		<a href="/chat" data-active={page.route.id === "/(protected)/chat"}>
 			<span class="relative inline-flex">

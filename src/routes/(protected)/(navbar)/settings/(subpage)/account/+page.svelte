@@ -6,6 +6,7 @@
 	const items: { title: string; href: string }[] = [
 		{ title: "Email", href: "/settings/account/email" },
 		{ title: "Password", href: "/settings/account/password" },
+		{ title: "Photos", href: "/settings/account/photos" },
 		{ title: "Favorites", href: "/settings/account/favorites" },
 		{ title: "Blocked users", href: "/settings/account/blocked" },
 		{ title: "Hidden users", href: "/settings/account/hidden" },

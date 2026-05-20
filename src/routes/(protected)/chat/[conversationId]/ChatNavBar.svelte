@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArrowLeftIcon, ArrowsClockwiseIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowLeftIcon, ArrowsClockwiseIcon, ImagesIcon, UserIcon } from "phosphor-svelte";
 
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import DisplayName from "$lib/components/DisplayName.svelte";
@@ -9,11 +9,13 @@
 	import * as Card from "$lib/components/ui/card";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import type { ConversationState } from "./conversation-state.svelte";
+	import MediaGallery from "./MediaGallery.svelte";
 
 	let { conversationState }: { conversationState: ConversationState } =
 		$props();
 
 	let refreshing = $state(false);
+	let galleryOpen = $state(false);
 
 	async function handleRefresh() {
 		if (refreshing) return;
@@ -94,6 +96,13 @@
 			</Card.Header>
 		</a>
 	{/if}
+	<button
+		onclick={() => (galleryOpen = true)}
+		aria-label="Shared photos"
+		class="flex items-center justify-center w-12 h-full text-foreground/60 hover:text-foreground transition-colors"
+	>
+		<ImagesIcon size={22} />
+	</button>
 	{#if conversationState.wsStatus === "disconnected"}
 		<button
 			onclick={handleRefresh}
@@ -105,3 +114,5 @@
 		</button>
 	{/if}
 </ProgressiveBlur>
+
+<MediaGallery bind:open={galleryOpen} messages={conversationState.messages} />

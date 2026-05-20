@@ -34,6 +34,7 @@
 		"@tauri-apps/plugin-opener": "~2.5",
 		"@tauri-apps/plugin-os": "~2.3.2",
 		"date-fns": "^4.1.0",
+		"leaflet": "^1.9.4",
 		"lodash-es": "^4.18.1",
 		"paneforge": "^1.0.2",
 		"photoswipe": "^5.4.4",
