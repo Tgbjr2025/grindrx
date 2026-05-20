@@ -18,7 +18,7 @@
 			<AlertDialog.Description>
 				Cloudflare protecting Grindr API is currently blocking your requests
 				because of suspicious activity. This is a <Link
-					href="https://git.opengrind.org/open-grind/open-grind/issues/81"
+					href="https://git.dominusaxis.com/dominus/open-grind/issues/81"
 				>
 					known issue
 				</Link>. If you use a VPN, try disabling it. You can also rotate request

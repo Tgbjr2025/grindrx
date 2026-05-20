@@ -1,8 +1,8 @@
 {
-	"name": "open-grind",
+	"name": "grindx",
 	"version": "0.1.0-alpha.2",
 	"license": "MIT",
-	"author": "Open Grind Governance (https://opengrind.org/governance)",
+	"author": "GrindX (https://git.dominusaxis.com/dominus/open-grind)",
 	"type": "module",
 	"scripts": {
 		"docs": "bun run --cwd docs start",

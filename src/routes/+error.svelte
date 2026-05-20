@@ -135,7 +135,7 @@
 		</Empty.Content>
 		<Button variant="link" class="text-muted-foreground" size="sm">
 			<Link
-				href="https://git.opengrind.org/open-grind/open-grind/issues/new?title=%5BBUG%5D+Short+description+of+the+issue"
+				href="https://git.dominusaxis.com/dominus/open-grind/issues/new?title=%5BBUG%5D+Short+description+of+the+issue"
 			>
 				Report an issue <ArrowUpRightIcon class="inline" />
 			</Link>
