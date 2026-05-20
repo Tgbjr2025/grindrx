@@ -6,6 +6,7 @@
 	import { fetchRest } from "$lib/api";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
 	import Button from "$lib/components/ui/button/button.svelte";
+	import * as Empty from "$lib/components/ui/empty";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import AboutMe from "./AboutMe.svelte";
 	import Distance from "./Distance.svelte";
@@ -218,6 +219,13 @@
 					</div>
 				{/if}
 			</div>
+		{:catch}
+			<Empty.Root class="py-24">
+				<Empty.Header>
+					<Empty.Title>Couldn't Load Profile</Empty.Title>
+					<Empty.Description>Check your connection and try again.</Empty.Description>
+				</Empty.Header>
+			</Empty.Root>
 		{/await}
 	</main>
 </div>
