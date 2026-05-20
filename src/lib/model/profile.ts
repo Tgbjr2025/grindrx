@@ -250,23 +250,26 @@ export const vaccinesSchema = z.enum(Vaccine);
 
 export type VaccineId = z.infer<typeof vaccinesSchema>;
 
-export const socialNetworksSchema = z.object({
-	twitter: z
-		.object({
-			userId: z.string().nullable(),
-		})
-		.optional(),
-	facebook: z
-		.object({
-			userId: z.string().nullable(),
-		})
-		.optional(),
-	instagram: z
-		.object({
-			userId: z.string().nullable(),
-		})
-		.optional(),
-});
+export const socialNetworksSchema = z.preprocess(
+	(val) => (Array.isArray(val) ? {} : val),
+	z.object({
+		twitter: z
+			.object({
+				userId: z.string().nullable(),
+			})
+			.optional(),
+		facebook: z
+			.object({
+				userId: z.string().nullable(),
+			})
+			.optional(),
+		instagram: z
+			.object({
+				userId: z.string().nullable(),
+			})
+			.optional(),
+	}),
+);
 
 export type SocialNetworks = z.infer<typeof socialNetworksSchema>;
 

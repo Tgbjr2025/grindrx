@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { ChatCircleIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon } from "phosphor-svelte";
+	import { ChatCircleIcon, FlagIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon, ProhibitIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
@@ -8,6 +9,7 @@
 	import Button from "$lib/components/ui/button/button.svelte";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Skeleton } from "$lib/components/ui/skeleton";
+	import ReportDialog from "../../../chat/[conversationId]/message/ReportDialog.svelte";
 	import AboutMe from "./AboutMe.svelte";
 	import Distance from "./Distance.svelte";
 	import EditProfileSheet from "./EditProfileSheet.svelte";
@@ -39,6 +41,17 @@
 
 	let editOpen = $state(false);
 	let refetchTick = $state(0);
+	let reportOpen = $state(false);
+
+	async function blockUser() {
+		try {
+			await fetchRest(`/v4/blocks/${profileId}`, { method: "POST" });
+			toast.success("User blocked");
+			goto("/").catch((err) => console.error(err));
+		} catch {
+			toast.error("Failed to block user. Please try again.");
+		}
+	}
 
 	const profile = $derived.by(() => {
 		// refetchTick read here so the derived re-runs after a save
@@ -127,7 +140,26 @@
 					<Button size="icon-lg" class="size-14" href="/chat/{conversationId}">
 						<ChatCircleIcon weight="fill" class="size-8" />
 					</Button>
+					<Button
+						size="icon-lg"
+						class="size-14"
+						variant="outline"
+						onclick={blockUser}
+						aria-label="Block user"
+					>
+						<ProhibitIcon class="size-8" />
+					</Button>
+					<Button
+						size="icon-lg"
+						class="size-14"
+						variant="outline"
+						onclick={() => (reportOpen = true)}
+						aria-label="Report user"
+					>
+						<FlagIcon class="size-8" />
+					</Button>
 				</nav>
+				<ReportDialog bind:open={reportOpen} {profileId} />
 			{:else}
 				<nav class="absolute -translate-y-1/2 right-2 flex items-center gap-2">
 					<Button

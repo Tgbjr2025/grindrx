@@ -15,10 +15,9 @@ describe("rightNowStatusSchema", () => {
 		expect(rightNowStatusSchema.parse("NOT_HOSTING")).toBe("NOT_HOSTING");
 	});
 
-	it("rejects unknown status values from API", () => {
-		// If Grindr adds a new rightNow status this will fail — the schema needs
-		// to be widened to z.string() with a fallback to avoid breaking the app.
+	it("accepts unknown status values from API without crashing", () => {
+		// Schema widened with .or(z.string()) so new Grindr values don't break parsing.
 		const result = rightNowStatusSchema.safeParse("AWAY_FROM_APP");
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
 	});
 });

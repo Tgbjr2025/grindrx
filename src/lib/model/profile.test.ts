@@ -28,11 +28,11 @@ describe("socialNetworksSchema", () => {
 		}
 	});
 
-	it("rejects socialNetworks as an array (API inconsistency guard)", () => {
-		// Cascade v3 endpoint returns an empty array [] when no socials are set,
-		// while the profile endpoint returns {}. This test documents the mismatch.
+	it("accepts socialNetworks as an array and normalises to empty object", () => {
+		// Cascade v3 returns [] when no socials are set; z.preprocess converts it to {}.
 		const result = socialNetworksSchema.safeParse([]);
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
+		if (result.success) expect(result.data).toEqual({});
 	});
 });
 
@@ -49,10 +49,9 @@ describe("viewSourceEnumSchema", () => {
 		expect(viewSourceEnumSchema.parse("UNKNOWN")).toBe("UNKNOWN");
 	});
 
-	it("rejects unknown view source values from API", () => {
-		// If Grindr adds a new view source this will fail — the schema needs
-		// to be widened to z.string() with a fallback to avoid breaking the app.
+	it("accepts unknown view source values from API without crashing", () => {
+		// Schema widened with .or(z.string()) so new Grindr values don't break parsing.
 		const result = viewSourceEnumSchema.safeParse("EXPLORE");
-		expect(result.success).toBe(false);
+		expect(result.success).toBe(true);
 	});
 });

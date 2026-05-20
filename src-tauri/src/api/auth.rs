@@ -123,6 +123,20 @@ impl AuthStorage {
             .set_secret(&session_bytes)
             .map_err(|e| AppError::Auth(e.to_string()))
     }
+    pub fn delete_session() {
+        match Self::get_session_entry() {
+            Ok(entry) => {
+                if let Err(e) = entry.delete_credential() {
+                    if !matches!(e, keyring_core::Error::NoEntry) {
+                        eprintln!("Warning: failed to delete keyring session entry: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: failed to create keyring entry for deletion: {e}");
+            }
+        }
+    }
 }
 
 impl GrindrClient {
@@ -233,7 +247,9 @@ pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
         .await
         .take()
         .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))
-        .map(|_| ())
+        .map(|_| {
+            AuthStorage::delete_session();
+        })
 }
 
 #[tauri::command]

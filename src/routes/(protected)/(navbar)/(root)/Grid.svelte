@@ -2,7 +2,10 @@
 	import { uniqBy } from "lodash-es";
 	import { onMount } from "svelte";
 
+	import { UsersFourIcon } from "phosphor-svelte";
+
 	import { Button } from "$lib/components/ui/button";
+	import * as Empty from "$lib/components/ui/empty";
 	import { gridState } from "./grid-state.svelte";
 	import ProfileMiniCard from "./ProfileMiniCard.svelte";
 
@@ -90,6 +93,19 @@
 				</p>
 				<Button onclick={() => gridState.refresh()}>Retry</Button>
 			</div>
+		</div>
+	{:else if gridProfiles.length === 0}
+		<div class="col-span-full flex flex-1 items-center justify-center py-16">
+			<Empty.Root>
+				<Empty.Header>
+					<Empty.Media variant="icon">
+						<UsersFourIcon weight="fill" />
+					</Empty.Media>
+					<Empty.Title>Nobody nearby</Empty.Title>
+					<Empty.Description>Try adjusting your filters or check back later.</Empty.Description>
+				</Empty.Header>
+				<Button onclick={() => gridState.refresh()}>Refresh</Button>
+			</Empty.Root>
 		</div>
 	{:else}
 		{#each gridProfiles as item (item.id)}
