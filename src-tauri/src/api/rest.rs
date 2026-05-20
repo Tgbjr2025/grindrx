@@ -109,6 +109,53 @@ impl GrindrClient {
     }
 }
 
+#[derive(Serialize)]
+pub struct UploadImageResult {
+    pub status: u16,
+    pub body: String,
+}
+
+#[tauri::command]
+pub async fn upload_image(
+    state: tauri::State<'_, AppState>,
+    image_base64: String,
+    mime_type: String,
+) -> Result<UploadImageResult, AppError> {
+    let bytes = STANDARD
+        .decode(&image_base64)
+        .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
+
+    let ext = if mime_type.contains("png") { "photo.png" } else { "photo.jpg" };
+
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(ext)
+        .mime_str(&mime_type)
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    let form = reqwest::multipart::Form::new().part("photo", part);
+
+    let authorization = state
+        .client()?
+        .authorization_header()
+        .await
+        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
+
+    let http = state.client()?.http.read().await.clone();
+
+    let response = http
+        .post(format!("{BASE_URL}/v3.1/me/profile/images"))
+        .header("Authorization", authorization)
+        .header("L-Grindr-Roles", grindr_roles_header_value())
+        .multipart(form)
+        .send()
+        .await?;
+
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+
+    Ok(UploadImageResult { status, body })
+}
+
 #[derive(Deserialize)]
 struct RequestPayload {
     method: String,

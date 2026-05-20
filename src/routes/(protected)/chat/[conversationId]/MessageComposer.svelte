@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
+	import { CameraIcon, ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
 	import { shareAlbum } from "$lib/api/album";
 	import { sendProfilePhotoMessage } from "$lib/api/messages";
-	import type { ProfilePhoto } from "$lib/api/profile";
+	import { type ProfilePhoto, uploadProfileImage } from "$lib/api/profile";
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
@@ -24,6 +24,8 @@
 
 	let textContent = $state("");
 	let albumPickerOpen = $state(false);
+	let uploading = $state(false);
+	let fileInputEl = $state<HTMLInputElement | null>(null);
 
 	async function onSubmit() {
 		const text = textContent.trim();
@@ -57,9 +59,37 @@
 			createdAt: photo.createdAt ?? null,
 		});
 	}
+
+	async function onFileSelected(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || recipientProfileId === null) return;
+		input.value = "";
+
+		uploading = true;
+		try {
+			const { mediaHash, mediaId } = await uploadProfileImage(file);
+			if (mediaId === undefined) {
+				toast.error("Upload succeeded but Grindr didn't return a media ID — can't send");
+				return;
+			}
+			await sendProfilePhotoMessage({
+				toUserId: recipientProfileId,
+				mediaId,
+				mediaHash,
+				createdAt: Date.now(),
+			});
+		} catch (err) {
+			console.error("Failed to upload and send photo", err);
+			toast.error("Failed to send photo");
+		} finally {
+			uploading = false;
+		}
+	}
 </script>
 
 <div class="relative mx-2 mb-1 shrink-0 min-w-0 flex items-end gap-0 bg-card/80 backdrop-blur-sm rounded-[24px] border border-border/60 px-1 py-1 shadow-sm">
+	<!-- Albums / My Photos picker -->
 	<Button
 		type="button"
 		variant="ghost"
@@ -76,6 +106,26 @@
 			class="size-4.5"
 		/>
 	</Button>
+
+	<!-- Camera / device gallery upload -->
+	<label
+		class="size-9.5 shrink-0 flex items-center justify-center rounded-full cursor-pointer p-2 transition-colors hover:bg-accent"
+		class:opacity-50={uploading}
+	>
+		{#if uploading}
+			<span class="size-4.5 border-2 border-muted-foreground/40 border-t-muted-foreground rounded-full animate-spin"></span>
+		{:else}
+			<CameraIcon weight="fill" color="var(--muted-foreground)" class="size-4.5" />
+		{/if}
+		<input
+			bind:this={fileInputEl}
+			type="file"
+			accept="image/*"
+			class="sr-only"
+			disabled={uploading || recipientProfileId === null}
+			onchange={onFileSelected}
+		/>
+	</label>
 
 	<form
 		class="relative flex-1 min-h-9.5 min-w-0"

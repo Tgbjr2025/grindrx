@@ -1,5 +1,6 @@
 import z from "zod";
 
+import { invoke } from "@tauri-apps/api/core";
 import { fetchRest } from "$lib/api";
 import { mediaHashPublicSchema } from "$lib/model/media";
 import {
@@ -108,3 +109,59 @@ export async function getProfileUploadedPhotos() {
 export type ProfilePhoto = Awaited<
 	ReturnType<typeof getProfileUploadedPhotos>
 >["medias"][number];
+
+const uploadResponseSchema = z.object({
+	images: z.array(
+		z.object({
+			mediaHash: mediaHashPublicSchema,
+			mediaId: z.number().int().optional(),
+		}),
+	),
+});
+
+export async function uploadProfileImage(file: File): Promise<{
+	mediaHash: string;
+	mediaId: number | undefined;
+}> {
+	const buffer = await file.arrayBuffer();
+	const bytes = new Uint8Array(buffer);
+	// convert to base64
+	let binary = "";
+	for (let i = 0; i < bytes.length; i++) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	const imageBase64 = btoa(binary);
+
+	const result = await invoke<{ status: number; body: string }>("upload_image", {
+		imageBase64,
+		mimeType: file.type || "image/jpeg",
+	});
+
+	// Grindr responds 200/201 on success
+	if (result.status >= 400) {
+		throw new Error(`Upload failed (${result.status}): ${result.body}`);
+	}
+
+	// Try to parse the response for mediaHash/mediaId
+	try {
+		const json = JSON.parse(result.body);
+		const parsed = uploadResponseSchema.safeParse(json);
+		if (parsed.success && parsed.data.images.length > 0) {
+			return {
+				mediaHash: parsed.data.images[0].mediaHash,
+				mediaId: parsed.data.images[0].mediaId,
+			};
+		}
+		// Fallback: try flat response { mediaHash, mediaId }
+		const flat = z
+			.object({ mediaHash: mediaHashPublicSchema, mediaId: z.number().int().optional() })
+			.safeParse(json);
+		if (flat.success) {
+			return { mediaHash: flat.data.mediaHash, mediaId: flat.data.mediaId };
+		}
+	} catch {
+		// ignore parse error
+	}
+
+	throw new Error(`Unexpected upload response: ${result.body}`);
+}
