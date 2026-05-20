@@ -147,8 +147,8 @@ class GridState {
 						hasAlbum: gridSearchFilters?.photos.includes("has-albums"),
 					}),
 				...(gridSearchFilters?.photosEnabled &&
-					gridSearchFilters?.photos.includes("has-profile-pic") && {
-						faceOnly: gridSearchFilters?.photos.includes("has-face-pics"),
+					gridSearchFilters?.photos.includes("has-face-pics") && {
+						faceOnly: true,
 					}),
 				...(gridSearchFilters?.tribesEnabled && {
 					tribes: gridSearchFilters?.tribes,
