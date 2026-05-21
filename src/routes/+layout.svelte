@@ -50,6 +50,11 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
+	<script
+		defer
+		src="https://analytics.dominusaxis.com/script.js"
+		data-website-id="41d0a4bc-b714-4d6d-b7e4-d3ed18225886"
+	></script>
 </svelte:head>
 <div
 	class="fixed inset-x-0 top-0 z-150000 bg-background/50"
