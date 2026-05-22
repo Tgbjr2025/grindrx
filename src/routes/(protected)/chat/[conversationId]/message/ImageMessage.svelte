@@ -16,8 +16,10 @@
 		const gallery = media.el;
 		if (!gallery) return;
 		let lightbox: PhotoSwipeLightbox | undefined;
+		let destroyed = false;
 		import("photoswipe/lightbox")
 			.then(({ default: PhotoSwipeLightbox }) => {
+				if (destroyed) return;
 				lightbox = new PhotoSwipeLightbox({
 					gallery,
 					children: "a",
@@ -102,7 +104,10 @@
 				lightbox.init();
 			})
 			.catch((error) => console.error(error));
-		return () => lightbox?.destroy();
+		return () => {
+			destroyed = true;
+			lightbox?.destroy();
+		};
 	});
 </script>
 

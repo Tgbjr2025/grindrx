@@ -25,6 +25,10 @@
 			Email
 		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/account/password"}
 			Change Password
+		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/account/photos"}
+			Photos
+		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/account/favorites"}
+			Favorites
 		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/account/blocked"}
 			Blocked Users
 		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/account/hidden"}

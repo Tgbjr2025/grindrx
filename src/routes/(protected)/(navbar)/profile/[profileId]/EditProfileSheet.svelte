@@ -49,7 +49,7 @@
 	let sexualPosition = $state<SexualPositionId | "">(profileData.sexualPosition ?? "");
 	let bodyType = $state<BodyTypeId | "">(profileData.bodyType ?? "");
 	let height = $state<string>(profileData.height !== null ? String(profileData.height) : "");
-	let weight = $state<string>(profileData.weight !== null ? String(profileData.weight) : "");
+	let weight = $state<string>(profileData.weight !== null ? String(Math.round(profileData.weight / 1000)) : "");
 	let ethnicity = $state<EthnicityId | "">(profileData.ethnicity ?? "");
 	let relationshipStatus = $state<RelationshipStatusId | "">(
 		profileData.relationshipStatus ?? "",
@@ -68,7 +68,7 @@
 			sexualPosition = profileData.sexualPosition ?? "";
 			bodyType = profileData.bodyType ?? "";
 			height = profileData.height !== null ? String(profileData.height) : "";
-			weight = profileData.weight !== null ? String(profileData.weight) : "";
+			weight = profileData.weight !== null ? String(Math.round(profileData.weight / 1000)) : "";
 			ethnicity = profileData.ethnicity ?? "";
 			relationshipStatus = profileData.relationshipStatus ?? "";
 			selectedLookingFor = new Set(profileData.lookingFor);
@@ -105,7 +105,7 @@
 				sexualPosition: sexualPosition !== "" ? sexualPosition : null,
 				bodyType: bodyType !== "" ? bodyType : null,
 				height: height !== "" ? Number(height) : null,
-				weight: weight !== "" ? Number(weight) : null,
+				weight: weight !== "" ? Number(weight) * 1000 : null,
 				ethnicity: ethnicity !== "" ? ethnicity : null,
 				relationshipStatus: relationshipStatus !== "" ? relationshipStatus : null,
 				lookingFor: Array.from(selectedLookingFor),

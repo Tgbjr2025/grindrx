@@ -26,6 +26,7 @@
 	let expanded = $state(false);
 	let expansion = new Tween(0, { duration: 600, easing: expoOut });
 
+	let mounted = $state(false);
 	let from: HTMLDivElement;
 	let to: HTMLDivElement;
 	let fromPos = $state({ left: 0, top: 0 });
@@ -58,6 +59,7 @@
 				console.error("Failed to set initial expansion state", error);
 			});
 		lastScrollY = window.scrollY;
+		mounted = true;
 	});
 
 	let openFilters = $state({
@@ -98,10 +100,11 @@
 
 <svelte:window
 	onscroll={() => {
+		if (!mounted) return;
 		expanded = window.scrollY - lastScrollY < 0;
 		expansion.target = expanded ? 1 : 0;
-		fromPos = from.getBoundingClientRect();
-		toPos = to.getBoundingClientRect();
+		fromPos = from?.getBoundingClientRect() ?? fromPos;
+		toPos = to?.getBoundingClientRect() ?? toPos;
 		lastScrollY = window.scrollY;
 	}}
 />

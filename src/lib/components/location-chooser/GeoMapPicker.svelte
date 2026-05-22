@@ -4,7 +4,7 @@
 		getCurrentPosition,
 		requestPermissions,
 	} from "@tauri-apps/plugin-geolocation";
-	import { platform } from "@tauri-apps/plugin-os";
+	import { platform as getPlatform } from "@tauri-apps/plugin-os";
 	import { divIcon } from "leaflet";
 	import { GpsFixIcon } from "phosphor-svelte";
 	import { ControlAttribution, Map, Marker, TileLayer } from "sveaflet";
@@ -25,6 +25,7 @@
 
 	let map: LeafletMap | undefined = $state();
 	let gpsRequestInProgress = $state(false);
+	const currentPlatform = getPlatform();
 
 	$effect(() => {
 		if (map) {
@@ -40,9 +41,17 @@
 
 	let searchQuery = $state("");
 	let showSearchResults = $state(false);
+	let debouncedQuery = $state("");
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const q = searchQuery;
+		clearTimeout(debounceTimer);
+		debounceTimer = setTimeout(() => { debouncedQuery = q; }, 300);
+		return () => clearTimeout(debounceTimer);
+	});
 	let searchPlaces = $derived.by(async () => {
 		try {
-			let query = searchQuery.trim();
+			let query = debouncedQuery.trim();
 			if (!query) return;
 			const response = await getPlaces({ query });
 			return response;
@@ -163,7 +172,7 @@
 			</div>
 		</div>
 	{/if}
-	{#if ["android", "ios"].includes(platform())}
+	{#if ["android", "ios"].includes(currentPlatform)}
 		<div class="absolute bottom-6 right-2 z-1010 rounded-full">
 			<Button
 				size="icon-lg"

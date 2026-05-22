@@ -12,15 +12,7 @@ export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
 			new URLSearchParams(
 				urlSearchParamsCodec(searchQuerySchema).encode(query),
 			).toString(),
-	)
-		.then((res) => res.json())
-		.then((data) =>
-			z
-				.object({
-					profiles: z.array(searchProfileSchema),
-				})
-				.parse(data),
-		);
+	).then((res) => res.jsonParsed(z.object({ profiles: z.array(searchProfileSchema) })));
 }
 
 /**

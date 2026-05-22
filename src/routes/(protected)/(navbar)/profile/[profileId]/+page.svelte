@@ -292,11 +292,12 @@
 					</div>
 				{/if}
 			</div>
-		{:catch}
+		{:catch err}
+			{@const _ = toast.error(String(err?.message ?? err ?? "unknown error"))}
 			<Empty.Root class="py-24">
 				<Empty.Header>
 					<Empty.Title>Couldn't Load Profile</Empty.Title>
-					<Empty.Description>Check your connection and try again.</Empty.Description>
+					<Empty.Description>{String(err?.message ?? err ?? "unknown")}</Empty.Description>
 				</Empty.Header>
 			</Empty.Root>
 		{/await}

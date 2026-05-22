@@ -240,16 +240,11 @@ pub async fn refresh_token(state: tauri::State<'_, AppState>) -> Result<LoginRes
 
 #[tauri::command]
 pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
-    state
-        .client()?
-        .session
-        .write()
-        .await
-        .take()
-        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))
-        .map(|_| {
-            AuthStorage::delete_session();
-        })
+    if let Ok(client) = state.client() {
+        client.session.write().await.take();
+    }
+    AuthStorage::delete_session();
+    Ok(())
 }
 
 #[tauri::command]

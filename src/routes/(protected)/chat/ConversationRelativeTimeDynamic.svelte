@@ -7,12 +7,13 @@
 		date: number;
 	} = $props();
 
-	let relativeTime = $derived(formatTimeRelativeCustom(date));
+	let relativeTime = $state(formatTimeRelativeCustom(date));
 
 	$effect(() => {
+		relativeTime = formatTimeRelativeCustom(date);
 		const interval = setInterval(() => {
 			relativeTime = formatTimeRelativeCustom(date);
-		}, 1000);
+		}, 30000);
 		return () => clearInterval(interval);
 	});
 </script>

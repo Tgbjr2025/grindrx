@@ -36,8 +36,14 @@
 				toast.success("Password updated successfully.");
 				goto("/settings/account").catch((err) => console.error(err));
 			} else {
-				const body = res.json() as { message?: string };
-				toast.error(body?.message ?? "Failed to update password.");
+				let message = "Failed to update password.";
+				try {
+					const body = res.json() as { message?: string };
+					message = body?.message ?? message;
+				} catch {
+					// ignore parse errors
+				}
+				toast.error(message);
 			}
 		} catch (err) {
 			console.error("Password update failed", err);

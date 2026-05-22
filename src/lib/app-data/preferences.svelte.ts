@@ -28,14 +28,19 @@ export async function getPreferences(): Promise<
 	}
 }
 
+let writeQueue = Promise.resolve();
+
 export async function setPreferences(
 	newValues: Partial<z.infer<typeof preferencesSchema>>,
 ): Promise<void> {
-	const oldValues = await getPreferences();
-	const preferences = {
-		...oldValues,
-		...newValues,
-	};
-	preferencesSchema.parse(preferences);
-	await writeAppDataFile("preferences.data", encode(preferences));
+	writeQueue = writeQueue.then(async () => {
+		const oldValues = await getPreferences();
+		const preferences = {
+			...oldValues,
+			...newValues,
+		};
+		preferencesSchema.parse(preferences);
+		await writeAppDataFile("preferences.data", encode(preferences));
+	});
+	await writeQueue;
 }

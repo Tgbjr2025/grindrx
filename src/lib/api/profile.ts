@@ -23,16 +23,27 @@ export function clearProfileCache(profileId: number) {
 	profilesCache.delete(profileId);
 }
 
+export function clearAllProfileCaches() {
+	myProfileCache = null;
+	profilesCache.clear();
+}
+
 export async function getProfile(profileId: number) {
 	const cached = profilesCache.get(profileId);
 	if (cached && Date.now() - cached.updatedAt < 1000 * 60) {
 		return cached.profile;
 	}
-	const profile = (
-		await fetchRest(`/v7/profiles/${profileId}`, {
-			method: "GET",
-		}).then((res) => res.jsonParsed(profileResponseSchema))
-	).profiles[0];
+	const res = await fetchRest(`/v7/profiles/${profileId}`, { method: "GET" });
+	if (res.status !== 200) {
+		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
+	}
+	const raw = res.json();
+	const parsed = profileResponseSchema.safeParse(raw);
+	if (!parsed.success) {
+		const msg = parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(" | ");
+		throw new Error(msg);
+	}
+	const profile = parsed.data.profiles[0];
 	profilesCache.set(profileId, { profile, updatedAt: Date.now() });
 	return profile;
 }

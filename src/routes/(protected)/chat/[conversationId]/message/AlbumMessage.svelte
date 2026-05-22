@@ -51,6 +51,7 @@
 
 	$effect(() => {
 		if (albumState.status !== "loading") return;
+		let destroyed = false;
 		(async () => {
 			const loaded = await getAlbumContent(message.albumId).then(
 				async (res) => ({
@@ -58,8 +59,9 @@
 					content: await Promise.all(
 						res.content.map(async (slide) => {
 							if (slide.contentType.startsWith("video/")) {
+								if (!slide.url) return { ...slide, width: 0, height: 0 };
 								const video = document.createElement("video");
-								video.src = slide.url ?? "";
+								video.src = slide.url;
 								video.load();
 								try {
 									await new Promise<void>((resolve, reject) => {
@@ -89,8 +91,9 @@
 									video.remove();
 								}
 							} else {
+								if (!slide.url) return { ...slide, src: "", width: 0, height: 0 };
 								const img = document.createElement("img");
-								img.src = slide.url ?? "";
+								img.src = slide.url;
 								try {
 									await new Promise<void>((resolve, reject) => {
 										if (img.complete) resolve();
@@ -124,13 +127,18 @@
 					),
 				}),
 			);
-			cachedAlbum = loaded;
-			albumState = { status: "open", album: loaded };
+			if (!destroyed) {
+				cachedAlbum = loaded;
+				albumState = { status: "open", album: loaded };
+			}
 		})().catch((error) => {
-			console.error(error);
-			toast.error("Failed to load album content");
-			albumState = { status: "idle" };
+			if (!destroyed) {
+				console.error(error);
+				toast.error("Failed to load album content");
+				albumState = { status: "idle" };
+			}
 		});
+		return () => { destroyed = true; };
 	});
 
 	$effect(() => {

@@ -12,3 +12,7 @@ export async function fetchPronouns() {
 	cachedPronouns = pronouns;
 	return pronouns;
 }
+
+export function clearPronounsCache() {
+	cachedPronouns = null;
+}

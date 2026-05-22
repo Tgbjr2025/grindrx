@@ -76,7 +76,6 @@ export async function fetchRest(
 	options: {
 		method?: string;
 		body?: unknown;
-		abortController?: AbortController;
 	} = { method: "GET" },
 ) {
 	try {
@@ -96,9 +95,6 @@ export async function fetchRest(
 				throw new Error("Invalid response from backend");
 			}
 		});
-		if (options.abortController?.signal.aborted) {
-			throw new Error("Request aborted");
-		}
 		const decoded = decode(packed);
 		const { status, body: responseBody } = z
 			.object({ status: z.number(), body: z.instanceof(Uint8Array) })
@@ -154,6 +150,7 @@ export async function fetchRest(
 			if (appError.kind === "Auth" && appError.message === "Not logged in") {
 				toast("Please log in to continue");
 				goto("/auth/sign-in").catch((error) => console.error(error));
+				return undefined as never;
 			}
 		}
 		throw error;

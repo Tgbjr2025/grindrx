@@ -49,6 +49,7 @@
 						(genderId) =>
 							allGenders.find((g) => g.genderId === genderId)?.gender,
 					)
+					.filter(Boolean)
 					.join(", ")}
 			{/await}
 		{/if}
@@ -64,6 +65,7 @@
 						(pronounId) =>
 							allPronouns.find((p) => p.pronounId === pronounId)?.pronoun,
 					)
+					.filter(Boolean)
 					.join(", ")}
 			{/await}
 		{/if}

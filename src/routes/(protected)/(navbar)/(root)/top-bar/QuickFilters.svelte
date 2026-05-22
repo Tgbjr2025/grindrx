@@ -23,7 +23,6 @@
 	} = $props();
 
 	const booleanFiltersKeys = [
-		"isFavorite",
 		"isOnline",
 		"isRightNow",
 		"isFresh",

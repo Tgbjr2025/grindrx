@@ -7,6 +7,7 @@
 	import { invoke } from "@tauri-apps/api/core";
 	import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 	import { onMount } from "svelte";
+	import { afterNavigate } from "$app/navigation";
 	import { Toaster } from "svelte-sonner";
 
 	import {
@@ -14,7 +15,35 @@
 		applyBackGestureHandler,
 	} from "$lib/android-native-bridge";
 
+	async function trackPageview(url: string) {
+		try {
+			await fetch("https://analytics.dominusaxis.com/api/send", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					type: "event",
+					payload: {
+						website: "41d0a4bc-b714-4d6d-b7e4-d3ed182258a6",
+						url,
+						hostname: "grindx-app",
+						language: navigator.language || "en",
+						screen: `${screen.width}x${screen.height}`,
+						title: document.title || url,
+						referrer: "",
+					},
+				}),
+			});
+		} catch {
+			// best-effort, never crash
+		}
+	}
+
+	afterNavigate(({ to }) => {
+		if (to?.url) trackPageview(to.url.pathname);
+	});
+
 	onMount(() => {
+		trackPageview(window.location.pathname);
 		applyAndroidInsets();
 		applyBackGestureHandler();
 
@@ -50,11 +79,6 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<script
-		defer
-		src="https://analytics.dominusaxis.com/script.js"
-		data-website-id="41d0a4bc-b714-4d6d-b7e4-d3ed18225886"
-	></script>
 </svelte:head>
 <div
 	class="fixed inset-x-0 top-0 z-150000 bg-background/50"

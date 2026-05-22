@@ -1,4 +1,5 @@
 <script lang="ts">
+	import "leaflet/dist/leaflet.css";
 	import { onMount, onDestroy } from "svelte";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import { decodeGeohash } from "$lib/model/geohash";
@@ -13,6 +14,7 @@
 	let map: import("leaflet").Map | null = null;
 	let L: typeof import("leaflet") | null = null;
 	let markersLayer: import("leaflet").LayerGroup | null = null;
+	let centerLatLon: { lat: number; lon: number } | null = null;
 
 	// Stable bearing per profile id so markers don't jump on re-render
 	const bearingCache = new Map<number, number>();
@@ -189,7 +191,13 @@
 		addSelfMarker(lat, lon);
 
 		markersLayer = L.layerGroup().addTo(map);
+		centerLatLon = { lat, lon };
 		renderMarkers(lat, lon);
+	});
+
+	$effect(() => {
+		void gridState.items;
+		if (centerLatLon) renderMarkers(centerLatLon.lat, centerLatLon.lon);
 	});
 
 	onDestroy(() => {
@@ -205,13 +213,6 @@
 		gridState.items.filter((p): p is FullGridProfile => p.type === "full").length,
 	);
 </script>
-
-<svelte:head>
-	<link
-		rel="stylesheet"
-		href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-	/>
-</svelte:head>
 
 {#await hasLocation then ok}
 	{#if !ok}

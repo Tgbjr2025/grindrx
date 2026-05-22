@@ -12,3 +12,7 @@ export async function getGenders() {
 	cachedGenders = genders;
 	return genders;
 }
+
+export function clearGendersCache() {
+	cachedGenders = null;
+}

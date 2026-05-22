@@ -121,7 +121,7 @@ export async function deleteMessageForMe({
 		},
 	}).then((res) => {
 		if (res.status !== 200) {
-			console.log(res.json());
+			console.error("Failed to delete message, status:", res.status);
 			throw new Error("Failed to delete message");
 		}
 	});

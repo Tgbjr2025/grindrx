@@ -36,7 +36,12 @@
 				toast.success("Account created! Please sign in.");
 				void goto("/auth/sign-in");
 			} else {
-				const appError = asAppError(response.json());
+				let appError;
+				try {
+					appError = asAppError(response.json());
+				} catch {
+					appError = undefined;
+				}
 				if (appError) {
 					toast.error(appError.prettyMessage);
 				} else {

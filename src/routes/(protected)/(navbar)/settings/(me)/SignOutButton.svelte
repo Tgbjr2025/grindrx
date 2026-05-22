@@ -2,6 +2,9 @@
 	import { CaretRightIcon, SignOutIcon } from "phosphor-svelte";
 
 	import { callMethod } from "$lib/api";
+	import { clearGendersCache } from "$lib/api/genders";
+	import { clearAllProfileCaches } from "$lib/api/profile";
+	import { clearPronounsCache } from "$lib/api/pronouns";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import * as Item from "$lib/components/ui/item";
 	import ButtonItemContent from "./ButtonItemContent.svelte";
@@ -9,11 +12,13 @@
 	async function onSignOut() {
 		try {
 			await callMethod("logout");
-			window.location.href = "/auth/sign-in";
 		} catch (error) {
 			console.error(error);
-			return null;
 		}
+		clearAllProfileCaches();
+		clearGendersCache();
+		clearPronounsCache();
+		window.location.href = "/auth/sign-in";
 	}
 
 	let alertOpen = $state(false);

@@ -53,7 +53,7 @@
 		<a href="/map" aria-label="Map" data-active={page.route.id === "/(protected)/(navbar)/map"}>
 			<MapPinIcon weight="fill" />
 		</a>
-		<a href="/chat" aria-label="Inbox" data-active={page.route.id === "/(protected)/chat"}>
+		<a href="/chat" aria-label="Inbox" data-active={page.route.id?.startsWith("/(protected)/chat")}>
 			<span class="relative inline-flex">
 				<ChatCircleIcon weight="fill" />
 				{#if totalUnread > 0}

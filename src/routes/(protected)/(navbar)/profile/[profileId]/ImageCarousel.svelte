@@ -76,15 +76,17 @@
 						order: 9,
 						appendTo: "root",
 						onInit(element, pswp) {
-							setTimeout(() => {
+							const updateLabel = () => {
 								const { data: createdAt } = z.coerce
 									.number()
 									.int()
 									.safeParse(pswp.currSlide?.data.element?.dataset.createdAt);
-								if (createdAt !== undefined) {
-									element.textContent = format(createdAt, "dd MMMM yyyy");
-								}
-							}, 0);
+								element.textContent = createdAt !== undefined
+									? format(createdAt, "dd MMMM yyyy")
+									: "";
+							};
+							setTimeout(updateLabel, 0);
+							pswp.on("change", updateLabel);
 						},
 					});
 				});

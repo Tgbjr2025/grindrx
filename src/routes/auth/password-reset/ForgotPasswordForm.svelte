@@ -26,7 +26,12 @@
 				submittedEmail = email;
 				success = true;
 			} else {
-				const appError = asAppError(response.json());
+				let appError;
+				try {
+					appError = asAppError(response.json());
+				} catch {
+					appError = undefined;
+				}
 				if (appError) {
 					toast.error(appError.prettyMessage);
 				} else {

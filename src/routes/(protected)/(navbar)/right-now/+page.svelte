@@ -88,7 +88,7 @@
 			<ul class="flex flex-col py-2">
 				{#each profiles as item (item.id)}
 					{@const cached = profileCache.get(item.id)}
-					{@const imageHash = cached?.imageHash ?? item.profilePhotosHashes?.[0] ?? null}
+					{@const imageHash = cached?.profilePhotosHashes?.[0] ?? item.profilePhotosHashes?.[0] ?? null}
 					{@const name = cached?.displayName ?? item.displayName ?? "Anonymous"}
 					<li>
 						<a

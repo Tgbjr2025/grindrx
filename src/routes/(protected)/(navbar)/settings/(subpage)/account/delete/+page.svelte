@@ -24,8 +24,14 @@
 				await callMethod("logout");
 				window.location.href = "/auth/sign-in";
 			} else {
-				const body = res.json() as { message?: string };
-				toast.error(body?.message ?? "Failed to delete account.");
+				let message = "Failed to delete account.";
+				try {
+					const body = res.json() as { message?: string };
+					message = body?.message ?? message;
+				} catch {
+					// ignore parse errors
+				}
+				toast.error(message);
 			}
 		} catch (err) {
 			console.error("Account deletion failed", err);
