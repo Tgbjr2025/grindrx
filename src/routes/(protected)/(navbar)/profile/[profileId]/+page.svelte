@@ -134,6 +134,7 @@
 				lastTestedDate: lastTestedDateValue,
 				sexualHealth: sexualHealthValue,
 				socialNetworks,
+				vaccines,
 				medias,
 				isFavorite: profileIsFavorite,
 			} = profile}
@@ -226,6 +227,14 @@
 						relationshipStatus: relationshipStatus ?? null,
 						lookingFor,
 						grindrTribes,
+						hivStatus: hivStatus ?? null,
+						sexualHealth: sexualHealthValue ?? [],
+						meetAt: meetAt ?? [],
+						nsfw: nsfw ?? null,
+						vaccines: vaccines ?? [],
+						socialNetworks: socialNetworks ?? {},
+						genders: genders ?? [],
+						pronouns: pronouns ?? [],
 					}}
 					onSave={handleProfileSaved}
 				/>

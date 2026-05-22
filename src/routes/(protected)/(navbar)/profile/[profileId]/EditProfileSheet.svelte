@@ -2,24 +2,36 @@
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
+	import { getGenders } from "$lib/api/genders";
+	import { fetchPronouns } from "$lib/api/pronouns";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import Input from "$lib/components/ui/input/input.svelte";
 	import Label from "$lib/components/ui/label/label.svelte";
 	import * as Sheet from "$lib/components/ui/sheet";
 	import Textarea from "$lib/components/ui/textarea/textarea.svelte";
 	import {
+		acceptNSFWPics as acceptNsfwPicsLabels,
+		type AcceptNSFWPicsId,
 		type BodyTypeId,
 		bodyTypes,
 		ethnicities,
 		type EthnicityId,
+		healthPractices,
+		type HealthPracticeId,
+		hivStatuses,
+		type HivStatusId,
 		type LookingForId,
 		lookingFor as lookingForLabels,
+		meetAt as meetAtLabels,
+		type MeetAtId,
 		relationshipStatuses,
 		type RelationshipStatusId,
 		type SexualPositionId,
 		sexualPositions,
 		type TribeId,
 		tribes as tribeLabels,
+		vaccines as vaccineLabels,
+		type VaccineId,
 	} from "$lib/model/profile";
 
 	let {
@@ -39,9 +51,25 @@
 			relationshipStatus: RelationshipStatusId | null;
 			lookingFor: LookingForId[];
 			grindrTribes: TribeId[];
+			hivStatus: HivStatusId | null;
+			sexualHealth: HealthPracticeId[];
+			meetAt: MeetAtId[];
+			nsfw: AcceptNSFWPicsId | null;
+			vaccines: VaccineId[];
+			socialNetworks: {
+				twitter?: { userId: string | null };
+				facebook?: { userId: string | null };
+				instagram?: { userId: string | null };
+			};
+			genders: number[];
+			pronouns: number[];
 		};
 		onSave: () => void;
 	} = $props();
+
+	// Load async data at module level (cached)
+	const gendersList = getGenders();
+	const pronounsList = fetchPronouns();
 
 	// Form state — initialised each time the sheet opens
 	let displayName = $state<string>(profileData.displayName ?? "");
@@ -56,6 +84,16 @@
 	);
 	let selectedLookingFor = $state<Set<LookingForId>>(new Set(profileData.lookingFor));
 	let selectedTribes = $state<Set<TribeId>>(new Set(profileData.grindrTribes));
+	let hivStatus = $state<HivStatusId | "">(profileData.hivStatus ?? "");
+	let selectedHealthPractices = $state<Set<HealthPracticeId>>(new Set(profileData.sexualHealth));
+	let selectedMeetAt = $state<Set<MeetAtId>>(new Set(profileData.meetAt));
+	let nsfwPics = $state<AcceptNSFWPicsId | "">(profileData.nsfw ?? "");
+	let selectedVaccines = $state<Set<VaccineId>>(new Set(profileData.vaccines));
+	let instagram = $state(profileData.socialNetworks?.instagram?.userId ?? "");
+	let twitter = $state(profileData.socialNetworks?.twitter?.userId ?? "");
+	let facebook = $state(profileData.socialNetworks?.facebook?.userId ?? "");
+	let selectedGenders = $state<Set<number>>(new Set(profileData.genders));
+	let selectedPronouns = $state<Set<number>>(new Set(profileData.pronouns));
 
 	let saving = $state(false);
 	let contentScroll = $state(0);
@@ -73,6 +111,16 @@
 			relationshipStatus = profileData.relationshipStatus ?? "";
 			selectedLookingFor = new Set(profileData.lookingFor);
 			selectedTribes = new Set(profileData.grindrTribes);
+			hivStatus = profileData.hivStatus ?? "";
+			selectedHealthPractices = new Set(profileData.sexualHealth);
+			selectedMeetAt = new Set(profileData.meetAt);
+			nsfwPics = profileData.nsfw ?? "";
+			selectedVaccines = new Set(profileData.vaccines);
+			instagram = profileData.socialNetworks?.instagram?.userId ?? "";
+			twitter = profileData.socialNetworks?.twitter?.userId ?? "";
+			facebook = profileData.socialNetworks?.facebook?.userId ?? "";
+			selectedGenders = new Set(profileData.genders);
+			selectedPronouns = new Set(profileData.pronouns);
 		}
 	});
 
@@ -96,6 +144,56 @@
 		selectedTribes = next;
 	}
 
+	function toggleHealthPractice(id: HealthPracticeId) {
+		const next = new Set(selectedHealthPractices);
+		if (next.has(id)) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		selectedHealthPractices = next;
+	}
+
+	function toggleMeetAt(id: MeetAtId) {
+		const next = new Set(selectedMeetAt);
+		if (next.has(id)) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		selectedMeetAt = next;
+	}
+
+	function toggleVaccine(id: VaccineId) {
+		const next = new Set(selectedVaccines);
+		if (next.has(id)) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		selectedVaccines = next;
+	}
+
+	function toggleGender(id: number) {
+		const next = new Set(selectedGenders);
+		if (next.has(id)) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		selectedGenders = next;
+	}
+
+	function togglePronoun(id: number) {
+		const next = new Set(selectedPronouns);
+		if (next.has(id)) {
+			next.delete(id);
+		} else {
+			next.add(id);
+		}
+		selectedPronouns = next;
+	}
+
 	async function handleSave() {
 		saving = true;
 		try {
@@ -110,6 +208,18 @@
 				relationshipStatus: relationshipStatus !== "" ? relationshipStatus : null,
 				lookingFor: Array.from(selectedLookingFor),
 				grindrTribes: Array.from(selectedTribes),
+				hivStatus: hivStatus !== "" ? hivStatus : null,
+				sexualHealth: Array.from(selectedHealthPractices),
+				meetAt: Array.from(selectedMeetAt),
+				nsfw: nsfwPics !== "" ? nsfwPics : null,
+				vaccines: Array.from(selectedVaccines),
+				socialNetworks: {
+					instagram: { userId: instagram.trim() !== "" ? instagram.trim() : null },
+					twitter: { userId: twitter.trim() !== "" ? twitter.trim() : null },
+					facebook: { userId: facebook.trim() !== "" ? facebook.trim() : null },
+				},
+				genders: Array.from(selectedGenders),
+				pronouns: Array.from(selectedPronouns),
 			};
 
 			await fetchRest("/v4/me/profile", {
@@ -184,6 +294,54 @@
 					placeholder="Tell others about yourself"
 					bind:value={aboutMe}
 				/>
+			</div>
+
+			<!-- Genders -->
+			<div class="flex flex-col gap-2">
+				<span class="text-sm font-medium leading-none">Gender</span>
+				{#await gendersList then allGenders}
+					<div class="flex flex-wrap gap-2">
+						{#each allGenders.filter((g) => !g.excludeOnProfileSelection?.length) as g}
+							{@const isChecked = selectedGenders.has(g.genderId)}
+							<button
+								type="button"
+								onclick={() => toggleGender(g.genderId)}
+								class={[
+									"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+									isChecked
+										? "bg-primary text-primary-foreground border-primary"
+										: "border-border bg-background text-foreground hover:bg-muted",
+								]}
+							>
+								{g.gender}
+							</button>
+						{/each}
+					</div>
+				{/await}
+			</div>
+
+			<!-- Pronouns -->
+			<div class="flex flex-col gap-2">
+				<span class="text-sm font-medium leading-none">Pronouns</span>
+				{#await pronounsList then allPronouns}
+					<div class="flex flex-wrap gap-2">
+						{#each allPronouns as p}
+							{@const isChecked = selectedPronouns.has(p.pronounId)}
+							<button
+								type="button"
+								onclick={() => togglePronoun(p.pronounId)}
+								class={[
+									"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+									isChecked
+										? "bg-primary text-primary-foreground border-primary"
+										: "border-border bg-background text-foreground hover:bg-muted",
+								]}
+							>
+								{p.pronoun}
+							</button>
+						{/each}
+					</div>
+				{/await}
 			</div>
 
 			<!-- Sexual position -->
@@ -316,6 +474,141 @@
 						</button>
 					{/each}
 				</div>
+			</div>
+
+			<!-- Meet at -->
+			<div class="flex flex-col gap-2">
+				<span class="text-sm font-medium leading-none">Meet at</span>
+				<div class="flex flex-wrap gap-2">
+					{#each Object.entries(meetAtLabels) as [id, label]}
+						{@const numId = Number(id) as MeetAtId}
+						{@const isChecked = selectedMeetAt.has(numId)}
+						<button
+							type="button"
+							onclick={() => toggleMeetAt(numId)}
+							class={[
+								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+								isChecked
+									? "bg-primary text-primary-foreground border-primary"
+									: "border-border bg-background text-foreground hover:bg-muted",
+							]}
+						>
+							{label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<!-- NSFW pics -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="edit-nsfw">NSFW pics</Label>
+				<select
+					id="edit-nsfw"
+					bind:value={nsfwPics}
+					class="bg-input/50 focus-visible:border-ring focus-visible:ring-ring/30 h-9 rounded-3xl border border-transparent px-3 py-1 text-base md:text-sm text-foreground outline-none w-full transition-[color,box-shadow,background-color] focus-visible:ring-3"
+				>
+					<option value="">Not specified</option>
+					{#each Object.entries(acceptNsfwPicsLabels) as [id, label]}
+						<option value={Number(id)}>{label}</option>
+					{/each}
+				</select>
+			</div>
+
+			<!-- HIV status -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="edit-hiv-status">HIV status</Label>
+				<select
+					id="edit-hiv-status"
+					bind:value={hivStatus}
+					class="bg-input/50 focus-visible:border-ring focus-visible:ring-ring/30 h-9 rounded-3xl border border-transparent px-3 py-1 text-base md:text-sm text-foreground outline-none w-full transition-[color,box-shadow,background-color] focus-visible:ring-3"
+				>
+					<option value="">Not specified</option>
+					{#each Object.entries(hivStatuses) as [id, label]}
+						<option value={Number(id)}>{label}</option>
+					{/each}
+				</select>
+			</div>
+
+			<!-- Health practices -->
+			<div class="flex flex-col gap-2">
+				<span class="text-sm font-medium leading-none">Health practices</span>
+				<div class="flex flex-wrap gap-2">
+					{#each Object.entries(healthPractices) as [id, label]}
+						{@const numId = Number(id) as HealthPracticeId}
+						{@const isChecked = selectedHealthPractices.has(numId)}
+						<button
+							type="button"
+							onclick={() => toggleHealthPractice(numId)}
+							class={[
+								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+								isChecked
+									? "bg-primary text-primary-foreground border-primary"
+									: "border-border bg-background text-foreground hover:bg-muted",
+							]}
+						>
+							{label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<!-- Vaccines -->
+			<div class="flex flex-col gap-2">
+				<span class="text-sm font-medium leading-none">Vaccines</span>
+				<div class="flex flex-wrap gap-2">
+					{#each Object.entries(vaccineLabels) as [id, label]}
+						{@const numId = Number(id) as VaccineId}
+						{@const isChecked = selectedVaccines.has(numId)}
+						<button
+							type="button"
+							onclick={() => toggleVaccine(numId)}
+							class={[
+								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+								isChecked
+									? "bg-primary text-primary-foreground border-primary"
+									: "border-border bg-background text-foreground hover:bg-muted",
+							]}
+						>
+							{label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<!-- Instagram -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="edit-instagram">Instagram username</Label>
+				<Input
+					id="edit-instagram"
+					type="text"
+					maxlength={64}
+					placeholder="@yourhandle"
+					bind:value={instagram}
+				/>
+			</div>
+
+			<!-- Twitter/X -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="edit-twitter">Twitter/X username</Label>
+				<Input
+					id="edit-twitter"
+					type="text"
+					maxlength={64}
+					placeholder="@yourhandle"
+					bind:value={twitter}
+				/>
+			</div>
+
+			<!-- Facebook -->
+			<div class="flex flex-col gap-1.5">
+				<Label for="edit-facebook">Facebook username</Label>
+				<Input
+					id="edit-facebook"
+					type="text"
+					maxlength={64}
+					placeholder="Your Facebook name"
+					bind:value={facebook}
+				/>
 			</div>
 		</div>
 

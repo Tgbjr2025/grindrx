@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { LightningIcon, PlusIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, LightningIcon, PlusIcon, UserIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
@@ -12,7 +12,10 @@
 	import { formatDistance } from "$lib/utils/distance";
 	import { getGrid, profileCache } from "../(root)/grid";
 
-	const feed = getPreferences().then(({ geohash }) => {
+	let feedTick = $state(0);
+	const feed = $derived.by(async () => {
+		void feedTick;
+		const { geohash } = await getPreferences();
 		if (!geohash) throw new Error("Location not set — open Browse first.");
 		return getGrid({ nearbyGeoHash: geohash, rightNow: true, onlineOnly: true });
 	});
@@ -57,15 +60,18 @@
 
 <div class="px-4 flex-1 flex flex-col">
 	<!-- Post Right Now button -->
-	<div class="pt-3 pb-1">
+	<div class="pt-3 pb-1 flex items-center gap-2">
 		<button
 			type="button"
-			class="w-full flex items-center gap-2 rounded-2xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground hover:bg-muted/60 active:bg-muted transition-colors"
+			class="flex-1 flex items-center gap-2 rounded-2xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground hover:bg-muted/60 active:bg-muted transition-colors"
 			onclick={() => (drawerOpen = true)}
 		>
 			<PlusIcon class="size-4 shrink-0" />
 			<span>Post your Right Now status…</span>
 		</button>
+		<Button variant="ghost" size="icon" aria-label="Refresh" onclick={() => feedTick++}>
+			<ArrowsClockwiseIcon class="size-5" />
+		</Button>
 	</div>
 
 	{#await feed}
