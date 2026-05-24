@@ -69,7 +69,7 @@ export async function sendProfilePhotoMessage({
 	mediaHash: string;
 	createdAt: number | null;
 }) {
-	return await fetchRest("/v4/chat/message/send", {
+	const res = await fetchRest("/v4/chat/message/send", {
 		method: "POST",
 		body: {
 			type: "Image",
@@ -84,7 +84,11 @@ export async function sendProfilePhotoMessage({
 				createdAt,
 			},
 		},
-	}).then((res) => res.jsonParsed(apiResponseMessageSchema));
+	});
+	if (res.status >= 400) {
+		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
+	}
+	return res.jsonParsed(apiResponseMessageSchema);
 }
 
 export async function reactToMessage({

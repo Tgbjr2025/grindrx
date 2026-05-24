@@ -2,6 +2,7 @@ import z from "zod";
 
 import { fetchRest } from "$lib/api";
 import {
+	AlbumExpiration,
 	albumContentSchema,
 	albumDetailsSchema,
 	type AlbumExpirationType,
@@ -45,6 +46,18 @@ export async function getMyAlbums() {
 	);
 }
 
+function expiresAtMs(expirationType: AlbumExpirationType): number | null {
+	const now = Date.now();
+	switch (expirationType) {
+		case "TEN_MINUTES": return now + 10 * 60 * 1000;
+		case "ONE_HOUR": return now + 60 * 60 * 1000;
+		case "ONE_DAY": return now + 24 * 60 * 60 * 1000;
+		case "ONCE": return null; // view-count-limited, not time-limited — server controls expiry
+		case "INDEFINITE": return null;
+		default: return null;
+	}
+}
+
 export async function shareAlbum({
 	albumId,
 	profileId,
@@ -54,8 +67,21 @@ export async function shareAlbum({
 	profileId: number;
 	expirationType: AlbumExpirationType;
 }) {
-	return await fetchRest(`/v4/albums/${albumId}/shares`, {
+	const isExpiring = expirationType !== "INDEFINITE";
+	const res = await fetchRest("/v4/chat/message/send", {
 		method: "POST",
-		body: { expirationType, profileId },
+		body: {
+			type: isExpiring ? "ExpiringAlbumV2" : "Album",
+			target: { type: "Direct", targetId: profileId },
+			body: {
+				albumId,
+				expirationType,
+				expiresAt: expiresAtMs(expirationType),
+			},
+		},
 	});
+	if (res.status >= 400) {
+		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
+	}
+	return res;
 }

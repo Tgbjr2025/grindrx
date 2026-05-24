@@ -15,8 +15,8 @@ export const albumMinSchema = albumPreviewSchema.extend({
 
 export const albumDetailsSchema = z.object({
 	sharedCount: z.number().int(),
-	createdAt: z.iso.datetime({ local: true }),
-	updatedAt: z.iso.datetime({ local: true }),
+	createdAt: z.string(),
+	updatedAt: z.string(),
 });
 
 export const AlbumExpiration = {
@@ -27,7 +27,8 @@ export const AlbumExpiration = {
 	ONE_DAY: 4,
 } as const;
 
-export const albumExpirationTypeSchema = z.enum(Object.keys(AlbumExpiration));
+const _albumExpirationKeys = Object.keys(AlbumExpiration) as [keyof typeof AlbumExpiration, ...Array<keyof typeof AlbumExpiration>];
+export const albumExpirationTypeSchema = z.enum(_albumExpirationKeys);
 
 export type AlbumExpirationType = z.infer<typeof albumExpirationTypeSchema>;
 

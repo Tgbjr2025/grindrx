@@ -304,8 +304,8 @@ export const profileMaskedSchema = profileMaskedMinSchema.extend({
 	lastViewed: z.number().nullable(),
 	seen: z.number().int().nonnegative().nullable(),
 	rightNow: rightNowStatusSchema,
-	sexualPosition: sexualPositionSchema.nullable().optional(),
-	foundVia: viewSourceEnumSchema.nullable().optional(),
+	sexualPosition: sexualPositionSchema.nullable().optional().catch(null),
+	foundVia: viewSourceEnumSchema.nullable().optional().catch(null),
 });
 
 export const profileMinSchema = z.object({
@@ -336,9 +336,16 @@ export const profileShortSchema = profileMaskedSchema
 		),
 	});
 
+// Filters an array to only values the enum accepts — silently drops unknown values.
+function safeEnumArray<T extends z.ZodEnum<z.util.EnumLike>>(schema: T) {
+	return z.array(z.unknown()).transform(
+		(arr) => arr.filter((v) => schema.safeParse(v).success) as z.infer<T>[],
+	);
+}
+
 export const profileFieldsSchema = z.object({
-	meetAt: z.array(meetAtSchema).optional(),
-	vaccines: z.array(vaccinesSchema).optional(),
+	meetAt: safeEnumArray(meetAtSchema).optional(),
+	vaccines: safeEnumArray(vaccinesSchema).optional(),
 	genders: z.array(z.number().int().nonnegative()).optional(),
 	pronouns: z.array(z.number().int().nonnegative()).optional(),
 });
@@ -365,12 +372,12 @@ export const profileSchema = profileShortSchema
 	.extend(profileExtraFields.shape)
 	.extend({
 		aboutMe: z.string().nullable(),
-		ethnicity: ethnicitySchema.nullable(),
-		relationshipStatus: relationshipStatusSchema.nullable(),
-		grindrTribes: z.array(tribeSchema),
-		lookingFor: z.array(lookingForSchema),
-		bodyType: bodyTypeSchema.nullable(),
-		hivStatus: hivStatusSchema.nullable(),
+		ethnicity: ethnicitySchema.nullable().catch(null),
+		relationshipStatus: relationshipStatusSchema.nullable().catch(null),
+		grindrTribes: safeEnumArray(tribeSchema),
+		lookingFor: safeEnumArray(lookingForSchema),
+		bodyType: bodyTypeSchema.nullable().catch(null),
+		hivStatus: hivStatusSchema.nullable().catch(null),
 		lastTestedDate: z.number().nullable(),
 		height: z.number().nullable(),
 		weight: z.number().nullable(),
@@ -379,20 +386,20 @@ export const profileSchema = profileShortSchema
 		hashtags: z.array(z.unknown()),
 		profileTags: z.array(z.string()),
 		tapped: z.boolean(),
-		tapType: z.boolean().nullable(),
+		tapType: z.union([z.boolean(), z.number()]).nullable().catch(null),
 		lastReceivedTapTimestamp: z.number().nullable(),
 		isTeleporting: z.boolean(),
 		isRoaming: z.boolean(),
 		arrivalDays: z.number().nullable(),
 		unreadCount: z.number(),
 		lastThrobTimestamp: z.unknown(),
-		sexualHealth: z.array(healthPracticesSchema),
+		sexualHealth: safeEnumArray(healthPracticesSchema),
 		isVisiting: z.boolean(),
 		travelPlans: z.array(travelPlanSchema),
 		isInAList: z.boolean(),
-		tribesImInto: z.array(tribeSchema).nullable(),
+		tribesImInto: safeEnumArray(tribeSchema).nullable().catch(null),
 		showVipBadge: z.boolean(),
-		rightNowShareLocation: z.literal("NONE").nullable(),
+		rightNowShareLocation: z.literal("NONE").nullable().catch(null),
 		rightNowMedias: z.array(rightNowMediaSchema),
 	});
 
