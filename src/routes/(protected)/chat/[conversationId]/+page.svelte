@@ -59,6 +59,7 @@
 	<MessagesList {conversationState} />
 	<MessageComposer
 		onSend={(message: Message) => conversationState.send(message)}
+		onSendAlbum={(albumId, expirationType) => conversationState.sendAlbum(albumId, expirationType)}
 		recipientProfileId={conversationState.profile?.profileId ?? null}
 	/>
 </Card.Content>

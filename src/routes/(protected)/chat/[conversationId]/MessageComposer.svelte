@@ -4,7 +4,6 @@
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
-	import { shareAlbum } from "$lib/api/album";
 	import { sendProfilePhotoMessage } from "$lib/api/messages";
 	import { type ProfilePhoto, uploadProfileImage } from "$lib/api/profile";
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
@@ -16,9 +15,11 @@
 
 	let {
 		onSend,
+		onSendAlbum,
 		recipientProfileId,
 	}: {
 		onSend: (params: Message) => void | Promise<void>;
+		onSendAlbum: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
 
@@ -40,11 +41,7 @@
 	}
 
 	async function onShareAlbum(albumId: number, expirationType: AlbumExpirationType) {
-		if (recipientProfileId === null) {
-			toast.error("Cannot share album — conversation not loaded");
-			return;
-		}
-		await shareAlbum({ albumId, profileId: recipientProfileId, expirationType });
+		await onSendAlbum(albumId, expirationType);
 	}
 
 	async function onSendPhoto(photo: ProfilePhoto & { mediaId: number }) {

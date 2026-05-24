@@ -1,6 +1,7 @@
 import { toast } from "svelte-sonner";
 import z from "zod";
 
+import { shareAlbum } from "$lib/api/album";
 import { markConversationAsRead } from "$lib/api/conversation";
 import { reactToMessage, sendMessage } from "$lib/api/messages";
 import { getPreferences } from "$lib/app-data/preferences.svelte";
@@ -8,6 +9,7 @@ import {
 	apiResponseMessageSchema,
 	previewFromMessage,
 } from "$lib/model/message";
+import type { AlbumExpirationType } from "$lib/model/album";
 import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 import type {
 	ApiResponseMessage,
@@ -109,8 +111,15 @@ export class ConversationState {
 				if (event.payload.senderId === this.ourProfileId) {
 					const pending = this.messages.find((m) => m.status === "pending");
 					if (pending) {
-						pending.status = "sent";
-						pending.messageId = event.payload.messageId;
+						// Replace pending with full server data in-place (avoids array replacement
+						// during Drawer close animation which would freeze the UI on Android).
+						const idx = this.messages.indexOf(pending);
+						if (idx >= 0) {
+							this.messages[idx] = { ...event.payload, status: "sent" };
+						} else {
+							pending.status = "sent";
+							pending.messageId = event.payload.messageId;
+						}
 						this.#syncCache();
 						return;
 					}
@@ -310,6 +319,48 @@ export class ConversationState {
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
 		void this.#resolveMessage({ tempId, message });
+	}
+
+	async sendAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const tempId = `pending-${crypto.randomUUID()}`;
+		const isExpiring = expirationType !== "INDEFINITE";
+		// Optimistic pending message — coverUrl is empty until WS event confirms with real data.
+		const optimistic = {
+			type: isExpiring ? "ExpiringAlbumV2" as const : "Album" as const,
+			body: {
+				albumId,
+				hasUnseenContent: false,
+				expiresAt: null,
+				expirationType,
+				coverUrl: "",
+				ownerProfileId: this.ourProfileId,
+				isViewable: true,
+				hasVideo: false,
+				hasPhoto: true,
+				viewableUntil: null,
+			},
+			messageId: tempId,
+			conversationId: this.conversationId,
+			senderId: this.ourProfileId,
+			timestamp: Date.now(),
+			unsent: false,
+			reactions: [] as Array<{ profileId: number; reactionType: number }>,
+			status: "pending" as const,
+		} satisfies OptimisticMessage;
+		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
+		this.#updatePreview(optimistic);
+		try {
+			await shareAlbum({ albumId, profileId: this.profile.profileId, expirationType });
+			// WS event will confirm by finding this pending message and updating it in-place.
+		} catch (err) {
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "error";
+				this.#updatePreview(this.messages.find((m) => m.status === "sent"));
+			}
+			throw err;
+		}
 	}
 
 	async #resolveMessage({
