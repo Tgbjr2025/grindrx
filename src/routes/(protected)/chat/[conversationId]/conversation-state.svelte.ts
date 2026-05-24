@@ -351,8 +351,16 @@ export class ConversationState {
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
 		try {
-			await shareAlbum({ albumId, profileId: this.profile.profileId, expirationType });
-			// WS event will confirm by finding this pending message and updating it in-place.
+			const { messageId } = await shareAlbum({ albumId, profileId: this.profile.profileId, expirationType });
+			// Update the pending message with the real messageId from the HTTP response.
+			// This mirrors #resolveMessage so the WS dedup check finds it and returns without
+			// mutating the array — preventing the scroll trigger that freezes the UI on Android.
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "sent";
+				msg.messageId = messageId;
+			}
+			this.#syncCache();
 		} catch (err) {
 			const msg = this.messages.find((m) => m.messageId === tempId);
 			if (msg) {

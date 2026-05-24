@@ -8,6 +8,7 @@ import {
 	type AlbumExpirationType,
 	albumMinSchema,
 } from "$lib/model/album";
+import { apiResponseMessageSchema } from "$lib/model/message";
 
 const albumResponseSchema = z.object({
 	...albumMinSchema.shape,
@@ -83,5 +84,5 @@ export async function shareAlbum({
 	if (res.status >= 400) {
 		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
 	}
-	return res;
+	return res.jsonParsed(apiResponseMessageSchema);
 }
