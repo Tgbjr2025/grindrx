@@ -5,6 +5,7 @@
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import { type AlbumContentResponse, getAlbumContent } from "$lib/api/album";
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import type { AlbumMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
@@ -204,7 +205,7 @@
 		bind:this={media.el}
 	>
 		{#if message.coverUrl}
-			<img
+			<AuthedImage
 				src={message.coverUrl}
 				alt=""
 				class="w-full rounded-[inherit] bg-card-foreground/10 h-full object-cover absolute top-0 left-0"
