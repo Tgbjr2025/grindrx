@@ -156,6 +156,63 @@ pub async fn upload_image(
     Ok(UploadImageResult { status, body })
 }
 
+#[tauri::command]
+pub async fn fetch_authed_bytes(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<String, AppError> {
+    let authorization = state
+        .client()?
+        .authorization_header()
+        .await
+        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
+
+    // Validate that the URL is a known Grindr CDN/API domain to prevent
+    // the session token from being sent to arbitrary third-party hosts.
+    {
+        let parsed = reqwest::Url::parse(&url)
+            .map_err(|_| AppError::Http("Invalid URL".to_owned()))?;
+        let host = parsed.host_str().unwrap_or("");
+        let allowed = host == "grindr.mobi"
+            || host.ends_with(".grindr.com")
+            || host.ends_with(".grindr.mobi")
+            || host.ends_with(".cloudfront.net")
+            || host.ends_with(".cdns.grindr.com");
+        if !allowed {
+            return Err(AppError::Http(format!(
+                "URL host '{}' is not an allowed Grindr domain",
+                host
+            )));
+        }
+    }
+
+    let http = state.client()?.http.read().await.clone();
+
+    let response = http
+        .get(&url)
+        .header("Authorization", authorization)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(AppError::Http(format!(
+            "Image fetch failed with status {}",
+            response.status()
+        )));
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_owned();
+
+    let bytes = response.bytes().await?.to_vec();
+    let b64 = STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", content_type, b64))
+}
+
 #[derive(Deserialize)]
 struct RequestPayload {
     method: String,

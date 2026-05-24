@@ -208,7 +208,9 @@ impl GrindrClient {
                 < (chrono::Utc::now().timestamp() as u64 + 60);
 
             if still_expired {
-                let _ = self.refresh_token().await;
+                if let Err(e) = self.refresh_token().await {
+                    eprintln!("[GrindX] Token refresh failed: {e}. Continuing with potentially expired token.");
+                }
             }
         }
 

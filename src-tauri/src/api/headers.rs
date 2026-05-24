@@ -457,20 +457,27 @@ pub fn build_default_headers(device: &DeviceInfo, user_agent: &str) -> HeaderMap
         device.advertising_id
     );
     headers.insert("Accept", HeaderValue::from_static("application/json"));
-    headers.insert("User-Agent", HeaderValue::from_str(user_agent).unwrap());
-    headers.insert("L-Locale", HeaderValue::from_str(&device.locale).unwrap());
+    headers.insert(
+        "User-Agent",
+        HeaderValue::from_str(user_agent).unwrap_or_else(|_| HeaderValue::from_static("GrindrPlus/1.0")),
+    );
+    headers.insert(
+        "L-Locale",
+        HeaderValue::from_str(&device.locale).unwrap_or_else(|_| HeaderValue::from_static("en_US")),
+    );
     headers.insert(
         "Accept-language",
-        HeaderValue::from_str(&device.accept_language).unwrap(),
+        HeaderValue::from_str(&device.accept_language)
+            .unwrap_or_else(|_| HeaderValue::from_static("en-US")),
     );
     // Authorization?
     headers.insert(
         "L-Time-Zone",
-        HeaderValue::from_str(&device.timezone).unwrap(),
+        HeaderValue::from_str(&device.timezone).unwrap_or_else(|_| HeaderValue::from_static("UTC")),
     );
     headers.insert(
         "L-Device-Info",
-        HeaderValue::from_str(&device_info).unwrap(),
+        HeaderValue::from_str(&device_info).unwrap_or_else(|_| HeaderValue::from_static("unknown")),
     );
     // headers.insert("requireRealDeviceInfo", HeaderValue::from_static("true"));
 
