@@ -27,6 +27,11 @@
 		page.params.conversationId === conversation.data.conversationId,
 	);
 
+	const isOnline = $derived(
+		conversation.data.onlineUntil != null &&
+			conversation.data.onlineUntil > Date.now(),
+	);
+
 	let showDeleteMenu = $state(false);
 
 	function openContextMenu(event: MouseEvent | PointerEvent) {
@@ -102,6 +107,9 @@
 					class="size-10"
 				/>
 			</Avatar.Fallback>
+			{#if isOnline}
+				<span class="absolute bottom-0 right-0 size-3.5 rounded-full bg-green-500 border-2 border-background z-10 shadow-sm"></span>
+			{/if}
 		</Avatar.Root>
 	</Item.Media>
 {/snippet}

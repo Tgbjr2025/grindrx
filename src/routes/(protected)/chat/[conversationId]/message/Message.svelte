@@ -168,7 +168,7 @@
 		{:else if message.type === "Image" || message.type === "ExpiringImage"}
 			<ImageMessage message={message.body} />
 		{:else if message.type === "Album" || message.type === "ExpiringAlbum" || message.type === "ExpiringAlbumV2"}
-			<AlbumMessage message={message.body} />
+			<AlbumMessage message={message.body} {isOut} />
 		{:else}
 			<UnsupportedMessage type={message.type} />
 		{/if}

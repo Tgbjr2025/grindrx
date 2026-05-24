@@ -2,6 +2,7 @@
 	import "photoswipe/style.css";
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import type { ExpiringImageMessage, ImageMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
@@ -122,15 +123,15 @@
 		aria-label="Open image"
 		class="block item"
 	>
-		<img
+		<AuthedImage
 			src={message.url}
 			alt=""
 			class={[
 				"w-full rounded-lg bg-card-foreground/10 object-cover",
 				media.cornerClass,
 			]}
-			style:aspect-ratio={message.width !== null && message.height !== null
-				? `${message.width} / ${message.height}`
+			style={message.width !== null && message.height !== null
+				? `aspect-ratio: ${message.width} / ${message.height}`
 				: undefined}
 		/>
 	</a>

@@ -10,6 +10,7 @@ const preferencesSchema = z.object({
 	gridSearchFilters: gridSearchFiltersSchema.optional(),
 	revealMessageRead: z.boolean().default(false),
 	revealProfileViews: z.boolean().default(false),
+	incognito: z.boolean().default(false),
 });
 
 export async function getPreferences(): Promise<
@@ -24,6 +25,7 @@ export async function getPreferences(): Promise<
 			geohash: null,
 			revealMessageRead: false,
 			revealProfileViews: false,
+			incognito: false,
 		};
 	}
 }

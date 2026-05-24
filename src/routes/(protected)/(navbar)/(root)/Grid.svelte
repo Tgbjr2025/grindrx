@@ -21,10 +21,6 @@
 		gridState.load(geohash);
 	});
 
-	export function refresh() {
-		gridState.refresh();
-	}
-
 	onMount(() => {
 		const saveScroll = () => {
 			gridState.scrollY = window.scrollY;
@@ -117,6 +113,7 @@
 					medias={item.profilePhotosHashes?.map((mediaHash) => ({
 						mediaHash,
 					})) ?? []}
+					onlineUntil={item.onlineUntil}
 				/>
 			{:else}
 				<div

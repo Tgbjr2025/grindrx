@@ -8,7 +8,7 @@
 	import type { AlbumMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
-	let { message }: { message: AlbumMessage["body"] } = $props();
+	let { message, isOut = false }: { message: AlbumMessage["body"]; isOut?: boolean } = $props();
 
 	const media = new MessageMediaState();
 
@@ -189,7 +189,7 @@
 	});
 </script>
 
-{#if message.isViewable}
+{#if message.isViewable || isOut}
 	<button
 		class={[
 			className,
@@ -203,11 +203,16 @@
 		disabled={albumState.status !== "idle"}
 		bind:this={media.el}
 	>
-		<img
-			src={message.coverUrl}
-			alt=""
-			class="w-full rounded-[inherit] bg-card-foreground/10 h-full object-cover absolute top-0 left-0"
-		/>
+		{#if message.coverUrl}
+			<img
+				src={message.coverUrl}
+				alt=""
+				class="w-full rounded-[inherit] bg-card-foreground/10 h-full object-cover absolute top-0 left-0"
+				onerror={() => console.error("[GrindX] album cover load failed:", message.coverUrl?.slice(0, 100))}
+			/>
+		{:else}
+			<div class="w-full rounded-[inherit] bg-card-foreground/10 h-full absolute top-0 left-0"></div>
+		{/if}
 		<div class={["absolute top-0 left-0 size-full @container", contentClass]}>
 			<div
 				class="*:bg-card *:rounded-full *:w-[20cqw] *:aspect-square *:p-2 absolute bottom-1/5 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5"
@@ -225,6 +230,16 @@
 				{#if message.hasVideo}
 					<div>
 						<VideoIcon
+							width="100%"
+							height="auto"
+							weight="fill"
+							color="var(--color-neutral-200)"
+						/>
+					</div>
+				{/if}
+				{#if isOut && !message.hasPhoto && !message.hasVideo}
+					<div>
+						<ImagesIcon
 							width="100%"
 							height="auto"
 							weight="fill"

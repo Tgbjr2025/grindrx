@@ -13,6 +13,7 @@
 		distance = null,
 		medias = null,
 		unread = null,
+		onlineUntil = null,
 	}: {
 		id: number;
 		displayName?: string | null;
@@ -20,12 +21,17 @@
 		distance?: number | null;
 		medias?: { mediaHash: string }[] | null;
 		unread?: number | null;
+		onlineUntil?: number | null;
 	} = $props();
 
 	const profilePicture = $derived(medias?.[0]);
+	const isOnline = $derived(onlineUntil != null && onlineUntil > Date.now());
 </script>
 
 <a href="/profile/{id}" class="aspect-square relative flex items-end overflow-hidden group">
+	{#if isOnline}
+		<span class="absolute top-1.5 left-1.5 size-2.5 rounded-full bg-green-500 border-2 border-background z-10 shadow-sm"></span>
+	{/if}
 	<div class="absolute w-full h-full bg-muted">
 		{#if medias && profilePicture}
 			<img

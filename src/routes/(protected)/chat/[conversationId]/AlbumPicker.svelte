@@ -3,6 +3,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { getMyAlbums, type MyAlbum } from "$lib/api/album";
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import { getProfileUploadedPhotos, type ProfilePhoto } from "$lib/api/profile";
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
@@ -78,22 +79,17 @@
 		}
 	});
 
-	$effect(() => {
-		if (!open) {
-			albumsState = { status: "idle" };
-			photosState = { status: "idle" };
-			activeTab = "albums";
-		}
-	});
-
 	async function handleShare() {
 		if (selectedAlbumId === null) return;
 		sharing = true;
 		try {
 			await onShare(selectedAlbumId, expirationType);
+			toast.success("Album shared!");
 			open = false;
-		} catch {
-			toast.error("Failed to share album");
+		} catch (err) {
+			console.error("Failed to share album:", err);
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to share album${detail}`, { duration: 30000 });
 		} finally {
 			sharing = false;
 		}
@@ -107,9 +103,12 @@
 		sendingHash = photo.mediaHash;
 		try {
 			await onSendPhoto({ ...photo, mediaId: photo.mediaId });
+			toast.success("Photo sent!");
 			open = false;
-		} catch {
-			toast.error("Failed to send photo");
+		} catch (err) {
+			console.error("Failed to send photo:", err);
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to send photo${detail}`);
 		} finally {
 			sendingHash = null;
 		}
@@ -195,7 +194,7 @@
 								>
 									<div class="size-14 rounded-lg overflow-hidden shrink-0 bg-muted">
 										{#if cover}
-											<img
+											<AuthedImage
 												src={cover}
 												alt=""
 												class="size-full object-cover"
@@ -280,11 +279,10 @@
 									disabled={isSending}
 									onclick={() => handleSendPhoto(photo)}
 								>
-									<img
+									<AuthedImage
 										src="https://cdns.grindr.com/images/thumb/320x320/{photo.mediaHash}"
 										alt="Profile photo"
-										class="w-full h-full object-cover"
-										class:opacity-40={isSending}
+										class={["w-full h-full object-cover", isSending && "opacity-40"]}
 										loading="lazy"
 									/>
 									{#if isSending}

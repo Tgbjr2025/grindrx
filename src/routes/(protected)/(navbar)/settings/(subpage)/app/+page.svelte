@@ -5,6 +5,7 @@
 	import * as Item from "$lib/components/ui/item";
 	import DiscreetIconSetting from "./DiscreetIconSetting.svelte";
 	import DistanceUnitSetting from "./DistanceUnitSetting.svelte";
+	import IncognitoSetting from "./IncognitoSetting.svelte";
 	import RevealMessageReadSetting from "./RevealMessageReadSetting.svelte";
 	import RevealProfileViewSetting from "./RevealProfileViewSetting.svelte";
 
@@ -55,6 +56,7 @@
 		<h2>Display</h2>
 		<DistanceUnitSetting />
 		<h2>Privacy</h2>
+		<IncognitoSetting />
 		<RevealMessageReadSetting />
 		<RevealProfileViewSetting />
 		<h2>Security</h2>

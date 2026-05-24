@@ -6,7 +6,8 @@
 		title,
 		description,
 		checked = $bindable(),
-	}: { title: string; description: string; checked: boolean } = $props();
+		disabled = false,
+	}: { title: string; description: string; checked: boolean; disabled?: boolean } = $props();
 </script>
 
 <Label
@@ -18,5 +19,5 @@
 			{description}
 		</p>
 	</div>
-	<Switch bind:checked />
+	<Switch bind:checked {disabled} />
 </Label>

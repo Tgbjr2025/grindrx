@@ -81,7 +81,8 @@
 			});
 		} catch (err) {
 			console.error("Failed to upload and send photo", err);
-			toast.error("Failed to send photo");
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to send photo${detail}`);
 		} finally {
 			uploading = false;
 		}
