@@ -28,12 +28,14 @@ export async function markConversationAsRead({
 	conversationId: string;
 	messageId?: string;
 }) {
-	return await fetchRest(
+	const res = await fetchRest(
 		`/v4/chat/conversation/${conversationId}/read/${messageId}`,
 		{
 			method: "POST",
 		},
 	);
+	if (res.status >= 400) throw new Error(`Failed: ${res.status}`);
+	return res;
 }
 
 export async function deleteConversationForMe({
@@ -41,7 +43,9 @@ export async function deleteConversationForMe({
 }: {
 	conversationId: Conversation["data"]["conversationId"];
 }) {
-	return await fetchRest(`/v4/chat/conversation/${conversationId}`, {
+	const res = await fetchRest(`/v4/chat/conversation/${conversationId}`, {
 		method: "DELETE",
 	});
+	if (res.status >= 400) throw new Error(`Failed: ${res.status}`);
+	return res;
 }

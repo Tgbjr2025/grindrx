@@ -69,6 +69,7 @@ export async function shareAlbum({
 	expirationType: AlbumExpirationType;
 }) {
 	const isExpiring = expirationType !== "INDEFINITE";
+	const expiresAtValue = expiresAtMs(expirationType);
 	const res = await fetchRest("/v4/chat/message/send", {
 		method: "POST",
 		body: {
@@ -77,7 +78,7 @@ export async function shareAlbum({
 			body: {
 				albumId,
 				expirationType,
-				expiresAt: expiresAtMs(expirationType),
+				...(expiresAtValue !== null ? { expiresAt: expiresAtValue } : {}),
 			},
 		},
 	});

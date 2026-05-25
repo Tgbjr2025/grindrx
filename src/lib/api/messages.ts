@@ -10,7 +10,7 @@ import { unixTimestampMsSchema } from "$lib/model/types";
 import type { Conversation } from "$lib/model/conversation";
 
 const conversationMessagesSchema = z.object({
-	lastReadTimestamp: unixTimestampMsSchema.nullable(),
+	lastReadTimestamp: z.number().nonnegative().nullable(),
 	messages: z.array(apiResponseMessageSchema),
 	profile: z.object({
 		distance: z.number().nullable(),
@@ -34,7 +34,10 @@ export async function getConversationMessages({
 	const messages = await fetchRest(
 		`/v5/chat/conversation/${conversationId}/message?` + params.toString(),
 		{ method: "GET" },
-	).then((res) => res.jsonParsed(conversationMessagesSchema));
+	).then((res) => {
+		if (res.status >= 400) throw new Error(`Messages fetch failed: ${res.status}`);
+		return res.jsonParsed(conversationMessagesSchema);
+	});
 	return messages;
 }
 

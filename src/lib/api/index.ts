@@ -150,7 +150,7 @@ export async function fetchRest(
 			if (appError.kind === "Auth" && appError.message === "Not logged in") {
 				toast("Please log in to continue");
 				goto("/auth/sign-in").catch((error) => console.error(error));
-				return undefined as never;
+				throw new Error("Auth required");
 			}
 		}
 		throw error;

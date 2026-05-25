@@ -48,7 +48,7 @@ export const cascadeV3ResponseFullProfileV1Schema = z.object({
 		...cascadeV3ResponseProfileSchema.shape,
 		"@type": z.literal("CascadeItemData$FullProfileV1"),
 		tribes: z.array(tribeSchema),
-		socialNetworks: z.array(socialNetworksSchema),
+		socialNetworks: socialNetworksSchema,
 		takenOnGrindrMetadata: z
 			.record(
 				mediaHashPublicSchema,

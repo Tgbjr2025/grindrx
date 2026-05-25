@@ -1,6 +1,6 @@
 export const appState: {
 	auth: {
-		userId: string;
+		userId: number;
 	} | null;
 } = $state({
 	auth: null,

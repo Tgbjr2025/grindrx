@@ -28,24 +28,35 @@ export function clearAllProfileCaches() {
 	profilesCache.clear();
 }
 
+const inflight = new Map<number, Promise<Profile>>();
+
 export async function getProfile(profileId: number) {
 	const cached = profilesCache.get(profileId);
 	if (cached && Date.now() - cached.updatedAt < 1000 * 60) {
 		return cached.profile;
 	}
-	const res = await fetchRest(`/v7/profiles/${profileId}`, { method: "GET" });
-	if (res.status !== 200) {
-		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
-	}
-	const raw = res.json();
-	const parsed = profileResponseSchema.safeParse(raw);
-	if (!parsed.success) {
-		const msg = parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(" | ");
-		throw new Error(msg);
-	}
-	const profile = parsed.data.profiles[0];
-	profilesCache.set(profileId, { profile, updatedAt: Date.now() });
-	return profile;
+	// FIX 12 — in-flight dedup: return existing promise for concurrent callers
+	const existing = inflight.get(profileId);
+	if (existing) return existing;
+
+	const promise = (async () => {
+		try {
+			const res = await fetchRest(`/v7/profiles/${profileId}`, { method: "GET" });
+			if (res.status >= 400) {
+				throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
+			}
+			// FIX 11 — use jsonParsed() to get Cloudflare block detection
+			const data = res.jsonParsed(profileResponseSchema);
+			const profile = data.profiles[0];
+			profilesCache.set(profileId, { profile, updatedAt: Date.now() });
+			return profile;
+		} finally {
+			inflight.delete(profileId);
+		}
+	})();
+
+	inflight.set(profileId, promise);
+	return promise;
 }
 
 const getProfilesResponseSchema = z.object({

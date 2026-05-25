@@ -22,7 +22,7 @@ export const sexualPositions = {
 	[SexualPosition.Side]: "Side",
 };
 
-export const sexualPositionSchema = z.enum(SexualPosition);
+export const sexualPositionSchema = z.nativeEnum(SexualPosition);
 
 export type SexualPositionId = z.infer<typeof sexualPositionSchema>;
 
@@ -44,7 +44,7 @@ export const lookingFor = {
 	[LookingFor.Hookups]: "Hookups",
 } as const;
 
-export const lookingForSchema = z.enum(LookingFor);
+export const lookingForSchema = z.nativeEnum(LookingFor);
 
 export type LookingForId = z.infer<typeof lookingForSchema>;
 
@@ -60,7 +60,7 @@ export const acceptNSFWPics = {
 	[AcceptNSFWPics.YesPlease]: "Yes Please",
 } as const;
 
-export const acceptNSFWPicsSchema = z.enum(AcceptNSFWPics);
+export const acceptNSFWPicsSchema = z.nativeEnum(AcceptNSFWPics);
 
 export type AcceptNSFWPicsId = z.infer<typeof acceptNSFWPicsSchema>;
 
@@ -86,7 +86,7 @@ export const relationshipStatuses = {
 	[RelationshipStatus.OpenRelationship]: "Open Relationship",
 } as const;
 
-export const relationshipStatusSchema = z.enum(RelationshipStatus);
+export const relationshipStatusSchema = z.nativeEnum(RelationshipStatus);
 
 export type RelationshipStatusId = z.infer<typeof relationshipStatusSchema>;
 
@@ -108,7 +108,7 @@ export const bodyTypes = {
 	[BodyType.Stocky]: "Stocky",
 } as const;
 
-export const bodyTypeSchema = z.enum(BodyType);
+export const bodyTypeSchema = z.nativeEnum(BodyType);
 
 export type BodyTypeId = z.infer<typeof bodyTypeSchema>;
 
@@ -144,7 +144,7 @@ export const tribes = {
 	[Tribe.Twink]: "Twink",
 } as const;
 
-export const tribeSchema = z.enum(Tribe);
+export const tribeSchema = z.nativeEnum(Tribe);
 
 export type TribeId = z.infer<typeof tribeSchema>;
 
@@ -164,7 +164,7 @@ export const meetAt = {
 	[MeetAt.Restaurant]: "Restaurant",
 } as const;
 
-export const meetAtSchema = z.enum(MeetAt);
+export const meetAtSchema = z.nativeEnum(MeetAt);
 
 export type MeetAtId = z.infer<typeof meetAtSchema>;
 
@@ -192,7 +192,7 @@ export const ethnicities = {
 	[Ethnicity.SouthAsian]: "South Asian",
 } as const;
 
-export const ethnicitySchema = z.enum(Ethnicity);
+export const ethnicitySchema = z.nativeEnum(Ethnicity);
 
 export type EthnicityId = z.infer<typeof ethnicitySchema>;
 
@@ -210,7 +210,7 @@ export const hivStatuses = {
 	[HivStatus.PositiveUndetectable]: "Positive, undetectable",
 } as const;
 
-export const hivStatusSchema = z.enum(HivStatus);
+export const hivStatusSchema = z.nativeEnum(HivStatus);
 
 export type HivStatusId = z.infer<typeof hivStatusSchema>;
 
@@ -230,7 +230,7 @@ export const healthPractices = {
 	[HealthPractice.PreferToDiscuss]: "Prefer to discuss",
 } as const;
 
-export const healthPracticesSchema = z.enum(HealthPractice);
+export const healthPracticesSchema = z.nativeEnum(HealthPractice);
 
 export type HealthPracticeId = z.infer<typeof healthPracticesSchema>;
 
@@ -246,7 +246,7 @@ export const vaccines = {
 	[Vaccine.Meningitis]: "Meningitis",
 } as const;
 
-export const vaccinesSchema = z.enum(Vaccine);
+export const vaccinesSchema = z.nativeEnum(Vaccine);
 
 export type VaccineId = z.infer<typeof vaccinesSchema>;
 
@@ -302,7 +302,8 @@ export const profileMaskedMinSchema = z.object({
 
 export const profileMaskedSchema = profileMaskedMinSchema.extend({
 	lastViewed: z.number().nullable(),
-	seen: z.number().int().nonnegative().nullable(),
+	// Grindr sends seen as Unix seconds; normalize to ms for consistency
+	seen: z.number().int().nonnegative().nullable().transform(v => v !== null ? v * 1000 : null),
 	rightNow: rightNowStatusSchema,
 	sexualPosition: sexualPositionSchema.nullable().optional().catch(null),
 	foundVia: viewSourceEnumSchema.nullable().optional().catch(null),
