@@ -302,8 +302,7 @@ export const profileMaskedMinSchema = z.object({
 
 export const profileMaskedSchema = profileMaskedMinSchema.extend({
 	lastViewed: z.number().nullable(),
-	// Grindr sends seen as Unix seconds; normalize to ms for consistency
-	seen: z.number().int().nonnegative().nullable().transform(v => v !== null ? v * 1000 : null),
+	seen: z.number().nonnegative().nullable(),
 	rightNow: rightNowStatusSchema,
 	sexualPosition: sexualPositionSchema.nullable().optional().catch(null),
 	foundVia: viewSourceEnumSchema.nullable().optional().catch(null),
