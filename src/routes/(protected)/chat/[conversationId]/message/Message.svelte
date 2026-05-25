@@ -175,6 +175,17 @@
 	</MessageWrapper>
 {/snippet}
 
+{#snippet retractedContent()}
+	<div
+		class={{
+			"me-auto ms-3 float-start pe-3": !isOut,
+			"ms-auto me-3 float-end ps-3": isOut,
+		}}
+	>
+		<span class="italic text-muted-foreground/50 text-sm px-1">This message was deleted.</span>
+	</div>
+{/snippet}
+
 <div
 	class={[
 		"flex flex-col gap-0.5 z-1 relative",
@@ -186,36 +197,42 @@
 	{#if firstInStack && dayStart !== undefined}
 		<MessageDateGroup {dayStart} />
 	{/if}
-	<div
-		class={{
-			"*:me-auto *:float-start pe-3": !isOut,
-			"*:ms-auto *:float-end ps-3": isOut,
-		}}
-		role="button"
-		tabindex="0"
-		aria-label="Message"
-		ondblclick={(event) => {
-			if (!isOut && onReact) {
+	{#if message.type === "Retract"}
+		<div use:observeRead>
+			{@render retractedContent()}
+		</div>
+	{:else}
+		<div
+			class={{
+				"*:me-auto *:float-start pe-3": !isOut,
+				"*:ms-auto *:float-end ps-3": isOut,
+			}}
+			role="button"
+			tabindex="0"
+			aria-label="Message"
+			ondblclick={(event) => {
+				if (!isOut && onReact) {
+					event.preventDefault();
+					onReact(1);
+				}
+				window.getSelection()?.removeAllRanges();
+			}}
+			onkeydown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					if (event.key === " ") event.preventDefault();
+					onContextMenu();
+				}
+			}}
+			oncontextmenu={(event) => {
 				event.preventDefault();
-				onReact(1);
-			}
-			window.getSelection()?.removeAllRanges();
-		}}
-		onkeydown={(event) => {
-			if (event.key === "Enter" || event.key === " ") {
-				if (event.key === " ") event.preventDefault();
 				onContextMenu();
-			}
-		}}
-		oncontextmenu={(event) => {
-			event.preventDefault();
-			onContextMenu();
-		}}
-		style:visibility={contextMenuOpen ? "hidden" : undefined}
-		use:observeRead
-	>
-		{@render content()}
-	</div>
+			}}
+			style:visibility={contextMenuOpen ? "hidden" : undefined}
+			use:observeRead
+		>
+			{@render content()}
+		</div>
+	{/if}
 	{#if lastInStack}
 		<span
 			class={[
@@ -241,7 +258,7 @@
 	{/if}
 </div>
 
-{#if contextMenuOpen}
+{#if contextMenuOpen && message.type !== "Retract"}
 	<MessageContextMenu
 		{contextMenuOpen}
 		{content}

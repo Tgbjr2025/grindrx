@@ -12,6 +12,7 @@ import type { Conversation } from "$lib/model/conversation";
 const conversationMessagesSchema = z.object({
 	lastReadTimestamp: z.number().nonnegative().nullable(),
 	messages: z.array(apiResponseMessageSchema),
+	pageKey: z.string().nullable().optional(),
 	profile: z.object({
 		distance: z.number().nullable(),
 		mediaHash: z.string().nullable(),

@@ -60,6 +60,11 @@
 
 	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// FIX 13: clean up long-press timer if component is destroyed while pointer held
+	$effect(() => () => {
+		if (longPressTimer !== null) clearTimeout(longPressTimer);
+	});
+
 	function onPointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
 		longPressTimer = setTimeout(() => {

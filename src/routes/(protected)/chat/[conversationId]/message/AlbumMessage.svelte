@@ -42,18 +42,10 @@
 	let albumState = $state<AlbumState>({ status: "idle" });
 	let cachedAlbum: LoadedAlbum | null = null;
 
-	function openAlbum() {
-		if (cachedAlbum) {
-			albumState = { status: "open", album: cachedAlbum };
-		} else {
-			albumState = { status: "loading" };
-		}
-	}
-
-	$effect(() => {
-		if (albumState.status !== "loading") return;
-		let destroyed = false;
-		(async () => {
+	// FIX 14: moved loading logic out of $effect into explicit function to avoid reactive loop
+	async function loadAlbumContent() {
+		albumState = { status: "loading" };
+		try {
 			const loaded = await getAlbumContent(message.albumId).then(
 				async (res) => ({
 					...res,
@@ -128,19 +120,22 @@
 					),
 				}),
 			);
-			if (!destroyed) {
-				cachedAlbum = loaded;
-				albumState = { status: "open", album: loaded };
-			}
-		})().catch((error) => {
-			if (!destroyed) {
-				console.error(error);
-				toast.error("Failed to load album content");
-				albumState = { status: "idle" };
-			}
-		});
-		return () => { destroyed = true; };
-	});
+			cachedAlbum = loaded;
+			albumState = { status: "open", album: loaded };
+		} catch (error) {
+			console.error(error);
+			toast.error("Failed to load album content");
+			albumState = { status: "idle" };
+		}
+	}
+
+	function openAlbum() {
+		if (cachedAlbum) {
+			albumState = { status: "open", album: cachedAlbum };
+		} else {
+			void loadAlbumContent();
+		}
+	}
 
 	$effect(() => {
 		if (albumState.status !== "open") return;

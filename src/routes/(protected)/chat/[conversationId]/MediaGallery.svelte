@@ -3,6 +3,7 @@
 	import { ImageIcon } from "phosphor-svelte";
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import * as Empty from "$lib/components/ui/empty";
 	import type { ApiResponseMessage } from "$lib/model/message";
@@ -93,7 +94,7 @@
 							aria-label="Photo {i + 1}"
 							class="block aspect-square overflow-hidden rounded-lg bg-muted"
 						>
-							<img
+							<AuthedImage
 								src={item.url}
 								alt=""
 								class="w-full h-full object-cover"

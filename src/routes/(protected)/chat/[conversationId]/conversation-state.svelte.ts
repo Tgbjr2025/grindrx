@@ -3,7 +3,7 @@ import z from "zod";
 
 import { shareAlbum } from "$lib/api/album";
 import { markConversationAsRead } from "$lib/api/conversation";
-import { reactToMessage, sendMessage } from "$lib/api/messages";
+import { reactToMessage, sendMessage, sendProfilePhotoMessage } from "$lib/api/messages";
 import { getPreferences } from "$lib/app-data/preferences.svelte";
 import {
 	apiResponseMessageSchema,
@@ -34,6 +34,7 @@ export class ConversationState {
 	loadingMore = $state(false);
 	error: Error | null = $state(null);
 	lastReadTimestamp: number | null = $state(null);
+	isTypingProfileId: number | null = $state(null);
 
 	get wsStatus() {
 		return ws.status;
@@ -45,10 +46,15 @@ export class ConversationState {
 	#conversations: ConversationsState;
 	#readQueue: { messageId: string; timestamp: number }[] = [];
 	#readTimer: ReturnType<typeof setTimeout> | null = null;
+	#typingTimer: ReturnType<typeof setTimeout> | null = null;
 	#pollTimer: ReturnType<typeof setInterval> | null = null;
 	#removeReconcileListener: () => void;
 	#removeWsConnectedListener: (() => void) | null = null;
 	#removeWsDisconnectedListener: (() => void) | null = null;
+	#unlistenWsRetract: Promise<() => void> | null = null;
+	#unlistenWsTyping: Promise<() => void> | null = null;
+	#unlistenWsRead: Promise<() => void> | null = null;
+	#unlistenWsReaction: Promise<() => void> | null = null;
 
 	constructor({
 		conversationId,
@@ -109,7 +115,11 @@ export class ConversationState {
 				if (this.#destroyed) return;
 				if (event.payload.conversationId !== this.conversationId) return;
 				if (event.payload.senderId === this.ourProfileId) {
-					const pending = this.messages.find((m) => m.status === "pending");
+					// FIX 7: match by tempId first, then fall back to first pending
+					const pending =
+						this.messages.find(
+							(m) => m.status === "pending" && m.messageId === event.payload.messageId,
+						) ?? this.messages.find((m) => m.status === "pending");
 					if (pending) {
 						// Replace pending with full server data in-place (avoids array replacement
 						// during Drawer close animation which would freeze the UI on Android).
@@ -140,6 +150,96 @@ export class ConversationState {
 				});
 			},
 		);
+
+		// FIX 3: retract event
+		this.#unlistenWsRetract = ws.on(
+			"chat.v1.message_retracted",
+			z.object({ targetMessageId: z.string() }),
+			(event) => {
+				if (this.#destroyed) return;
+				const idx = this.messages.findIndex(
+					(m) => m.messageId === event.targetMessageId,
+				);
+				if (idx >= 0) {
+					this.messages.splice(idx, 1);
+					this.#syncCache();
+				}
+			},
+		);
+
+		// FIX 4: typing indicator
+		this.#unlistenWsTyping = ws.on(
+			"chat.v1.typing",
+			z.object({
+				conversationId: z.string(),
+				profileId: z.number(),
+				isTyping: z.boolean(),
+			}),
+			(event) => {
+				if (this.#destroyed) return;
+				if (event.conversationId !== this.conversationId) return;
+				if (event.profileId === this.ourProfileId) return;
+				if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
+				this.isTypingProfileId = event.isTyping ? event.profileId : null;
+				if (event.isTyping) {
+					this.#typingTimer = setTimeout(() => {
+						if (!this.#destroyed) this.isTypingProfileId = null;
+						this.#typingTimer = null;
+					}, 3000);
+				}
+			},
+		);
+
+		// FIX 5: read receipt
+		this.#unlistenWsRead = ws.on(
+			"chat.v1.read",
+			z.object({
+				conversationId: z.string(),
+				lastReadTimestamp: z.number(),
+			}),
+			(event) => {
+				if (this.#destroyed) return;
+				if (event.conversationId !== this.conversationId) return;
+				if (
+					this.lastReadTimestamp === null ||
+					event.lastReadTimestamp > this.lastReadTimestamp
+				) {
+					this.lastReadTimestamp = event.lastReadTimestamp;
+					localStorage.setItem(
+						`chat:read:${this.conversationId}`,
+						String(event.lastReadTimestamp),
+					);
+				}
+			},
+		);
+
+		// FIX 6: reaction
+		this.#unlistenWsReaction = ws.on(
+			"chat.v1.message_reaction",
+			z.object({
+				messageId: z.string(),
+				reactionType: z.string(),
+				profileId: z.number(),
+			}),
+			(event) => {
+				if (this.#destroyed) return;
+				const msg = this.messages.find((m) => m.messageId === event.messageId);
+				if (!msg) return;
+				const reactionType = Number(event.reactionType);
+				const existing = msg.reactions.findIndex(
+					(r) => r.profileId === event.profileId,
+				);
+				if (existing >= 0) {
+					msg.reactions[existing] = {
+						profileId: event.profileId,
+						reactionType,
+					};
+				} else {
+					msg.reactions.push({ profileId: event.profileId, reactionType });
+				}
+				this.#syncCache();
+			},
+		);
 	}
 
 	#unlistenWs: Promise<() => void>;
@@ -150,8 +250,13 @@ export class ConversationState {
 		this.#destroyed = true;
 		this.#conversations.clearActive(this.conversationId);
 		this.#unlistenWs.then((unlisten) => unlisten()).catch(console.error);
+		this.#unlistenWsRetract?.then((unlisten) => unlisten()).catch(console.error);
+		this.#unlistenWsTyping?.then((unlisten) => unlisten()).catch(console.error);
+		this.#unlistenWsRead?.then((unlisten) => unlisten()).catch(console.error);
+		this.#unlistenWsReaction?.then((unlisten) => unlisten()).catch(console.error);
 		this.#removeReconcileListener();
 		if (this.#readTimer !== null) clearTimeout(this.#readTimer);
+		if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
 		this.#stopPolling();
 		if (this.#removeWsConnectedListener) this.#removeWsConnectedListener();
 		if (this.#removeWsDisconnectedListener)
@@ -178,7 +283,7 @@ export class ConversationState {
 	}
 
 	async #reconcileMessages(): Promise<void> {
-		if (this.loading || this.#destroyed) return;
+		if (this.loading || this.loadingMore || this.#destroyed) return;
 		try {
 			const result = await getConversation({
 				conversationId: this.conversationId,
@@ -193,16 +298,21 @@ export class ConversationState {
 					? result.messages[result.messages.length - 1].timestamp
 					: Number.POSITIVE_INFINITY;
 
+			const recentCutoff = Date.now() - 60_000;
 			const next: OptimisticMessage[] = [];
 			const seenLocalIds = new Set<string>();
 			let dropped = 0;
 			for (const local of this.messages) {
 				if (local.status !== "sent") {
+					// FIX 9: always preserve pending/error messages
 					next.push(local);
 					continue;
 				}
 				seenLocalIds.add(local.messageId);
+				// FIX 9: preserve recently-sent messages even if not yet in server page
+				const recentlySent = local.timestamp >= recentCutoff;
 				if (
+					recentlySent ||
 					local.timestamp < oldestServerTs ||
 					serverById.has(local.messageId)
 				) {
@@ -355,6 +465,62 @@ export class ConversationState {
 			// Update the pending message with the real messageId from the HTTP response.
 			// This mirrors #resolveMessage so the WS dedup check finds it and returns without
 			// mutating the array — preventing the scroll trigger that freezes the UI on Android.
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "sent";
+				msg.messageId = messageId;
+			}
+			this.#syncCache();
+		} catch (err) {
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "error";
+				this.#updatePreview(this.messages.find((m) => m.status === "sent"));
+			}
+			throw err;
+		}
+	}
+
+	// FIX 10: optimistic photo send
+	async sendPhoto({
+		mediaId,
+		mediaHash,
+		createdAt,
+	}: {
+		mediaId: number;
+		mediaHash: string;
+		createdAt: number | null;
+	}): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const tempId = `pending-${crypto.randomUUID()}`;
+		const optimistic: OptimisticMessage = {
+			type: "Image",
+			body: {
+				mediaId,
+				url: `https://cdns.grindr.com/images/${mediaHash}`,
+				width: null,
+				height: null,
+				imageHash: mediaHash,
+				takenOnGrindr: false,
+				createdAt,
+			},
+			messageId: tempId,
+			conversationId: this.conversationId,
+			senderId: this.ourProfileId,
+			timestamp: Date.now(),
+			unsent: false,
+			reactions: [],
+			status: "pending",
+		};
+		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
+		this.#updatePreview(optimistic);
+		try {
+			const { messageId } = await sendProfilePhotoMessage({
+				toUserId: this.profile.profileId,
+				mediaId,
+				mediaHash,
+				createdAt,
+			});
 			const msg = this.messages.find((m) => m.messageId === tempId);
 			if (msg) {
 				msg.status = "sent";

@@ -14,6 +14,12 @@
 
 	let container: HTMLDivElement | null = $state(null);
 
+	// FIX 12: pre-compute skeleton widths once to avoid jitter on re-renders
+	const skeletonShapes = Array.from({ length: 10 }, () => ({
+		width: Math.floor(Math.random() * 400) + 100,
+		alignEnd: Math.random() < 0.5,
+	}));
+
 	const messages = $derived(
 		processMessages({
 			messages: conversationState.messages,
@@ -90,13 +96,13 @@
 	style:overflow-anchor="none"
 >
 	{#if conversationState.loading}
-		{#each Array(10)}
+		{#each skeletonShapes as shape}
 			<Skeleton
 				class={[
 					"h-10 shrink-0 max-w-full rounded-2xl",
-					Math.random() < 0.5 ? "self-start" : "self-end",
+					shape.alignEnd ? "self-end" : "self-start",
 				]}
-				style="width: {Math.floor(Math.random() * 400) + 100}px"
+				style="width: {shape.width}px"
 			/>
 		{/each}
 	{:else if conversationState.error}
@@ -122,7 +128,7 @@
 				dayStart={message.dayStart}
 				status={message.status}
 				isRead={isOut && message.messageId === messages[0]?.messageId
-					? conversationState.lastReadTimestamp === message.timestamp
+					? conversationState.lastReadTimestamp !== null && message.timestamp <= conversationState.lastReadTimestamp
 					: null}
 				onVisible={!isOut
 					? () => conversationState.reportRead(message)

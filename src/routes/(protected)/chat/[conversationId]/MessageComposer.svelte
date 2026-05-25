@@ -4,7 +4,6 @@
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
-	import { sendProfilePhotoMessage } from "$lib/api/messages";
 	import { type ProfilePhoto, uploadProfileImage } from "$lib/api/profile";
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
@@ -16,10 +15,12 @@
 	let {
 		onSend,
 		onSendAlbum,
+		onSendPhotoOptimistic,
 		recipientProfileId,
 	}: {
 		onSend: (params: Message) => void | Promise<void>;
 		onSendAlbum: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
+		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; createdAt: number | null }) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
 
@@ -45,12 +46,7 @@
 	}
 
 	async function onSendPhoto(photo: ProfilePhoto & { mediaId: number }) {
-		if (recipientProfileId === null) {
-			toast.error("Cannot send photo — conversation not loaded");
-			return;
-		}
-		await sendProfilePhotoMessage({
-			toUserId: recipientProfileId,
+		await onSendPhotoOptimistic({
 			mediaId: photo.mediaId,
 			mediaHash: photo.mediaHash,
 			createdAt: photo.createdAt ?? null,
@@ -70,8 +66,7 @@
 				toast.error("Upload succeeded but Grindr didn't return a media ID — can't send");
 				return;
 			}
-			await sendProfilePhotoMessage({
-				toUserId: recipientProfileId,
+			await onSendPhotoOptimistic({
 				mediaId,
 				mediaHash,
 				createdAt: Date.now(),

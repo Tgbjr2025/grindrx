@@ -83,6 +83,10 @@
 						<Card.Description class="truncate text-xs text-amber-500">
 							Offline — polling for messages
 						</Card.Description>
+					{:else if conversationState.isTypingProfileId !== null}
+						<Card.Description class="truncate text-xs text-muted-foreground italic">
+							typing...
+						</Card.Description>
 					{:else if profile.distance === null}
 						<Card.Description class="truncate text-xs">
 							Distance unknown

@@ -100,9 +100,10 @@ export async function getConversation({
 }) {
 	return await getConversationMessages({ conversationId, pageKey }).then(
 		(res) => {
+			// FIX 15: prefer API cursor if present, fall back to last message ID
 			return {
 				...res,
-				pageKey: res.messages.at(-1)?.messageId ?? null,
+				pageKey: res.pageKey ?? res.messages.at(-1)?.messageId ?? null,
 			};
 		},
 	);
