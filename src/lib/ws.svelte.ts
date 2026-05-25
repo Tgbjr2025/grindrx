@@ -49,7 +49,9 @@ export const chatV1MessageRetractedSchema = z.object({
 
 export const chatV1MessageReactionSchema = z.object({
 	messageId: z.string(),
-	reactionType: z.string(),
+	reactionType: z.union([z.number().int().nonnegative(), z.string()]).transform((v) =>
+		typeof v === "string" ? parseInt(v, 10) : v,
+	),
 	profileId: z.number(),
 });
 

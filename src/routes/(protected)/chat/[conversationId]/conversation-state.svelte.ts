@@ -51,6 +51,7 @@ export class ConversationState {
 	#removeReconcileListener: () => void;
 	#removeWsConnectedListener: (() => void) | null = null;
 	#removeWsDisconnectedListener: (() => void) | null = null;
+	#unlistenWs: Promise<() => void> | null = null;
 	#unlistenWsRetract: Promise<() => void> | null = null;
 	#unlistenWsTyping: Promise<() => void> | null = null;
 	#unlistenWsRead: Promise<() => void> | null = null;
@@ -151,21 +152,22 @@ export class ConversationState {
 			},
 		);
 
-		// FIX 3: retract event
-		this.#unlistenWsRetract = ws.on(
-			"chat.v1.message_retracted",
-			z.object({ targetMessageId: z.string() }),
-			(event) => {
-				if (this.#destroyed) return;
-				const idx = this.messages.findIndex(
-					(m) => m.messageId === event.targetMessageId,
-				);
-				if (idx >= 0) {
-					this.messages.splice(idx, 1);
-					this.#syncCache();
-				}
-			},
-		);
+		// FIX 1+2: retract event — use notificationEventSchema envelope (consistent with message_sent),
+		// and show tombstone instead of splicing so live-retract matches reload behaviour.
+		this.#unlistenWsRetract = ws.onRetracted((payload) => {
+			if (this.#destroyed) return;
+			const idx = this.messages.findIndex(
+				(m) => m.messageId === payload.targetMessageId,
+			);
+			if (idx >= 0) {
+				this.messages[idx] = {
+					...this.messages[idx],
+					type: "Retract",
+					body: { targetMessageId: this.messages[idx].messageId },
+				} as OptimisticMessage;
+				this.#syncCache();
+			}
+		});
 
 		// FIX 4: typing indicator
 		this.#unlistenWsTyping = ws.on(
@@ -218,31 +220,30 @@ export class ConversationState {
 			"chat.v1.message_reaction",
 			z.object({
 				messageId: z.string(),
-				reactionType: z.string(),
+				reactionType: z.union([z.number().int().nonnegative(), z.string()]).transform((v) =>
+					typeof v === "string" ? parseInt(v, 10) : v,
+				),
 				profileId: z.number(),
 			}),
 			(event) => {
 				if (this.#destroyed) return;
 				const msg = this.messages.find((m) => m.messageId === event.messageId);
 				if (!msg) return;
-				const reactionType = Number(event.reactionType);
 				const existing = msg.reactions.findIndex(
 					(r) => r.profileId === event.profileId,
 				);
 				if (existing >= 0) {
 					msg.reactions[existing] = {
 						profileId: event.profileId,
-						reactionType,
+						reactionType: event.reactionType,
 					};
 				} else {
-					msg.reactions.push({ profileId: event.profileId, reactionType });
+					msg.reactions.push({ profileId: event.profileId, reactionType: event.reactionType });
 				}
 				this.#syncCache();
 			},
 		);
 	}
-
-	#unlistenWs: Promise<() => void>;
 
 	#destroyed = false;
 	destroy(): void {

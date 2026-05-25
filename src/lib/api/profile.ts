@@ -72,12 +72,16 @@ export async function getProfiles(
 	profileIds: number[],
 ): Promise<z.infer<typeof getProfilesResponseSchema>["profiles"]> {
 	if (profileIds.length === 0) return [];
-	return await fetchRest("/v3/profiles", {
+	const profiles = await fetchRest("/v3/profiles", {
 		method: "POST",
 		body: {
 			targetProfileIds: profileIds,
 		},
 	}).then((res) => res.jsonParsed(getProfilesResponseSchema).profiles);
+	profiles.forEach((profile) => {
+		profilesCache.set(profile.profileId, { profile: profile as unknown as Profile, updatedAt: Date.now() });
+	});
+	return profiles;
 }
 
 let myProfileCache: {

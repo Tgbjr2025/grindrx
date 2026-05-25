@@ -104,7 +104,7 @@ export async function reactToMessage({
 	messageId: ApiResponseMessage["messageId"];
 	reactionType: number;
 }) {
-	return await fetchRest("/v4/chat/message/reaction", {
+	const res = await fetchRest("/v4/chat/message/reaction", {
 		method: "POST",
 		body: {
 			conversationId,
@@ -112,6 +112,8 @@ export async function reactToMessage({
 			reactionType,
 		},
 	});
+	if (res.status >= 400) throw new Error(`Reaction failed: ${res.status}`);
+	return res;
 }
 
 export async function deleteMessageForMe({

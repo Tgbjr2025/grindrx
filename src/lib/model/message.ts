@@ -35,7 +35,7 @@ export const albumMessageSchema = messageBaseSchema.safeExtend({
 	body: z.object({
 		...albumPreviewSchema.shape,
 		...albumExpirationSchema.shape,
-		coverUrl: z.url(),
+		coverUrl: z.url().or(z.literal("")),
 		ownerProfileId: z.number().int().nonnegative().nullable(),
 		isViewable: z.boolean(),
 		hasVideo: z.boolean(),
@@ -72,7 +72,7 @@ export const albumContentReactionMessageSchema = messageBaseSchema.safeExtend({
 		albumId: z.number().int().nonnegative(),
 		ownerProfileId: z.number().int().nonnegative().nullable(),
 		albumContentId: z.number().int().nonnegative(),
-		previewUrl: z.url().nullable(),
+		previewUrl: z.url().or(z.literal("")).nullable(),
 		expiresAt: unixTimestampMsSchema.nullable(),
 		viewable: z.boolean(),
 	}),
