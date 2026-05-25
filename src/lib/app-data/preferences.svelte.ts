@@ -35,14 +35,19 @@ let writeQueue = Promise.resolve();
 export async function setPreferences(
 	newValues: Partial<z.infer<typeof preferencesSchema>>,
 ): Promise<void> {
-	writeQueue = writeQueue.then(async () => {
-		const oldValues = await getPreferences();
-		const preferences = {
-			...oldValues,
-			...newValues,
-		};
-		preferencesSchema.parse(preferences);
-		await writeAppDataFile("preferences.data", encode(preferences));
-	});
+	writeQueue = writeQueue
+		.then(async () => {
+			const oldValues = await getPreferences();
+			const preferences = {
+				...oldValues,
+				...newValues,
+			};
+			preferencesSchema.parse(preferences);
+			await writeAppDataFile("preferences.data", encode(preferences));
+		})
+		.catch((err) => {
+			console.error("[GrindX] Failed to persist preferences:", err);
+			// Swallow — allows next write to proceed
+		});
 	await writeQueue;
 }

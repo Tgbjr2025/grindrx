@@ -36,15 +36,15 @@
 				toast.success("Account created! Please sign in.");
 				void goto("/auth/sign-in");
 			} else {
-				let appError;
 				try {
-					appError = asAppError(response.json());
+					const body = response.json();
+					const msg = (body as any)?.message || (body as any)?.error || null;
+					if (msg) {
+						toast.error(msg);
+					} else {
+						toast.error("Failed to create account. Please try again.");
+					}
 				} catch {
-					appError = undefined;
-				}
-				if (appError) {
-					toast.error(appError.prettyMessage);
-				} else {
 					toast.error("Failed to create account. Please try again.");
 				}
 			}

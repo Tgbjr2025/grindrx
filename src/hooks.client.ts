@@ -1,9 +1,16 @@
 import type { ClientInit, HandleClientError } from "@sveltejs/kit";
 
+import { callMethod } from "$lib/api";
 import { ws } from "$lib/ws.svelte";
 
 export const init: ClientInit = () => {
-	ws.connect();
+	callMethod("auth_state")
+		.then((profileId) => {
+			if (profileId) ws.connect();
+		})
+		.catch(() => {
+			// Not logged in — don't connect WS
+		});
 };
 
 export const handleError: HandleClientError = ({ error, event }) => {

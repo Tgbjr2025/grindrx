@@ -7,7 +7,10 @@
 	import FireIcon from "phosphor-svelte/lib/FireIcon";
 	import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
 
+	import UserIcon from "phosphor-svelte/lib/UserIcon";
+
 	import { getMyProfile } from "$lib/api/profile";
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
 	import { tabsListVariants } from "$lib/components/ui/tabs";
 	import { getTotalUnread } from "$lib/stores/unread.svelte";
@@ -82,13 +85,17 @@
 		{#await myProfilePhotos then photos}
 			{@const mainPhoto = photos[0]}
 			{#if mainPhoto}
-				<img
+				<AuthedImage
 					src="https://cdns.grindr.com/images/thumb/320x320/{mainPhoto.mediaHash}"
 					alt=""
 					width="44"
 					height="44"
 					class="rounded-full bg-neutral-600 border-transparent object-cover object-center"
 				/>
+			{:else}
+				<div class="size-full rounded-full bg-neutral-600 flex items-center justify-center">
+					<UserIcon class="size-5 text-neutral-300" />
+				</div>
 			{/if}
 		{/await}
 	</a>

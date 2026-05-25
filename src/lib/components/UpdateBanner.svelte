@@ -11,6 +11,22 @@
 	let latestVersion = $state("");
 	let dismissed = $state(false);
 
+	function isDismissed(version: string): boolean {
+		try {
+			return localStorage.getItem(`grindx-update-dismissed-${version}`) === "1";
+		} catch {
+			return false;
+		}
+	}
+
+	function persistDismiss(version: string): void {
+		try {
+			localStorage.setItem(`grindx-update-dismissed-${version}`, "1");
+		} catch {
+			// ignore — storage may be unavailable
+		}
+	}
+
 	function parseSemver(v: string): [number, number, number] {
 		const clean = v.replace(/^v/, "");
 		const parts = clean.split(".").map(Number);
@@ -37,7 +53,9 @@
 			if (isNewer(release.tag_name, current)) {
 				latestVersion = release.tag_name;
 				releaseUrl = release.html_url;
-				updateAvailable = true;
+				if (!isDismissed(release.tag_name)) {
+					updateAvailable = true;
+				}
 			}
 		} catch {
 			// silently ignore — no network, CSP block, etc.
@@ -59,7 +77,7 @@
 			type="button"
 			aria-label="Dismiss"
 			class="shrink-0 hover:bg-primary-foreground/10 active:bg-primary-foreground/20 rounded-md p-0.5 transition-colors"
-			onclick={() => (dismissed = true)}
+			onclick={() => { dismissed = true; persistDismiss(latestVersion); }}
 		>
 			<XIcon class="size-4" />
 		</button>

@@ -4,7 +4,12 @@ import { callMethod } from "$lib/api";
 import type { LayoutLoad } from "./$types";
 
 export const load: LayoutLoad = async () => {
-	const profileId = await callMethod("auth_state");
+	let profileId: number | null = null;
+	try {
+		profileId = await callMethod("auth_state");
+	} catch {
+		profileId = null;
+	}
 	if (!profileId) {
 		redirect(303, "/auth/sign-in");
 	}

@@ -48,4 +48,4 @@
 	}
 </script>
 
-<img src={resolvedSrc} {alt} class={className} {style} onerror={handleError} {...rest} />
+<img src={resolvedSrc} {alt} class={className} {style} onerror={() => { handleError().catch(console.error); }} {...rest} />

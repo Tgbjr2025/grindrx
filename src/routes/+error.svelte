@@ -70,7 +70,7 @@
 								src={clippy}
 								alt="Clippy"
 							/>
-							<Tooltip.Root open={flipProgress.current === 1}>
+							<Tooltip.Root open={flipProgress.current >= 0.99}>
 								<Tooltip.Content
 									customAnchor={anchor}
 									class="bg-popover text-accent rounded-sm max-w-35 flex flex-col items-start"
