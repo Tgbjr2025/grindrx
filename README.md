@@ -1,50 +1,88 @@
-# Open Grind — dominus fork
+# GrindX
 
-> **This is a personal fork** with additional features on top of [upstream open-grind](https://git.opengrind.org/open-grind/open-grind).
-> Pre-built APKs for this fork are on the [Releases](https://git.dominusaxis.com/dominus/open-grind/releases) page.
->
-> **Extra features in this fork:** distance radar map · chat media gallery · send taps · favorites · inbox search · delete conversations · profile photo management · Post Right Now · km/mi toggle · keyring session storage
+> A privacy-focused Grindr client for Android — forked from [open-grind](https://git.opengrind.org/open-grind/open-grind), maintained by [@Tgbjr2025](https://github.com/Tgbjr2025).
 
 ---
 
-[![Matrix space](https://img.shields.io/matrix/opengrind:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=matrix%20space)](https://matrix.to/#/#opengrind:opengrind.org) [![chat](https://img.shields.io/matrix/general:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=chat)](https://matrix.to/#/#general:opengrind.org) [![Announcements](https://img.shields.io/matrix/announcements:opengrind.org?server_fqdn=matrix.opengrind.org&fetchMode=summary&label=announcements)](https://matrix.to/#/#announcements:opengrind.org)
+## Downloads
 
-Unofficial Grindr client. Crossplatform, free, libre, ad-free, tracker-free, privacy-centered and community-driven.
+**Pre-built APKs and all releases are on the [Forgejo release page](https://git.dominusaxis.com/dominus/open-grind/releases).**
 
-Status as of 17th May, 2026: **🚧 Early MVP testing build is available 🚧**.
+Source code mirror and canonical repository: [git.dominusaxis.com/dominus/open-grind](https://git.dominusaxis.com/dominus/open-grind)
 
-## Usage
+> This GitHub repository mirrors the canonical source. For the latest releases, issues, and up-to-date code, visit the Forgejo server above.
 
-[Download the latest version from releases](https://git.opengrind.org/open-grind/open-grind/releases).
+---
+
+## What is GrindX?
+
+GrindX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered.
+
+The Rust layer handles all Grindr API calls with device-header spoofing and session management. The SvelteKit frontend is embedded into the native binary.
+
+### Features beyond upstream open-grind
+
+- **Distance radar map** — visual map of nearby profiles
+- **Chat media gallery** — browse all media in a conversation
+- **Send taps & favorites** — full tap/favorite support
+- **Inbox search** — search your conversations
+- **Delete conversations** — remove chats locally
+- **Profile photo management** — upload and manage your photos
+- **Post Right Now** — post to the Right Now feed
+- **km/mi toggle** — switch distance units
+- **Keyring session storage** — secure credential storage using the OS keychain
+- **Online indicators** — green dot on grid cards for active users
+- **Authenticated image loading** — no more black squares for private media
+- **Incognito mode badge** — visual indicator (API-level suppression requires XTRA)
+
+---
+
+## Installation
+
+### Sideloaded APK (Android)
+
+1. Download the latest APK from [releases](https://git.dominusaxis.com/dominus/open-grind/releases)
+2. Enable "Install unknown apps" for your file manager
+3. Install the APK
+4. Samsung Knox / Secure Folder: use **Add apps** inside Secure Folder to move it in
+
+### Build from source
+
+Requirements: Rust, Bun, Android SDK (NDK r27), Java 17, Gradle 8.
+
+```bash
+git clone https://git.dominusaxis.com/dominus/open-grind.git
+cd open-grind
+bun install
+bun run build                                     # frontend
+cargo build --release --target aarch64-linux-android  # Rust .so
+# See BUILDING.md for the full Gradle step
+```
+
+See [BUILDING.md](./BUILDING.md) for the complete build pipeline including the jniLibs symlink fix required for release builds.
+
+---
 
 ## Security
 
-All releases are signed. Never install Open Grind from unofficial sources. Verify before installing.
+All APK releases are signed with a Java KeyStore. SHA-256 fingerprint:
 
-PGP Public Key: <https://opengrind.org/pgp> (`CB722EE967E4FCAD7C658FC69A1F7F5F592919D2`).
+```
+28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C
+```
 
-Android releases are additionally signed with Java KeyStore with the following SHA-256 fingerprint: `28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C`
+Verification instructions are in [KEYS.md](./KEYS.md).
 
-Signing keys and verification instructions are documented in [KEYS.md](KEYS.md), itself signed by the PGP key above (verify with `gpg --verify KEYS.md.asc KEYS.md`).
+---
 
-Open Grind supports reproducable builds. Read more in [BUILDING.md](./BUILDING.md#verifying-a-published-release).
+## Issues & Contributing
 
-## Development
+- **Issues / PRs**: file them on the [Forgejo repo](https://git.dominusaxis.com/dominus/open-grind/issues) (canonical)
+- **Upstream**: [git.opengrind.org/open-grind/open-grind](https://git.opengrind.org/open-grind/open-grind)
+- See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 
-Interested in contributing to the project? Head to [CONTRIBUTING.md](./CONTRIBUTING.md) to get started. All contributions must be aligned with [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
-
-## Problems, bugs, feature requests?
-
-Check out [issues](https://git.opengrind.org/open-grind/open-grind/issues) and the Matrix chatroom [#opengrind:opengrind.org](https://matrix.to/#/#opengrind:opengrind.org).
+---
 
 ## License
 
-[MIT](./LICENSE)
-
-## Donate
-
-See [FUNDING.md](./FUNDING.md)
-
-If this fork is useful to you, you can also support it directly:
-
-[![Support via PayPal](https://img.shields.io/badge/Support-PayPal-003087?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/tbateman2025)
+See [LICENSE](./LICENSE). This project is a fork of open-grind and inherits its license.
