@@ -16,7 +16,7 @@ export const fullConversationSchema = z.object({
 					primaryMediaHash: mediaHashPublicSchema.nullable(),
 				}),
 			)
-			.min(1),
+			.length(1),
 		lastActivityTimestamp: unixTimestampMsSchema,
 		unreadCount: z.number(),
 		preview: z.object({
