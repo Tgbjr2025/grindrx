@@ -88,7 +88,12 @@ impl GrindrClient {
             println!("Headers:");
             let default_headers = self.default_headers.read().await;
             for (name, value) in default_headers.iter().chain(request.headers()) {
-                println!("  {}: {}", name, value.to_str().unwrap_or("<binary>"));
+                // FIX 5: redact Authorization to prevent session token leaking to logcat
+                if name.as_str().to_lowercase() == "authorization" {
+                    println!("  {}: [REDACTED]", name);
+                } else {
+                    println!("  {}: {}", name, value.to_str().unwrap_or("<binary>"));
+                }
             }
             if let Some(b) = request.body() {
                 match b.as_bytes() {
@@ -173,10 +178,11 @@ pub async fn fetch_authed_bytes(
         let parsed = reqwest::Url::parse(&url)
             .map_err(|_| AppError::Http("Invalid URL".to_owned()))?;
         let host = parsed.host_str().unwrap_or("");
+        // FIX 4: removed the generic *.cloudfront.net wildcard — any AWS customer
+        // could use it to steal the session token. Only allow known Grindr CDN hostnames.
         let allowed = host == "grindr.mobi"
             || host.ends_with(".grindr.com")
             || host.ends_with(".grindr.mobi")
-            || host.ends_with(".cloudfront.net")
             || host.ends_with(".cdns.grindr.com");
         if !allowed {
             return Err(AppError::Http(format!(
@@ -201,6 +207,12 @@ pub async fn fetch_authed_bytes(
         )));
     }
 
+    // FIX 11: cap response size to 10 MB to prevent unbounded memory use
+    const MAX_BYTES: u64 = 10 * 1024 * 1024;
+    if response.content_length().unwrap_or(0) > MAX_BYTES {
+        return Err(AppError::Http("Response too large".to_owned()));
+    }
+
     let content_type = response
         .headers()
         .get("content-type")
@@ -209,6 +221,9 @@ pub async fn fetch_authed_bytes(
         .to_owned();
 
     let bytes = response.bytes().await?.to_vec();
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(AppError::Http("Response too large".to_owned()));
+    }
     let b64 = STANDARD.encode(&bytes);
     Ok(format!("data:{};base64,{}", content_type, b64))
 }

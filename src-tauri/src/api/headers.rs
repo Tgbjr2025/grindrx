@@ -341,7 +341,6 @@ pub const SAFE_TIMEZONES: &[&str] = &[
     // Europe
     "Europe/Dublin",
     "Europe/Zurich",
-    "Europe/Zurich",
     "Europe/Prague",
     "Europe/Bratislava",
     "Europe/Budapest",
@@ -361,7 +360,6 @@ pub const SAFE_TIMEZONES: &[&str] = &[
     "America/Lima",
     "America/Montevideo",
     // Asia-Pacific
-    "Asia/Tokyo",
     "Asia/Tokyo",
     "Asia/Taipei",
     "Asia/Seoul",

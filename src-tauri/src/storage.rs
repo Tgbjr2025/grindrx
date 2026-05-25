@@ -8,9 +8,12 @@ mod file_store {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    fn credential_path(base: &PathBuf, _service: &str, user: &str) -> PathBuf {
+    fn credential_path(base: &PathBuf, service: &str, user: &str) -> PathBuf {
+        // FIX 12: include service in path to prevent different services from
+        // colliding when they share the same user key (e.g. "session" + "device").
         let safe = |s: &str| s.replace(['/', '\\', '\0', ':'], "_");
         base.join("credentials")
+            .join(safe(service))
             .join(safe(user))
     }
 

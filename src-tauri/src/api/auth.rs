@@ -195,7 +195,8 @@ impl GrindrClient {
             .map(|s| s.expires_at)
             .unwrap_or(0);
 
-        if expires_at < (chrono::Utc::now().timestamp() as u64 + 60) {
+        // FIX 8: use .max(0) before cast to avoid wrapping on pre-epoch clocks
+        if expires_at < (chrono::Utc::now().timestamp().max(0) as u64 + 60) {
             let _guard = self.refresh_lock.lock().await;
 
             let still_expired = self
@@ -205,7 +206,7 @@ impl GrindrClient {
                 .as_ref()
                 .map(|s| s.expires_at)
                 .unwrap_or(0)
-                < (chrono::Utc::now().timestamp() as u64 + 60);
+                < (chrono::Utc::now().timestamp().max(0) as u64 + 60);
 
             if still_expired {
                 if let Err(e) = self.refresh_token().await {

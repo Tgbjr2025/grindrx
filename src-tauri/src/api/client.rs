@@ -1,6 +1,7 @@
 use reqwest::header::HeaderMap;
 use reqwest::Client;
 use serde::Serialize;
+use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::error::AppError;
@@ -46,7 +47,12 @@ impl GrindrClient {
         let user_agent = build_user_agent(&device, "Free");
         let headers = build_default_headers(&device, &user_agent);
 
-        let http = Client::builder().default_headers(headers.clone()).build()?;
+        // FIX 10: add request and connect timeouts so hung API calls don't freeze the app
+        let http = Client::builder()
+            .default_headers(headers.clone())
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .build()?;
 
         #[cfg(all(target_os = "macos", not(feature = "keychain")))]
         let session = None;
@@ -56,6 +62,24 @@ impl GrindrClient {
             Err(e) => {
                 eprintln!("[client] could not load session: {e}");
                 None
+            }
+        };
+
+        // FIX 9: discard sessions that are already expired so the app prompts re-login
+        // rather than silently continuing with a stale token (common after Android reinstall).
+        #[cfg(not(all(target_os = "macos", not(feature = "keychain"))))]
+        let session = {
+            let now = chrono::Utc::now().timestamp().max(0) as u64;
+            match session {
+                Some(ref s) if s.expires_at < now => {
+                    eprintln!(
+                        "[client] stored session is expired (expires_at={}, now={}) — clearing",
+                        s.expires_at, now
+                    );
+                    super::auth::AuthStorage::delete_session();
+                    None
+                }
+                other => other,
             }
         };
 
@@ -82,15 +106,6 @@ pub async fn rotate_api_params(
     state: tauri::State<'_, AppState>,
 ) -> Result<RotateResult, AppError> {
     let client = state.client()?;
-    let old_ua = client.user_agent.read().await.clone();
-    let old_device_info = client
-        .default_headers
-        .read()
-        .await
-        .get("L-Device-Info")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
 
     let device = DeviceInfo::default();
     if let Err(e) = DeviceStorage::save(&device) {
@@ -98,14 +113,26 @@ pub async fn rotate_api_params(
     }
     let user_agent = build_user_agent(&device, "Free");
     let headers = build_default_headers(&device, &user_agent);
-    let http = Client::builder().default_headers(headers.clone()).build()?;
+    let http = Client::builder()
+        .default_headers(headers.clone())
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .build()?;
 
     *client.http.write().await = http;
-    *client.default_headers.write().await = headers;
+    *client.default_headers.write().await = headers.clone();
+
+    // FIX 6: return the newly generated values, not the old ones
+    let new_ua = user_agent.clone();
+    let new_device_info = headers
+        .get("L-Device-Info")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
     *client.user_agent.write().await = user_agent;
 
     Ok(RotateResult {
-        user_agent: old_ua,
-        l_device_info: old_device_info,
+        user_agent: new_ua,
+        l_device_info: new_device_info,
     })
 }
