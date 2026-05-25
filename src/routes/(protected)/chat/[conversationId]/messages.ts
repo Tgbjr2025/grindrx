@@ -100,10 +100,14 @@ export async function getConversation({
 }) {
 	return await getConversationMessages({ conversationId, pageKey }).then(
 		(res) => {
-			// FIX 15: prefer API cursor if present, fall back to last message ID
+			// FIX 6: distinguish undefined (field absent → synthesise cursor) from null
+			// (server-sent end-of-history marker → preserve null, stop pagination).
 			return {
 				...res,
-				pageKey: res.pageKey ?? res.messages.at(-1)?.messageId ?? null,
+				pageKey:
+					res.pageKey !== undefined
+						? (res.pageKey ?? null)
+						: (res.messages.at(-1)?.messageId ?? null),
 			};
 		},
 	);

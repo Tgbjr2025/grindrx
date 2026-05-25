@@ -141,8 +141,10 @@
 		if (albumState.status !== "open") return;
 		const { album } = albumState;
 		let lightbox: PhotoSwipeLightbox | undefined;
+		let cancelled = false;
 		import("photoswipe/lightbox")
 			.then(({ default: PhotoSwipeLightbox }) => {
+				if (cancelled) return;
 				lightbox = new PhotoSwipeLightbox({
 					showHideAnimationType: "fade",
 					pswpModule: () => import("photoswipe"),
@@ -181,7 +183,11 @@
 				lightbox.loadAndOpen(0);
 			})
 			.catch((error) => console.error(error));
-		return () => lightbox?.destroy();
+		return () => {
+			cancelled = true;
+			lightbox?.destroy();
+			lightbox = undefined;
+		};
 	});
 </script>
 

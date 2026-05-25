@@ -250,7 +250,7 @@ export class ConversationState {
 		if (this.#destroyed) return;
 		this.#destroyed = true;
 		this.#conversations.clearActive(this.conversationId);
-		this.#unlistenWs.then((unlisten) => unlisten()).catch(console.error);
+		this.#unlistenWs?.then((unlisten) => unlisten()).catch(console.error);
 		this.#unlistenWsRetract?.then((unlisten) => unlisten()).catch(console.error);
 		this.#unlistenWsTyping?.then((unlisten) => unlisten()).catch(console.error);
 		this.#unlistenWsRead?.then((unlisten) => unlisten()).catch(console.error);
@@ -472,6 +472,8 @@ export class ConversationState {
 				msg.messageId = messageId;
 			}
 			this.#syncCache();
+			const latestMsg = this.messages[0] ?? this.messages.at(-1);
+			if (latestMsg) this.#updatePreview(latestMsg);
 		} catch (err) {
 			const msg = this.messages.find((m) => m.messageId === tempId);
 			if (msg) {
@@ -528,6 +530,8 @@ export class ConversationState {
 				msg.messageId = messageId;
 			}
 			this.#syncCache();
+			const latestMsg = this.messages[0] ?? this.messages.at(-1);
+			if (latestMsg) this.#updatePreview(latestMsg);
 		} catch (err) {
 			const msg = this.messages.find((m) => m.messageId === tempId);
 			if (msg) {
@@ -668,7 +672,8 @@ export class ConversationState {
 	async reactTo(messageId: string, reactionType: number): Promise<void> {
 		const msg = this.messages.find((m) => m.messageId === messageId);
 		if (!msg) return;
-		msg.reactions.push({ reactionType, profileId: this.ourProfileId });
+		const optimisticReaction = { reactionType, profileId: this.ourProfileId };
+		msg.reactions.push(optimisticReaction);
 		this.#syncCache();
 		try {
 			await reactToMessage({
@@ -677,7 +682,8 @@ export class ConversationState {
 				reactionType,
 			});
 		} catch (err) {
-			msg.reactions.pop();
+			const idx = msg.reactions.findIndex((r) => r === optimisticReaction);
+			if (idx !== -1) msg.reactions.splice(idx, 1);
 			this.#syncCache();
 			throw err;
 		}
