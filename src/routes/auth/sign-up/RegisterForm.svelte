@@ -11,6 +11,7 @@
 	let confirmPassword = $state("");
 	let displayName = $state("");
 	let email = $state("");
+	let formError = $state<string | null>(null);
 	let password = $state("");
 	let submitting = $state(false);
 
@@ -22,6 +23,7 @@
 <form
 	onsubmit={async (event) => {
 		event.preventDefault();
+		formError = null;
 		if (password !== confirmPassword) {
 			toast.error("Passwords do not match");
 			return;
@@ -38,13 +40,11 @@
 			} else {
 				try {
 					const body = response.json();
-					const msg = (body as any)?.message || (body as any)?.error || null;
-					if (msg) {
-						toast.error(msg);
-					} else {
-						toast.error("Failed to create account. Please try again.");
-					}
+					const msg = (body as any)?.message || (body as any)?.error || "Failed to create account. Please try again.";
+					formError = msg;
+					toast.error(msg);
 				} catch {
+					formError = "Failed to create account. Please try again.";
 					toast.error("Failed to create account. Please try again.");
 				}
 			}
@@ -52,8 +52,10 @@
 			console.error(error);
 			const appError = asAppError(error);
 			if (appError) {
+				formError = appError.prettyMessage;
 				toast.error(appError.prettyMessage);
 			} else {
+				formError = "An unknown error occurred";
 				toast.error("An unknown error occurred");
 			}
 		} finally {
@@ -126,6 +128,9 @@
 			<Button type="submit" class="w-full" disabled={submitting || passwordMismatch}>
 				Create Account
 			</Button>
+			{#if formError}
+				<p class="text-destructive text-sm text-center mt-2">{formError}</p>
+			{/if}
 		</Card.Footer>
 	</Card.Root>
 </form>

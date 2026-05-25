@@ -6,6 +6,7 @@
 	import { onMount } from "svelte";
 
 	import { fetchRest } from "$lib/api";
+	import { unblockProfile } from "$lib/api/block";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
@@ -46,7 +47,7 @@
 	async function unblock(profileId: number) {
 		unblocking = new Set([...unblocking, profileId]);
 		try {
-			await fetchRest(`/v1/blocks/${profileId}`, { method: "DELETE" });
+			await unblockProfile(profileId);
 			blockedProfiles = blockedProfiles.filter((p) => p.profileId !== profileId);
 		} catch (err) {
 			console.error("Failed to unblock user", err);

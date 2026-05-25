@@ -97,6 +97,10 @@
 					<UserIcon class="size-5 text-neutral-300" />
 				</div>
 			{/if}
+		{:catch}
+			<div class="size-full rounded-full bg-neutral-600 flex items-center justify-center">
+				<UserIcon class="size-5 text-neutral-300" />
+			</div>
 		{/await}
 	</a>
 </ProgressiveBlur>

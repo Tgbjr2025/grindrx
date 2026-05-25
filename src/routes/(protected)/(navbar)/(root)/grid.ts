@@ -33,7 +33,7 @@ export async function getGrid(query: Parameters<typeof getCascadeV3>[0]) {
 				type: "full",
 				id: profile.profileId,
 				displayName: profile.displayName ?? null,
-				age: null,
+				age: null, // Grindr cascade API doesn't return age for full profiles; only resolvePartialBatch populates this
 				distance: profile.distanceMeters ?? null,
 				profilePhotosHashes: profile.photoMediaHashes,
 				unread: profile.unreadCount ?? null,

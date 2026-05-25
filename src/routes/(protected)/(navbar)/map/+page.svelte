@@ -5,7 +5,7 @@
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import { decodeGeohash } from "$lib/model/geohash";
 	import { gridState } from "../(root)/grid-state.svelte";
-	import { resolvePartialBatch } from "../(root)/grid";
+	import { profileCache, resolvePartialBatch } from "../(root)/grid";
 	import type { FullGridProfile } from "../(root)/grid.ts";
 	import * as Empty from "$lib/components/ui/empty";
 	import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
@@ -204,6 +204,7 @@
 			resolvePartialBatch(partialIds)
 				.then((resolved) => {
 					for (const profile of resolved) {
+						profileCache.set(profile.id, profile);
 						const idx = gridState.items.findIndex((i) => i.id === profile.id);
 						if (idx !== -1) gridState.items[idx] = profile;
 					}

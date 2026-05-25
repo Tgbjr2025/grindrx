@@ -8,6 +8,7 @@
 	import { Label } from "$lib/components/ui/label";
 
 	let email = $state("");
+	let formError = $state<string | null>(null);
 	let submitting = $state(false);
 	let success = $state(false);
 	let submittedEmail = $state("");
@@ -16,6 +17,7 @@
 <form
 	onsubmit={async (event) => {
 		event.preventDefault();
+		formError = null;
 		try {
 			submitting = true;
 			const response = await fetchRest("/v1/accounts/password/reset", {
@@ -28,13 +30,11 @@
 			} else {
 				try {
 					const body = response.json();
-					const msg = (body as any)?.message || (body as any)?.error || null;
-					if (msg) {
-						toast.error(msg);
-					} else {
-						toast.error("Failed to send reset link. Please try again.");
-					}
+					const msg = (body as any)?.message || (body as any)?.error || "Failed to send reset link. Please try again.";
+					formError = msg;
+					toast.error(msg);
 				} catch {
+					formError = "Failed to send reset link. Please try again.";
 					toast.error("Failed to send reset link. Please try again.");
 				}
 			}
@@ -42,8 +42,10 @@
 			console.error(error);
 			const appError = asAppError(error);
 			if (appError) {
+				formError = appError.prettyMessage;
 				toast.error(appError.prettyMessage);
 			} else {
+				formError = "An unknown error occurred";
 				toast.error("An unknown error occurred");
 			}
 		} finally {
@@ -84,6 +86,9 @@
 			</Card.Content>
 			<Card.Footer class="flex-col gap-2">
 				<Button type="submit" class="w-full" disabled={submitting}>Send reset link</Button>
+				{#if formError}
+					<p class="text-destructive text-sm text-center mt-2">{formError}</p>
+				{/if}
 				<Button variant="link" href="/auth/sign-in" class="px-0">Back to sign in</Button>
 			</Card.Footer>
 		{/if}

@@ -5,10 +5,10 @@
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
+	import { blockProfile } from "$lib/api/block";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
-	import * as Empty from "$lib/components/ui/empty";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import ReportDialog from "../../../chat/[conversationId]/message/ReportDialog.svelte";
 	import AboutMe from "./AboutMe.svelte";
@@ -47,7 +47,7 @@
 
 	async function blockUser() {
 		try {
-			await fetchRest(`/v4/blocks/${profileId}`, { method: "POST" });
+			await blockProfile(profileId);
 			toast.success("User blocked");
 			goto("/").catch((err) => console.error(err));
 		} catch {
@@ -58,7 +58,10 @@
 	const profile = $derived.by(() => {
 		// refetchTick read here so the derived re-runs after a save
 		void refetchTick;
-		return getProfile(profileId);
+		return getProfile(profileId).catch((err: unknown) => {
+			toast.error(String((err as Error)?.message ?? err ?? "unknown error"));
+			throw err;
+		});
 	});
 
 	function handleProfileSaved() {
@@ -326,13 +329,10 @@
 				{/if}
 			</div>
 		{:catch err}
-			{@const _ = toast.error(String(err?.message ?? err ?? "unknown error"))}
-			<Empty.Root class="py-24">
-				<Empty.Header>
-					<Empty.Title>Couldn't Load Profile</Empty.Title>
-					<Empty.Description>{String(err?.message ?? err ?? "unknown")}</Empty.Description>
-				</Empty.Header>
-			</Empty.Root>
+			<div class="flex flex-col items-center gap-4 p-8 text-center">
+				<p class="text-muted-foreground">Failed to load profile</p>
+				<p class="text-sm text-destructive">{err?.message ?? 'Unknown error'}</p>
+			</div>
 		{/await}
 	</main>
 </div>
