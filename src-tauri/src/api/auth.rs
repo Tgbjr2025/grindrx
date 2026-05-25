@@ -65,7 +65,11 @@ pub struct LoginResult {
 
 #[derive(Debug, Deserialize)]
 struct JwtClaims {
-    exp: u64,
+    // FIX 6: JWT spec says exp is a NumericDate (JSON number). Some issuers
+    // emit it as a float (e.g. 1234567890.0). Deserialising as u64 causes a
+    // parse error in those cases; using f64 accepts both forms and we truncate
+    // when storing.
+    exp: f64,
 }
 
 impl LoginRequest {
@@ -151,7 +155,8 @@ impl GrindrClient {
             profile_id: session_resp.profile_id.clone(),
             session_id: session_resp.session_id,
             auth_token: session_resp.auth_token,
-            expires_at: claims.exp,
+            // FIX 6: truncate f64 → u64 (fractional seconds are irrelevant for expiry checks)
+            expires_at: claims.exp as u64,
         };
 
         AuthStorage::set_session(&session)?;

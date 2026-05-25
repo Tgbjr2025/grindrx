@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use futures_util::StreamExt;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,25 @@ use crate::state::AppState;
 use super::client::GrindrClient;
 use super::client::BASE_URL;
 use super::headers::grindr_roles_header_value;
+
+/// Returns true iff the host's eTLD+1 is `grindr.com` or `grindr.mobi`.
+///
+/// This correctly handles `attacker.com.grindr.mobi` (rejected — the
+/// second-to-last label is `mobi`, not `grindr`) and trailing-dot tricks
+/// (rejected — the empty label guard fires first).
+fn is_allowed_grindr_host(host: &str) -> bool {
+    let labels: Vec<&str> = host.split('.').collect();
+    // Reject empty labels (trailing dot, double-dot, etc.)
+    if labels.iter().any(|l| l.is_empty()) {
+        return false;
+    }
+    let n = labels.len();
+    if n < 2 {
+        return false;
+    }
+    // eTLD+1 must be grindr.com or grindr.mobi — any subdomain depth is fine.
+    labels[n - 2] == "grindr" && matches!(labels[n - 1], "com" | "mobi")
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct RawResponse {
@@ -86,8 +106,10 @@ impl GrindrClient {
             println!("Method: {}", request.method());
             println!("URL:    {}", request.url());
             println!("Headers:");
-            let default_headers = self.default_headers.read().await;
-            for (name, value) in default_headers.iter().chain(request.headers()) {
+            // FIX 7: only iterate request.headers() — default headers are already
+            // merged into the built request by reqwest, so chaining default_headers
+            // would print every default header twice.
+            for (name, value) in request.headers() {
                 // FIX 5: redact Authorization to prevent session token leaking to logcat
                 if name.as_str().to_lowercase() == "authorization" {
                     println!("  {}: [REDACTED]", name);
@@ -172,19 +194,14 @@ pub async fn fetch_authed_bytes(
         .await
         .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
 
-    // Validate that the URL is a known Grindr CDN/API domain to prevent
-    // the session token from being sent to arbitrary third-party hosts.
+    // FIX 2: validate domain using eTLD+1 check, not ends_with.
+    // `ends_with(".grindr.mobi")` would accept `attacker.com.grindr.mobi` if
+    // that subdomain were ever registered; the helper below rejects it.
     {
         let parsed = reqwest::Url::parse(&url)
             .map_err(|_| AppError::Http("Invalid URL".to_owned()))?;
         let host = parsed.host_str().unwrap_or("");
-        // FIX 4: removed the generic *.cloudfront.net wildcard — any AWS customer
-        // could use it to steal the session token. Only allow known Grindr CDN hostnames.
-        let allowed = host == "grindr.mobi"
-            || host.ends_with(".grindr.com")
-            || host.ends_with(".grindr.mobi")
-            || host.ends_with(".cdns.grindr.com");
-        if !allowed {
+        if !is_allowed_grindr_host(host) {
             return Err(AppError::Http(format!(
                 "URL host '{}' is not an allowed Grindr domain",
                 host
@@ -207,12 +224,6 @@ pub async fn fetch_authed_bytes(
         )));
     }
 
-    // FIX 11: cap response size to 10 MB to prevent unbounded memory use
-    const MAX_BYTES: u64 = 10 * 1024 * 1024;
-    if response.content_length().unwrap_or(0) > MAX_BYTES {
-        return Err(AppError::Http("Response too large".to_owned()));
-    }
-
     let content_type = response
         .headers()
         .get("content-type")
@@ -220,11 +231,21 @@ pub async fn fetch_authed_bytes(
         .unwrap_or("image/jpeg")
         .to_owned();
 
-    let bytes = response.bytes().await?.to_vec();
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(AppError::Http("Response too large".to_owned()));
+    // FIX 3: stream the body with a running counter so chunked responses with
+    // no Content-Length are also capped. `response.bytes()` would buffer
+    // everything before we could check the size.
+    const MAX_BYTES: usize = 10 * 1024 * 1024;
+    let mut body: Vec<u8> = Vec::with_capacity(8192);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Http(e.to_string()))?;
+        if body.len() + chunk.len() > MAX_BYTES {
+            return Err(AppError::Http("Response too large".to_owned()));
+        }
+        body.extend_from_slice(&chunk);
     }
-    let b64 = STANDARD.encode(&bytes);
+
+    let b64 = STANDARD.encode(&body);
     Ok(format!("data:{};base64,{}", content_type, b64))
 }
 

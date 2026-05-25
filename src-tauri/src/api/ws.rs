@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
@@ -17,7 +17,6 @@ use crate::state::AppState;
 
 const WS_URL: &str = "wss://grindr.mobi/v1/ws";
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
-const PONG_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Outcome of `run_message_loop` / `connect_and_run`.
 /// Distinguishes a clean shutdown (command channel closed) from a
@@ -177,6 +176,10 @@ async fn run_message_loop(
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     heartbeat.tick().await; // consume the immediate first tick
 
+    // FIX 1: track pong state here instead of blocking read.next() in the heartbeat arm.
+    // When true, the next heartbeat tick without a Pong means the connection is dead.
+    let mut waiting_for_pong = false;
+
     loop {
         tokio::select! {
             msg = read.next() => match msg {
@@ -207,7 +210,8 @@ async fn run_message_loop(
                     }
                 }
                 Some(Ok(Message::Pong(_))) => {
-                    // Pong received — heartbeat confirmed alive, nothing to do.
+                    // FIX 1: clear the flag — pong arrived in the normal message loop.
+                    waiting_for_pong = false;
                 }
                 Some(Ok(Message::Close(_))) | None => {
                     // FIX 2: server close → reconnect, not exit
@@ -237,29 +241,21 @@ async fn run_message_loop(
                 None => return WsOutcome::ChannelClosed,
             },
 
-            // FIX 14: periodic heartbeat to survive Android Doze
+            // FIX 1 + Android Doze: periodic heartbeat.
+            // Send a Ping and set the flag. If the flag is ALREADY set when the
+            // timer fires again, that means no Pong arrived in a full interval —
+            // treat the connection as dead. Real messages (including Pong) are
+            // handled in the read arm above and are never dropped.
             _ = heartbeat.tick() => {
+                if waiting_for_pong {
+                    return WsOutcome::Disconnected(AppError::Http(
+                        "WS heartbeat timeout — no pong received".to_owned(),
+                    ));
+                }
                 if let Err(e) = write.send(Message::Ping(vec![].into())).await {
                     return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                 }
-                // Wait up to PONG_TIMEOUT for a Pong before treating as dead.
-                match timeout(PONG_TIMEOUT, read.next()).await {
-                    Ok(Some(Ok(Message::Pong(_)))) => {}
-                    Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
-                        return WsOutcome::Disconnected(AppError::Http(
-                            "WS connection closed by server".to_owned(),
-                        ));
-                    }
-                    Ok(Some(Err(e))) => {
-                        return WsOutcome::Disconnected(AppError::Http(e.to_string()));
-                    }
-                    Err(_) => {
-                        return WsOutcome::Disconnected(AppError::Http(
-                            "WS heartbeat timeout — no pong received".to_owned(),
-                        ));
-                    }
-                    Ok(Some(Ok(_))) => {} // other frame, ignore
-                }
+                waiting_for_pong = true;
             }
         }
     }
@@ -310,6 +306,17 @@ pub async fn ws_send(
     state: tauri::State<'_, AppState>,
     command: WsCommand,
 ) -> Result<(), AppError> {
+    // FIX 4: reject the command immediately if no session exists — prevents
+    // queuing messages against an unauthenticated / unconnected socket and
+    // giving false Ok back to the caller.
+    let _ = state
+        .client()?
+        .session
+        .read()
+        .await
+        .as_ref()
+        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
+
     state
         .ws_tx
         .send(command)

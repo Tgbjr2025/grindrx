@@ -33,7 +33,12 @@ mod file_store {
                 .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
             fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
                 .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
-            fs::write(&path, secret).map_err(|e| Error::PlatformFailure(Box::new(e)))
+            fs::write(&path, secret).map_err(|e| Error::PlatformFailure(Box::new(e)))?;
+            // FIX 5: restrict credential file to owner-read/write only (0o600).
+            // Without this the file inherits the process umask (typically 0o644),
+            // which allows other users on the same system to read the credential.
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| Error::PlatformFailure(Box::new(e)))
         }
 
         fn get_secret(&self) -> Result<Vec<u8>> {
