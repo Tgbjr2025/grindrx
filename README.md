@@ -1,4 +1,4 @@
-# GrindX
+# GrindrX
 
 > A privacy-focused Grindr client for Android — forked from [open-grind](https://git.opengrind.org/open-grind/open-grind), maintained by [@Tgbjr2025](https://github.com/Tgbjr2025).
 
@@ -14,9 +14,9 @@ Source code mirror and canonical repository: [git.dominusaxis.com/dominus/open-g
 
 ---
 
-## What is GrindX?
+## What is GrindrX?
 
-GrindX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered.
+GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered.
 
 The Rust layer handles all Grindr API calls with device-header spoofing and session management. The SvelteKit frontend is embedded into the native binary.
 

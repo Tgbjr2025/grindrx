@@ -36,7 +36,7 @@
 {#if available}
 	<SwitchField
 		title="Discreet app icon"
-		description="Replaces the GrindX icon with a generic Weather icon on your home screen."
+		description="Replaces the GrindrX icon with a generic Weather icon on your home screen."
 		bind:checked={
 			() => value,
 			(v: boolean) => toggle(v)

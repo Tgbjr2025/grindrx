@@ -1,8 +1,8 @@
 {
-	"name": "grindx",
+	"name": "grindrx",
 	"version": "0.1.6",
 	"license": "MIT",
-	"author": "GrindX (https://git.dominusaxis.com/dominus/open-grind)",
+	"author": "GrindrX (https://git.dominusaxis.com/dominus/open-grind)",
 	"type": "module",
 	"scripts": {
 		"docs": "bun run --cwd docs start",

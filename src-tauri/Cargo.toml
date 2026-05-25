@@ -2,7 +2,7 @@
 name = "open-grind"
 version = "0.1.6"
 description = "FLOSS Grindr client"
-authors = ["GrindX (https://git.dominusaxis.com/dominus/open-grind)"]
+authors = ["GrindrX (https://git.dominusaxis.com/dominus/open-grind)"]
 homepage = "https://git.dominusaxis.com/dominus/open-grind"
 edition = "2021"
 

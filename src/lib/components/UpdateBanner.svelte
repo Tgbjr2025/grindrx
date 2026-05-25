@@ -13,7 +13,7 @@
 
 	function isDismissed(version: string): boolean {
 		try {
-			return localStorage.getItem(`grindx-update-dismissed-${version}`) === "1";
+			return localStorage.getItem(`grindrx-update-dismissed-${version}`) === "1";
 		} catch {
 			return false;
 		}
@@ -21,7 +21,7 @@
 
 	function persistDismiss(version: string): void {
 		try {
-			localStorage.setItem(`grindx-update-dismissed-${version}`, "1");
+			localStorage.setItem(`grindrx-update-dismissed-${version}`, "1");
 		} catch {
 			// ignore — storage may be unavailable
 		}

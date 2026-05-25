@@ -25,7 +25,7 @@
 					payload: {
 						website: "41d0a4bc-b714-4d6d-b7e4-d3ed182258a6",
 						url,
-						hostname: "grindx-app",
+						hostname: "grindrx-app",
 						language: navigator.language || "en",
 						screen: `${screen.width}x${screen.height}`,
 						title: document.title || url,

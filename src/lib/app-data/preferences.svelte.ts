@@ -46,7 +46,7 @@ export async function setPreferences(
 			await writeAppDataFile("preferences.data", encode(preferences));
 		})
 		.catch((err) => {
-			console.error("[GrindX] Failed to persist preferences:", err);
+			console.error("[GrindrX] Failed to persist preferences:", err);
 			// Swallow — allows next write to proceed
 		});
 	await writeQueue;

@@ -210,7 +210,7 @@
 				src={message.coverUrl}
 				alt=""
 				class="w-full rounded-[inherit] bg-card-foreground/10 h-full object-cover absolute top-0 left-0"
-				onerror={() => console.error("[GrindX] album cover load failed:", message.coverUrl?.slice(0, 100))}
+				onerror={() => console.error("[GrindrX] album cover load failed:", message.coverUrl?.slice(0, 100))}
 			/>
 		{:else}
 			<div class="w-full rounded-[inherit] bg-card-foreground/10 h-full absolute top-0 left-0"></div>
