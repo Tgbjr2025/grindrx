@@ -130,7 +130,7 @@
 			{#each medias as { mediaHash, createdAt }}
 				<ImageCarouselItem
 					src="https://cdns.grindr.com/images/profile/1024x1024/{mediaHash}"
-					thumb="https://cdns.grindr.com/images/profile/1024x1024/{mediaHash}"
+					thumb="https://cdns.grindr.com/images/thumb/320x320/{mediaHash}"
 					{createdAt}
 				/>
 			{/each}

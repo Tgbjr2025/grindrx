@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { HeartIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, HeartIcon, UserIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import { formatDistance } from "$lib/utils/distance";
+	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
 
@@ -26,7 +27,11 @@
 		})
 		.passthrough();
 
-	const feed = fetchRest("/v2/taps/received").then((res) => res.jsonParsed(responseSchema));
+	let tick = $state(0);
+	const feed = $derived.by(async () => {
+		void tick;
+		return fetchRest("/v2/taps/received").then((res) => res.jsonParsed(responseSchema));
+	});
 
 	const tapEmoji: Record<number, string> = {
 		1: "👋",
@@ -37,6 +42,11 @@
 </script>
 
 <div class="px-4 flex-1 flex flex-col">
+	<div class="pt-3 pb-1 flex items-center justify-end">
+		<Button variant="ghost" size="icon" aria-label="Refresh" onclick={() => tick++}>
+			<ArrowsClockwiseIcon class="size-5" />
+		</Button>
+	</div>
 	{#await feed}
 		<div class="flex flex-1 items-center justify-center">
 			<Spinner class="size-6" />

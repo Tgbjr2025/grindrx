@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { formatDistanceToNowStrict } from "date-fns";
-	import { EyeIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, EyeIcon, UserIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
+	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { formatDistance } from "$lib/utils/distance";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -27,10 +28,19 @@
 		})
 		.passthrough();
 
-	const views = fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
+	let tick = $state(0);
+	const views = $derived.by(async () => {
+		void tick;
+		return fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
+	});
 </script>
 
 <div class="px-4 flex-1 flex flex-col">
+	<div class="pt-3 pb-1 flex items-center justify-end">
+		<Button variant="ghost" size="icon" aria-label="Refresh" onclick={() => tick++}>
+			<ArrowsClockwiseIcon class="size-5" />
+		</Button>
+	</div>
 	{#await views}
 		<div class="flex flex-1 items-center justify-center">
 			<Spinner class="size-6" />

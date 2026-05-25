@@ -5,6 +5,7 @@ export type FullGridProfile = {
 	type: "full";
 	id: number;
 	displayName: string | null;
+	age: number | null;
 	distance: number | null;
 	profilePhotosHashes: string[] | null;
 	unread: number | null;
@@ -32,6 +33,7 @@ export async function getGrid(query: Parameters<typeof getCascadeV3>[0]) {
 				type: "full",
 				id: profile.profileId,
 				displayName: profile.displayName ?? null,
+				age: null,
 				distance: profile.distanceMeters ?? null,
 				profilePhotosHashes: profile.photoMediaHashes,
 				unread: profile.unreadCount ?? null,
@@ -79,6 +81,7 @@ export async function resolvePartialBatch(
 			type: "full" as const,
 			id: profile.profileId,
 			displayName: profile.displayName ?? null,
+			age: profile.age ?? null,
 			distance: profile.distance ?? null,
 			profilePhotosHashes: profile.medias?.map((m) => m.mediaHash) ?? null,
 			unread: null,

@@ -6,6 +6,7 @@
 
 	import { fetchRest } from "$lib/api";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
+	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Skeleton } from "$lib/components/ui/skeleton";
@@ -42,6 +43,7 @@
 	let editOpen = $state(false);
 	let refetchTick = $state(0);
 	let reportOpen = $state(false);
+	let blockDialogOpen = $state(false);
 
 	async function blockUser() {
 		try {
@@ -186,7 +188,7 @@
 						size="icon-lg"
 						class="size-14"
 						variant="outline"
-						onclick={blockUser}
+						onclick={() => (blockDialogOpen = true)}
 						aria-label="Block user"
 					>
 						<ProhibitIcon class="size-8" />
@@ -202,6 +204,28 @@
 					</Button>
 				</nav>
 				<ReportDialog bind:open={reportOpen} {profileId} />
+				<AlertDialog.Root bind:open={blockDialogOpen}>
+					<AlertDialog.Portal>
+						<AlertDialog.Overlay />
+						<AlertDialog.Content>
+							<AlertDialog.Header>
+								<AlertDialog.Title>Block this user?</AlertDialog.Title>
+								<AlertDialog.Description>
+									They won't be able to message you and won't appear in your grid. You can unblock them in Settings.
+								</AlertDialog.Description>
+							</AlertDialog.Header>
+							<AlertDialog.Footer>
+								<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+								<AlertDialog.Action
+									onclick={() => blockUser().catch((e) => console.error(e))}
+									class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+								>
+									Block
+								</AlertDialog.Action>
+							</AlertDialog.Footer>
+						</AlertDialog.Content>
+					</AlertDialog.Portal>
+				</AlertDialog.Root>
 			{:else}
 				<nav class="absolute -translate-y-1/2 right-2 flex items-center gap-2">
 					<Button

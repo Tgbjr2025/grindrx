@@ -3,6 +3,8 @@
 	import { toast } from "svelte-sonner";
 	import z from "zod";
 
+	import { onMount } from "svelte";
+
 	import { fetchRest } from "$lib/api";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
@@ -57,7 +59,9 @@
 		}
 	}
 
-	loadFavorites().catch((err) => console.error(err));
+	onMount(() => {
+		loadFavorites().catch((err) => console.error(err));
+	});
 </script>
 
 <div class="flex w-full px-4 flex-1">

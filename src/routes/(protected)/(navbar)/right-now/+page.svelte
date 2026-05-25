@@ -10,14 +10,33 @@
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
 	import { formatDistance } from "$lib/utils/distance";
-	import { getGrid, profileCache } from "../(root)/grid";
+	import { getGrid, profileCache, resolvePartialBatch } from "../(root)/grid";
 
 	let feedTick = $state(0);
 	const feed = $derived.by(async () => {
 		void feedTick;
 		const { geohash } = await getPreferences();
 		if (!geohash) throw new Error("Location not set — open Browse first.");
-		return getGrid({ nearbyGeoHash: geohash, rightNow: true, onlineOnly: true });
+		const result = await getGrid({ nearbyGeoHash: geohash, rightNow: true, onlineOnly: true });
+
+		// Resolve partial profiles so the feed isn't artificially empty
+		const partialIds = result.items
+			.filter((i) => i.type === "partial")
+			.map((i) => i.id);
+		if (partialIds.length > 0) {
+			try {
+				const resolved = await resolvePartialBatch(partialIds);
+				for (const profile of resolved) {
+					profileCache.set(profile.id, profile);
+					const idx = result.items.findIndex((i) => i.id === profile.id);
+					if (idx !== -1) result.items[idx] = profile;
+				}
+			} catch (err) {
+				console.error("Right Now partial resolution failed", err);
+			}
+		}
+
+		return result;
 	});
 
 	// Post Right Now state
@@ -36,6 +55,7 @@
 			await fetchRest("/v4/me/rightnow", { method: "POST", body });
 			toast.success("Right Now posted!");
 			drawerOpen = false;
+			feedTick++;
 		} catch {
 			toast.error("Failed to post Right Now status.");
 		} finally {
@@ -50,6 +70,7 @@
 			await fetchRest("/v4/me/rightnow", { method: "DELETE" });
 			toast.success("Right Now status cleared.");
 			drawerOpen = false;
+			feedTick++;
 		} catch {
 			toast.error("Failed to clear Right Now status.");
 		} finally {

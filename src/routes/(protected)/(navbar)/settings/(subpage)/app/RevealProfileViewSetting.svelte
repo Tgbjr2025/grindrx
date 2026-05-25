@@ -21,7 +21,7 @@
 
 <SwitchField
 	title="Reveal profile views"
-	description="Let others know when you've viewed their profile. Your profile view history remains unaffected."
+	description="Coming soon — profile view suppression requires a future update. This preference is saved but not yet applied."
 	bind:checked={
 		() => value,
 		(v: boolean) => {

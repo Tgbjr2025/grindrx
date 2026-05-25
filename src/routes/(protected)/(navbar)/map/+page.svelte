@@ -1,9 +1,11 @@
 <script lang="ts">
 	import "leaflet/dist/leaflet.css";
 	import { onMount, onDestroy } from "svelte";
+	import { goto } from "$app/navigation";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import { decodeGeohash } from "$lib/model/geohash";
 	import { gridState } from "../(root)/grid-state.svelte";
+	import { resolvePartialBatch } from "../(root)/grid";
 	import type { FullGridProfile } from "../(root)/grid.ts";
 	import * as Empty from "$lib/components/ui/empty";
 	import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
@@ -87,7 +89,7 @@
 			);
 			const marker = L.marker([lat, lon], { icon });
 			marker.on("click", () => {
-				window.location.href = `/profile/${profile.id}`;
+				goto(`/profile/${profile.id}`).catch((err) => console.error(err));
 			});
 			const label = profile.displayName ?? "Profile";
 			const distLabel =
@@ -193,6 +195,21 @@
 		markersLayer = L.layerGroup().addTo(map);
 		centerLatLon = { lat, lon };
 		renderMarkers(lat, lon);
+
+		// Resolve any partial profiles so they appear on the map
+		const partialIds = gridState.items
+			.filter((p) => p.type === "partial")
+			.map((p) => p.id);
+		if (partialIds.length > 0) {
+			resolvePartialBatch(partialIds)
+				.then((resolved) => {
+					for (const profile of resolved) {
+						const idx = gridState.items.findIndex((i) => i.id === profile.id);
+						if (idx !== -1) gridState.items[idx] = profile;
+					}
+				})
+				.catch((err) => console.error("Map partial resolution failed", err));
+		}
 	});
 
 	$effect(() => {

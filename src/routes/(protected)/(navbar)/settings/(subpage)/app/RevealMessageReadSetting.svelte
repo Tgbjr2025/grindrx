@@ -21,7 +21,7 @@
 
 <SwitchField
 	title="Reveal message read status"
-	description="Let others know when you've read their messages. Your read receipts remain unaffected."
+	description="Coming soon — message read receipt suppression requires a future update. This preference is saved but not yet applied."
 	bind:checked={
 		() => value,
 		(v: boolean) => {

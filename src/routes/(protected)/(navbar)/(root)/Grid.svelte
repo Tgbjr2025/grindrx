@@ -109,6 +109,7 @@
 				<ProfileMiniCard
 					id={item.id}
 					displayName={item.displayName}
+					age={item.age}
 					distance={item.distance}
 					medias={item.profilePhotosHashes?.map((mediaHash) => ({
 						mediaHash,
