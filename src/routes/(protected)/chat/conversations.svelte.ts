@@ -111,8 +111,19 @@ class ConversationsState {
 	}
 
 	async destroy(): Promise<void> {
-		const unlisteners = await Promise.all(this.#wsPromises);
-		for (const unlisten of unlisteners) unlisten();
+		// Use allSettled — Promise.all rejects on the first failed listen() and
+		// abandons every other already-resolved unlistener, leaking Tauri event
+		// handlers across SvelteKit navigations.
+		const results = await Promise.allSettled(this.#wsPromises);
+		for (const r of results) {
+			if (r.status === "fulfilled") {
+				try {
+					r.value();
+				} catch (e) {
+					console.error("[conversations] unlisten failed:", e);
+				}
+			}
+		}
 		this.#wsPromises = [];
 		this.#removeVisibility?.();
 		this.#removeVisibility = null;

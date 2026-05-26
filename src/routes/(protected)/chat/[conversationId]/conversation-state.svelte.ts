@@ -116,11 +116,16 @@ export class ConversationState {
 				if (this.#destroyed) return;
 				if (event.payload.conversationId !== this.conversationId) return;
 				if (event.payload.senderId === this.ourProfileId) {
-					// FIX 7: match by tempId first, then fall back to first pending
-					const pending =
-						this.messages.find(
-							(m) => m.status === "pending" && m.messageId === event.payload.messageId,
-						) ?? this.messages.find((m) => m.status === "pending");
+					// First try an exact messageId match (works once the send() response
+					// has rewritten the pending message's id). If no exact match exists,
+					// only fall back to "the single pending message" when exactly one is
+					// in flight — with concurrent sends, blindly upgrading the first
+					// pending corrupts cross-type messages (text vs album).
+					const exact = this.messages.find(
+						(m) => m.status === "pending" && m.messageId === event.payload.messageId,
+					);
+					const pendings = this.messages.filter((m) => m.status === "pending");
+					const pending = exact ?? (pendings.length === 1 ? pendings[0] : undefined);
 					if (pending) {
 						// Replace pending with full server data in-place (avoids array replacement
 						// during Drawer close animation which would freeze the UI on Android).
