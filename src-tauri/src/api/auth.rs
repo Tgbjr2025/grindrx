@@ -174,7 +174,28 @@ impl GrindrClient {
         Ok(LoginResult { profile_id })
     }
 
+    /// Public refresh — takes `refresh_lock` so callers from the Tauri command
+    /// surface can't race the implicit refresh inside `authorization_header()`.
+    /// Use `refresh_token_inner()` if the lock is already held.
     pub async fn refresh_token(&self) -> Result<LoginResult, AppError> {
+        let _guard = self.refresh_lock.lock().await;
+
+        // Another task may have refreshed while we waited; if the current
+        // session is still valid for >60s, return its profile id directly
+        // instead of consuming a refresh token unnecessarily.
+        if let Some(s) = self.session.read().await.as_ref() {
+            let now = chrono::Utc::now().timestamp().max(0) as u64;
+            if s.expires_at > now + 60 {
+                return Ok(LoginResult { profile_id: s.profile_id.clone() });
+            }
+        }
+
+        self.refresh_token_inner().await
+    }
+
+    /// Inner refresh — caller MUST hold `refresh_lock`. Does the network call
+    /// and updates the in-memory + keyring session.
+    async fn refresh_token_inner(&self) -> Result<LoginResult, AppError> {
         let current = self.session.read().await;
         let session = current
             .as_ref()
@@ -214,8 +235,21 @@ impl GrindrClient {
                 < (chrono::Utc::now().timestamp().max(0) as u64 + 60);
 
             if still_expired {
-                if let Err(e) = self.refresh_token().await {
-                    eprintln!("[GrindX] Token refresh failed: {e}. Continuing with potentially expired token.");
+                if let Err(e) = self.refresh_token_inner().await {
+                    // If the server rejected our refresh, the stored auth_token is
+                    // dead. Holding onto it would create a permanent silent-failure
+                    // loop where every future call re-refreshes, fails, and returns
+                    // the same expired token. Clear the session so the next API
+                    // call surfaces a real 401 and the frontend prompts re-login.
+                    let auth_class = matches!(&e, AppError::Auth(_))
+                        || matches!(&e, AppError::Api { code, .. } if *code == 401 || *code == 403);
+                    if auth_class {
+                        eprintln!("[GrindX] Token refresh rejected ({e}); clearing session.");
+                        *self.session.write().await = None;
+                        AuthStorage::delete_session();
+                    } else {
+                        eprintln!("[GrindX] Token refresh failed: {e}. Continuing with potentially expired token.");
+                    }
                 }
             }
         }

@@ -31,6 +31,24 @@ fn is_allowed_grindr_host(host: &str) -> bool {
     labels[n - 2] == "grindr" && matches!(labels[n - 1], "com" | "mobi")
 }
 
+/// Validate a relative API path passed in from the WebView before concatenating
+/// it onto `BASE_URL`. A compromised WebView could otherwise smuggle a full URL
+/// or path-traversal sequence and pivot the credentialed client at any endpoint.
+fn is_safe_api_path(path: &str) -> bool {
+    if !path.starts_with('/') {
+        return false;
+    }
+    if path.contains("..") || path.contains('\\') || path.contains("://") {
+        return false;
+    }
+    // First segment must look like an API version: vN or vN.M
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    if !first.starts_with('v') || first.len() < 2 {
+        return false;
+    }
+    first[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct RawResponse {
     pub status: u16,
@@ -104,7 +122,14 @@ impl GrindrClient {
         {
             println!("=== OUTGOING REQUEST ===");
             println!("Method: {}", request.method());
-            println!("URL:    {}", request.url());
+            // Redact query string — any token passed via ?param= would otherwise
+            // hit logcat in plaintext. Only the scheme/host/path are useful for debugging.
+            let url = request.url();
+            if url.query().is_some() {
+                println!("URL:    {}://{}{} ?<redacted>", url.scheme(), url.host_str().unwrap_or(""), url.path());
+            } else {
+                println!("URL:    {}", url);
+            }
             println!("Headers:");
             // FIX 7: only iterate request.headers() — default headers are already
             // merged into the built request by reqwest, so chaining default_headers
@@ -148,6 +173,12 @@ pub async fn upload_image(
     image_base64: String,
     mime_type: String,
 ) -> Result<UploadImageResult, AppError> {
+    // Cap the inbound base64 payload at ~22 MB binary (30 MB base64) — without this,
+    // a hostile WebView payload could OOM the Tauri process via STANDARD.decode.
+    const MAX_IMAGE_BASE64: usize = 30 * 1024 * 1024;
+    if image_base64.len() > MAX_IMAGE_BASE64 {
+        return Err(AppError::Http("Image payload too large".to_owned()));
+    }
     let bytes = STANDARD
         .decode(&image_base64)
         .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
@@ -274,6 +305,15 @@ pub async fn request(
         code: 400,
         message: format!("Invalid method: {}", payload.method),
     })?;
+
+    // Guard against an XSS-compromised WebView pivoting the credentialed client
+    // at arbitrary endpoints or other hosts via `path`.
+    if !is_safe_api_path(&payload.path) {
+        return Err(AppError::Http(format!(
+            "Invalid request path: {}",
+            payload.path
+        )));
+    }
 
     let raw = state
         .client()?

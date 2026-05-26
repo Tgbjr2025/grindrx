@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
@@ -17,6 +17,9 @@ use crate::state::AppState;
 
 const WS_URL: &str = "wss://grindr.mobi/v1/ws";
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
+/// Cap the TCP+TLS+WS handshake. Without this, a half-open connection
+/// (common on Android Doze / captive portals) wedges the reconnect loop forever.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Outcome of `run_message_loop` / `connect_and_run`.
 /// Distinguishes a clean shutdown (command channel closed) from a
@@ -51,7 +54,7 @@ async fn run_ws_loop(app: AppHandle) {
     loop {
         state.auth_notify.notified().await;
 
-        match connect_and_run(&app).await {
+        match connect_and_run(&app, &mut backoff).await {
             WsOutcome::ChannelClosed => {
                 // Command sender dropped — application is shutting down.
                 break;
@@ -72,7 +75,7 @@ async fn run_ws_loop(app: AppHandle) {
     }
 }
 
-async fn connect_and_run(app: &AppHandle) -> WsOutcome {
+async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
     let state = app.state::<AppState>();
 
     // --- Build authorization header ---
@@ -120,14 +123,23 @@ async fn connect_and_run(app: &AppHandle) -> WsOutcome {
         headers.insert("User-Agent", ua_hv);
     }
 
-    let (ws_stream, _) = match connect_async(request).await {
-        Ok(s) => s,
-        Err(e) => {
+    let (ws_stream, _) = match timeout(CONNECT_TIMEOUT, connect_async(request)).await {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
             return WsOutcome::Disconnected(AppError::Http(format!("WS connect failed: {e}")))
+        }
+        Err(_) => {
+            return WsOutcome::Disconnected(AppError::Http(format!(
+                "WS connect timed out after {}s",
+                CONNECT_TIMEOUT.as_secs()
+            )))
         }
     };
 
     app.emit("ws:connected", ()).ok();
+    // Connection established — reset the outer-loop backoff so the next
+    // disconnect (post-stable session) doesn't sleep the accumulated max.
+    *backoff = Duration::from_secs(1);
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -138,16 +150,6 @@ async fn connect_and_run(app: &AppHandle) -> WsOutcome {
         None => {
             return WsOutcome::Disconnected(AppError::Http("WS already running".to_owned()))
         }
-    };
-
-    let session_id = match state.client() {
-        Ok(c) => match c.session.read().await.as_ref().map(|s| s.session_id.clone()) {
-            Some(id) => id,
-            None => {
-                return WsOutcome::Disconnected(AppError::Auth("Not logged in".to_owned()))
-            }
-        },
-        Err(e) => return WsOutcome::Disconnected(e),
     };
 
     let our_profile_id = match state.client() {
@@ -161,7 +163,7 @@ async fn connect_and_run(app: &AppHandle) -> WsOutcome {
         Err(_) => String::new(),
     };
 
-    run_message_loop(&mut write, &mut read, cmd_rx, &session_id, &our_profile_id, app).await
+    run_message_loop(&mut write, &mut read, cmd_rx, &our_profile_id, app).await
     // `guard` (and thus the receiver) is dropped here, releasing the lock.
 }
 
@@ -169,7 +171,6 @@ async fn run_message_loop(
     write: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
     read: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
     cmd_rx: &mut tokio::sync::mpsc::Receiver<WsCommand>,
-    session_id: &str,
     our_profile_id: &str,
     app: &AppHandle,
 ) -> WsOutcome {
@@ -227,10 +228,24 @@ async fn run_message_loop(
 
             cmd = cmd_rx.recv() => match cmd {
                 Some(cmd) => {
+                    // Re-read the current session_id on every send. A mid-session
+                    // token refresh (via authorization_header) updates state.session
+                    // but a one-shot snapshot would keep sending the now-invalid id.
+                    let current_session_id = match app.state::<AppState>().client() {
+                        Ok(c) => match c.session.read().await.as_ref().map(|s| s.session_id.clone()) {
+                            Some(id) => id,
+                            None => {
+                                return WsOutcome::Disconnected(AppError::Auth(
+                                    "Session cleared during WS loop".to_owned(),
+                                ))
+                            }
+                        },
+                        Err(e) => return WsOutcome::Disconnected(e),
+                    };
                     let json = serde_json::json!({
                         "type": cmd.r#type,
                         "ref": cmd.ref_id,
-                        "token": session_id,
+                        "token": current_session_id,
                         "payload": cmd.payload,
                     });
                     if let Err(e) = write.send(Message::Text(json.to_string().into())).await {
