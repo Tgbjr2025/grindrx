@@ -9,6 +9,7 @@
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
+	import * as Empty from "$lib/components/ui/empty";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import ReportDialog from "../../../chat/[conversationId]/message/ReportDialog.svelte";
 	import AboutMe from "./AboutMe.svelte";
@@ -328,11 +329,13 @@
 					</div>
 				{/if}
 			</div>
-		{:catch err}
-			<div class="flex flex-col items-center gap-4 p-8 text-center">
-				<p class="text-muted-foreground">Failed to load profile</p>
-				<p class="text-sm text-destructive">{err?.message ?? 'Unknown error'}</p>
-			</div>
+		{:catch}
+			<Empty.Root class="py-24">
+				<Empty.Header>
+					<Empty.Title>Couldn't Load Profile</Empty.Title>
+					<Empty.Description>Check your connection and try again.</Empty.Description>
+				</Empty.Header>
+			</Empty.Root>
 		{/await}
 	</main>
 </div>

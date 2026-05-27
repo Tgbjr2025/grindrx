@@ -291,10 +291,20 @@ export const messageSchema = z.discriminatedUnion("type", [
 	videoMessageSchema,
 ]);
 
-export const apiResponseMessageSchema = z.intersection(
-	messageSchema,
+export const unsentMessageSchema = z.intersection(
+	messageBaseSchema.safeExtend({
+		type: z.string().transform((): "Unsent" => "Unsent"),
+		unsent: z.literal(true),
+		body: z.null(),
+	}),
 	apiResponseMessageOverlaySchema,
 );
+
+export type UnsentMessage = z.infer<typeof unsentMessageSchema>;
+
+export const apiResponseMessageSchema = z
+	.intersection(messageSchema, apiResponseMessageOverlaySchema)
+	.or(unsentMessageSchema);
 
 export type Message = z.infer<typeof messageSchema>;
 export type ApiResponseMessage = z.infer<typeof apiResponseMessageSchema>;
@@ -307,6 +317,13 @@ export function previewFromMessage(message: ApiResponseMessage | undefined): {
 } {
 	if (!message) return { type: "", text: null, albumId: null, imageHash: null };
 	switch (message.type) {
+		case "Unsent":
+			return {
+				type: "Unsent",
+				text: null,
+				albumId: null,
+				imageHash: null,
+			};
 		case "Text":
 			return {
 				type: "Text",

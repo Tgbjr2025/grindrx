@@ -55,6 +55,15 @@
 		};
 		document.addEventListener("visibilitychange", syncForeground);
 
+		// Heartbeat: ping Umami every 2 minutes while foregrounded so real-time
+		// active-user count stays accurate (Umami uses 2-min session window)
+		const sendHeartbeat = () => {
+			if (document.visibilityState === "visible") {
+				trackPageview(window.location.pathname);
+			}
+		};
+		const heartbeatInterval = setInterval(sendHeartbeat, 120_000);
+
 		// Request notification permission on Android 13+
 		isPermissionGranted()
 			.then((granted) => {
@@ -64,6 +73,7 @@
 
 		return () => {
 			document.removeEventListener("visibilitychange", syncForeground);
+			clearInterval(heartbeatInterval);
 		};
 	});
 

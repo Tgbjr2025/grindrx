@@ -303,6 +303,7 @@ export class ConversationState {
 			const next: OptimisticMessage[] = [];
 			const seenLocalIds = new Set<string>();
 			let dropped = 0;
+			let updated = 0;
 			for (const local of this.messages) {
 				if (local.status !== "sent") {
 					// FIX 9: always preserve pending/error messages
@@ -312,11 +313,18 @@ export class ConversationState {
 				seenLocalIds.add(local.messageId);
 				// FIX 9: preserve recently-sent messages even if not yet in server page
 				const recentlySent = local.timestamp >= recentCutoff;
-				if (
-					recentlySent ||
-					local.timestamp < oldestServerTs ||
-					serverById.has(local.messageId)
-				) {
+				const serverVersion = serverById.get(local.messageId);
+				if (serverVersion) {
+					next.push({ ...serverVersion, status: "sent" as const });
+					if (
+						serverVersion.unsent !== local.unsent ||
+						serverVersion.type !== local.type ||
+						JSON.stringify(serverVersion.reactions) !==
+							JSON.stringify(local.reactions)
+					) {
+						updated++;
+					}
+				} else if (recentlySent || local.timestamp < oldestServerTs) {
 					next.push(local);
 				} else {
 					dropped++;
@@ -331,7 +339,7 @@ export class ConversationState {
 				fresh.push(msg);
 			}
 
-			if (fresh.length === 0 && dropped === 0) {
+			if (fresh.length === 0 && dropped === 0 && updated === 0) {
 				this.#syncCache();
 				return;
 			}
@@ -687,6 +695,27 @@ export class ConversationState {
 			this.#syncCache();
 			throw err;
 		}
+	}
+
+	markMessageAsUnsent(messageId: string) {
+		const msg = this.messages.find((m) => m.messageId === messageId);
+		let revert: () => void = () => {};
+		if (msg) {
+			const originalUnsent = msg.unsent;
+			msg.unsent = true;
+			msg.type = "Unsent";
+			msg.body = null;
+			this.#syncCache();
+			this.#updatePreview(msg);
+			revert = () => {
+				msg.unsent = originalUnsent;
+				this.#syncCache();
+				this.#updatePreview(msg);
+			};
+		}
+		return {
+			revert,
+		};
 	}
 }
 

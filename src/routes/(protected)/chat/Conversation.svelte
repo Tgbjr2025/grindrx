@@ -150,9 +150,7 @@
 			{:else if preview.imageHash !== null || preview.type === "Image"}
 				Photo
 			{:else}
-				<span class="font-normal tracking-tight italic text-muted-foreground">
-					Preview not available
-				</span>
+				<span class="preview-not-available"> Preview not available </span>
 			{/if}
 		</Item.Description>
 	</Item.Content>
@@ -223,3 +221,10 @@
 		</div>
 	{/if}
 </div>
+
+<style lang="postcss">
+	@reference "$layout";
+	.preview-not-available {
+		@apply font-normal tracking-tight italic text-muted-foreground;
+	}
+</style>

@@ -19,13 +19,15 @@ export const fullConversationSchema = z.object({
 			.length(1),
 		lastActivityTimestamp: unixTimestampMsSchema,
 		unreadCount: z.number(),
-		preview: z.object({
-			type: z.string(),
-			text: z.string().nullable(),
-			albumId: z.number().nullable(),
-			imageHash: mediaHashPublicSchema.nullable(),
-			// lat, lon, duration, photoContentReply
-		}).nullable(),
+		preview: z
+			.object({
+				type: z.string(),
+				text: z.string().nullable(),
+				albumId: z.number().nullable(),
+				imageHash: mediaHashPublicSchema.nullable(),
+				// lat, lon, duration, photoContentReply
+			})
+			.nullable(),
 		muted: z.boolean(),
 		pinned: z.boolean(),
 		favorite: z.boolean(),

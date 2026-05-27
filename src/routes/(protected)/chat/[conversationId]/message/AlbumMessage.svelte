@@ -86,7 +86,7 @@
 							} else {
 								if (!slide.url) return { ...slide, src: "", width: 0, height: 0 };
 								const img = document.createElement("img");
-								img.src = slide.url;
+								img.src = slide.url ?? "";
 								try {
 									await new Promise<void>((resolve, reject) => {
 										if (img.complete) resolve();

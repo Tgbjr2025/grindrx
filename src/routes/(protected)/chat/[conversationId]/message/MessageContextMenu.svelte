@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-	import { CopyIcon, FlagIcon, TrashIcon } from "phosphor-svelte";
+	import {
+		ArrowUUpLeftIcon,
+		CopyIcon,
+		FlagIcon,
+		TrashIcon,
+	} from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import type { ComponentProps } from "svelte";
 
@@ -14,12 +19,14 @@
 		reactionAvailable,
 		reportProfileId,
 		onDelete,
+		onUnsend,
 		...props
 	}: ComponentProps<typeof ContextMenu> & {
+		textContent?: string;
 		reactionAvailable?: boolean;
 		reportProfileId?: number;
-		textContent?: string;
 		onDelete?: () => void;
+		onUnsend?: () => void;
 	} = $props();
 
 	let reportOpen = $state(false);
@@ -30,7 +37,7 @@
 		{#if reactionAvailable}
 			<span
 				class={[
-					"block w-40 mb-2 text-center text-muted-foreground/70",
+					"block w-45 mb-2 text-center text-muted-foreground/70",
 					{
 						"-mt-7": !placement.startsWith("bottom"),
 						"mt-1": placement.startsWith("bottom"),
@@ -46,7 +53,7 @@
 				/>
 			</span>
 		{/if}
-		<div class="buttons w-40">
+		<div class="buttons w-45">
 			{#if textContent !== undefined}
 				<Button
 					variant="ghost"
@@ -72,6 +79,18 @@
 				<TrashIcon />
 				Delete for me
 			</Button>
+			{#if onUnsend}
+				<Button
+					variant="ghost"
+					onclick={() => {
+						onUnsend();
+						props.onClose();
+					}}
+				>
+					<ArrowUUpLeftIcon />
+					Unsend message
+				</Button>
+			{/if}
 			{#if reportProfileId !== undefined}
 				<Button
 					variant="ghost"
