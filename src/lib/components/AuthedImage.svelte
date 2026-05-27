@@ -2,8 +2,7 @@
 	import { invoke } from "@tauri-apps/api/core";
 	import type { ClassValue } from "svelte/elements";
 
-	// Limit concurrent fetch_authed_bytes calls to avoid flooding Tauri's
-	// command queue when a grid of images all fail auth at the same time.
+	// Cap concurrent fetch_authed_bytes calls so a full grid doesn't flood Tauri.
 	const MAX_CONCURRENT = 4;
 	let running = 0;
 	const waitQueue: (() => void)[] = [];
@@ -40,39 +39,42 @@
 		[key: string]: unknown;
 	} = $props();
 
-	let resolvedSrc = $state(src);
-	let authFailed = $state(false);
+	let resolvedSrc = $state<string>("");
 	let currentSrc = $state(src);
 
 	$effect(() => {
-		currentSrc = src;
-		resolvedSrc = src;
-		authFailed = false;
-	});
+		const s = src;
+		currentSrc = s;
+		resolvedSrc = "";
 
-	async function handleError() {
-		if (authFailed) {
-			externalOnerror?.();
+		// Android WebView doesn't reliably fire onerror when Grindr CDN returns
+		// 401 — skip the direct load attempt and always go through Tauri for
+		// external https:// URLs so auth headers are included.
+		if (!s.startsWith("https://")) {
+			resolvedSrc = s;
 			return;
 		}
-		authFailed = true;
-		const srcAtStart = currentSrc;
-		try {
-			await acquireSlot();
-			try {
-				const dataUrl = await invoke<string>("fetch_authed_bytes", { url: srcAtStart });
-				if (currentSrc === srcAtStart) {
-					resolvedSrc = dataUrl;
-				}
-			} finally {
-				releaseSlot();
-			}
-		} catch {
-			if (currentSrc === srcAtStart) {
-				externalOnerror?.();
-			}
-		}
-	}
+
+		let cancelled = false;
+
+		acquireSlot().then(() => {
+			if (cancelled) { releaseSlot(); return; }
+			return invoke<string>("fetch_authed_bytes", { url: s })
+				.then((dataUrl) => {
+					if (!cancelled && currentSrc === s) {
+						resolvedSrc = dataUrl;
+					}
+				})
+				.catch(() => {
+					if (!cancelled && currentSrc === s) {
+						externalOnerror?.();
+					}
+				})
+				.finally(() => releaseSlot());
+		});
+
+		return () => { cancelled = true; };
+	});
 </script>
 
-<img src={resolvedSrc} {alt} class={className} {style} onerror={() => { handleError().catch(console.error); }} {...rest} />
+<img src={resolvedSrc} {alt} class={className} {style} {...rest} />
