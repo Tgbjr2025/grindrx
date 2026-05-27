@@ -2,6 +2,28 @@
 	import { invoke } from "@tauri-apps/api/core";
 	import type { ClassValue } from "svelte/elements";
 
+	// Limit concurrent fetch_authed_bytes calls to avoid flooding Tauri's
+	// command queue when a grid of images all fail auth at the same time.
+	const MAX_CONCURRENT = 4;
+	let running = 0;
+	const waitQueue: (() => void)[] = [];
+
+	function acquireSlot(): Promise<void> {
+		return new Promise((resolve) => {
+			if (running < MAX_CONCURRENT) {
+				running++;
+				resolve();
+			} else {
+				waitQueue.push(() => { running++; resolve(); });
+			}
+		});
+	}
+
+	function releaseSlot() {
+		running--;
+		waitQueue.shift()?.();
+	}
+
 	let {
 		src,
 		alt = "",
@@ -36,9 +58,14 @@
 		authFailed = true;
 		const srcAtStart = currentSrc;
 		try {
-			const dataUrl = await invoke<string>("fetch_authed_bytes", { url: srcAtStart });
-			if (currentSrc === srcAtStart) {
-				resolvedSrc = dataUrl;
+			await acquireSlot();
+			try {
+				const dataUrl = await invoke<string>("fetch_authed_bytes", { url: srcAtStart });
+				if (currentSrc === srcAtStart) {
+					resolvedSrc = dataUrl;
+				}
+			} finally {
+				releaseSlot();
 			}
 		} catch {
 			if (currentSrc === srcAtStart) {

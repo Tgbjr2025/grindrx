@@ -5,6 +5,7 @@
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import { Badge } from "$lib/components/ui/badge";
 	import { formatDistance } from "$lib/utils/distance";
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 
 	let {
 		id,
@@ -34,7 +35,7 @@
 	{/if}
 	<div class="absolute w-full h-full bg-muted">
 		{#if medias && profilePicture}
-			<img
+			<AuthedImage
 				src="https://cdns.grindr.com/images/thumb/320x320/{profilePicture.mediaHash}"
 				alt="Profile avatar"
 				class={[

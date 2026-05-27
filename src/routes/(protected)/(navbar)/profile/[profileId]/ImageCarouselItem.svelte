@@ -1,4 +1,6 @@
 <script lang="ts">
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
+
 	let {
 		src,
 		thumb,
@@ -22,7 +24,7 @@
 	href={src}
 	aria-label="Open image"
 >
-	<img
+	<AuthedImage
 		src={thumb}
 		draggable="false"
 		class="w-full h-full absolute top-0 left-0 object-cover object-center bg-stone-700"

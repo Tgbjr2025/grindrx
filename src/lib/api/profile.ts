@@ -115,7 +115,7 @@ export async function getMyProfile() {
 }
 
 export async function getProfileUploadedPhotos() {
-	return await fetchRest("/v3.1/me/profile/images").then((res) =>
+	const result = await fetchRest("/v3.1/me/profile/images").then((res) =>
 		res.jsonParsed(
 			z.object({
 				medias: z.array(
@@ -130,6 +130,8 @@ export async function getProfileUploadedPhotos() {
 			}),
 		),
 	);
+	// state 0 = approved/published; filter out pending, rejected, deleted photos
+	return { medias: result.medias.filter((m) => m.state === 0) };
 }
 
 export type ProfilePhoto = Awaited<
