@@ -66,3 +66,11 @@ Untracked (2): `src/lib/model/grid/cascade/response/v3.test.ts`, `src/lib/utils/
   (machine-specific autogen paths). See `memory/FIX_NOTES_v0.1.9.md`.
   PENDING: app-icon redesign (6 concepts shown, awaiting Tom's pick), the Nix APK build,
   and adb-over-Tailscale install to the S26 Ultra (offline as of this session). — agent, operator Tom.
+
+- **2026-06-12 (cont.)** — Icon + ship + install. Tom picked icon concept **A** (monogram G).
+  Rewrote contrib/logo/{app-icon,app-icon-bg,app-foreground-icon}.svg; ran `gen:icons`
+  (regenerated all android mipmaps + ios/desktop icons). Rebuilt debug APK (v0.1.9 vc1017,
+  arm64) via the Nix path. Over Tailscale adb (`100.64.176.13:5555`, S26 Ultra SM-S948U1,
+  Android 17): uninstalled 0.1.8 → installed 0.1.9, verified versionName=0.1.9 + launcher
+  (.MainAlias) resolves. NOTE: uninstall wiped app data → Tom must re-login. Icon assets
+  committed. Still NOT pushed (R11); gradle autogen files still dirty on purpose. — agent.
