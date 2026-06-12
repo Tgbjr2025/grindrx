@@ -148,6 +148,23 @@
             buildEnv
             // {
               packages = toolchainInputs;
+              # Linux desktop libs so the Tauri host build links and
+              # `cargo test --lib` (test:rust) runs on this headless server.
+              # Gated to Linux; the Android cross-build uses toolchainInputs
+              # and is unaffected by these.
+              buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [
+                pkgs.glib
+                pkgs.gtk3
+                pkgs.webkitgtk_4_1
+                pkgs.libsoup_3
+                pkgs.cairo
+                pkgs.pango
+                pkgs.gdk-pixbuf
+                pkgs.atk
+                pkgs.harfbuzz
+                pkgs.openssl
+                pkgs.librsvg
+              ];
               shellHook = ''
                 # Put apksigner, zipalign, aapt2 on PATH — androidenv
                 # only exposes the SDK's top-level bin (adb, sdkmanager).

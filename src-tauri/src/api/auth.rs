@@ -244,11 +244,11 @@ impl GrindrClient {
                     let auth_class = matches!(&e, AppError::Auth(_))
                         || matches!(&e, AppError::Api { code, .. } if *code == 401 || *code == 403);
                     if auth_class {
-                        eprintln!("[GrindX] Token refresh rejected ({e}); clearing session.");
+                        eprintln!("[GrindrX] Token refresh rejected ({e}); clearing session.");
                         *self.session.write().await = None;
                         AuthStorage::delete_session();
                     } else {
-                        eprintln!("[GrindX] Token refresh failed: {e}. Continuing with potentially expired token.");
+                        eprintln!("[GrindrX] Token refresh failed: {e}. Continuing with potentially expired token.");
                     }
                 }
             }

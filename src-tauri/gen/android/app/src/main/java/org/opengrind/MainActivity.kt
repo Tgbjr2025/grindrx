@@ -64,7 +64,7 @@ class MainActivity : TauriActivity() {
 				"Messages",
 				NotificationManager.IMPORTANCE_HIGH
 			).apply {
-				description = "GrindX message notifications"
+				description = "GrindrX message notifications"
 			}
 			val manager = getSystemService(NotificationManager::class.java)
 			manager.createNotificationChannel(channel)

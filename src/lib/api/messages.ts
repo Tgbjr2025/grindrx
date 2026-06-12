@@ -11,7 +11,10 @@ import type { Conversation } from "$lib/model/conversation";
 
 const conversationMessagesSchema = z.object({
 	lastReadTimestamp: z.number().nonnegative().nullable(),
-	messages: z.array(apiResponseMessageSchema),
+	// Parse each message individually below so one unrecognized/malformed message
+	// (e.g. a shared album with a null thumbnail, or a message type we don't model
+	// yet) can't throw the whole conversation parse and blank the chat.
+	messages: z.array(z.unknown()),
 	pageKey: z.string().nullable().optional(),
 	profile: z.object({
 		distance: z.number().nullable(),
@@ -22,6 +25,41 @@ const conversationMessagesSchema = z.object({
 		showDistance: z.boolean(),
 	}),
 });
+
+/**
+ * Parse a single API message, degrading gracefully to an `Unknown` message
+ * (preserving the routing/overlay fields) instead of throwing when the body
+ * shape is unexpected. This keeps a single exotic message from making an entire
+ * conversation fail to load.
+ */
+function coerceApiResponseMessage(raw: unknown, index: number): ApiResponseMessage {
+	const parsed = apiResponseMessageSchema.safeParse(raw);
+	if (parsed.success) return parsed.data;
+
+	const r = (raw ?? {}) as Record<string, unknown>;
+	if (import.meta.env.DEV) {
+		console.warn(
+			"Coercing unparseable message to Unknown:",
+			typeof r.type === "string" ? r.type : "<no type>",
+			parsed.error.issues.slice(0, 3),
+		);
+	}
+	return {
+		type: "Unknown",
+		body: r.body,
+		messageId:
+			typeof r.messageId === "string" && r.messageId.length > 0
+				? r.messageId
+				: `unparsed-${index}-${typeof r.timestamp === "number" ? r.timestamp : 0}`,
+		conversationId: typeof r.conversationId === "string" ? r.conversationId : "",
+		senderId: typeof r.senderId === "number" ? r.senderId : 0,
+		timestamp: typeof r.timestamp === "number" ? r.timestamp : 0,
+		unsent: typeof r.unsent === "boolean" ? r.unsent : false,
+		reactions: Array.isArray(r.reactions)
+			? (r.reactions as ApiResponseMessage["reactions"])
+			: [],
+	};
+}
 
 export async function getConversationMessages({
 	conversationId,
@@ -39,7 +77,10 @@ export async function getConversationMessages({
 		if (res.status >= 400) throw new Error(`Messages fetch failed: ${res.status}`);
 		return res.jsonParsed(conversationMessagesSchema);
 	});
-	return messages;
+	return {
+		...messages,
+		messages: messages.messages.map(coerceApiResponseMessage),
+	};
 }
 
 export async function sendMessage({

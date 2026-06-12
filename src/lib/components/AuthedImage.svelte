@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { invoke } from "@tauri-apps/api/core";
 	import type { ClassValue } from "svelte/elements";
+
+	import { resolveAuthedImage } from "$lib/utils/authed-image";
 
 	let {
 		src,
@@ -35,15 +36,14 @@
 		}
 		authFailed = true;
 		const srcAtStart = currentSrc;
-		try {
-			const dataUrl = await invoke<string>("fetch_authed_bytes", { url: srcAtStart });
-			if (currentSrc === srcAtStart) {
-				resolvedSrc = dataUrl;
-			}
-		} catch {
-			if (currentSrc === srcAtStart) {
-				externalOnerror?.();
-			}
+		const dataUrl = await resolveAuthedImage(srcAtStart);
+		// Ignore the result if the bound `src` changed while we were fetching.
+		if (currentSrc !== srcAtStart) return;
+		if (dataUrl) {
+			resolvedSrc = dataUrl;
+		} else {
+			// resolveAuthedImage already logged the reason; let the parent react.
+			externalOnerror?.();
 		}
 	}
 </script>

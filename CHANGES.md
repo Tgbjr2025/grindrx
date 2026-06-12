@@ -5,6 +5,53 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.9 — audit pass (2026-06-12)
+
+Robustness, security-hygiene, and DX fixes from a full line-by-line audit. No
+behavioural changes to the happy path; everything here makes the client tolerate
+Grindr server-side drift and fixes media rendering.
+
+**Schema robustness (stop one bad record blanking the screen)**
+- `grid/cascade/response/v3.ts`: parse each cascade item independently; an
+  unrecognised item `type` or a single malformed profile is dropped + logged
+  instead of throwing the whole response and blanking the grid. Cosmetic
+  profile fields made optional/tolerant; top-level `nextPage`/`shuffled` tolerated.
+- `api/messages.ts`: parse each conversation message individually, degrading an
+  unparseable one to an `Unknown` message instead of failing the whole chat load.
+- `model/album.ts`, `model/message.ts`: allow `null` cover/thumb/url while media
+  is still processing or was rejected.
+- Added `v3.test.ts` covering the tolerant cascade parsing.
+
+**Authenticated media — fix black-box photos & albums**
+- New `utils/authed-image.ts` (`resolveAuthedImage`): resolve an authed
+  `cdns.grindr.com` URL to a `data:` URL via the Rust `fetch_authed_bytes` command.
+- `ImageMessage.svelte`: pre-resolve the image to a `data:` URL for BOTH the inline
+  thumbnail and the PhotoSwipe lightbox (the lightbox opened the raw URL with no
+  auth header -> 403 -> black box).
+- `AlbumMessage.svelte`: resolve every album slide (photo and video) to a `data:`
+  URL for the lightbox and dimension-probing; cover uses `AuthedImage` fallback.
+- `AuthedImage.svelte`: refactored onto the shared `resolveAuthedImage` helper.
+
+**Rust / backend**
+- `headers.rs`: bump the spoofed Grindr app version `26.7.0.159416` -> `26.9.1.163471`
+  to keep the client accepted by current API.
+- `ws.rs`: `maybe_notify` now compares `senderId` whether it arrives as a JSON
+  string OR number, so your own sent messages never trigger a self-notification.
+
+**Branding / DX**
+- `GrindX` -> `GrindrX` in the notification title, channel description, and log
+  tags (the internal channel id `grindx_messages` is left unchanged — it is shared
+  with `MainActivity.kt` and is not user-visible).
+- `eslint.config.js`: global ignores for `build/`, `.svelte-kit/`, `dist/`,
+  `src-tauri/`; added a `lint` script. Lint no longer scans generated output.
+- `flake.nix`: Linux desktop libs (glib/gtk3/webkit2gtk/...) added to the dev
+  shell so `bun run test` (incl. `cargo test`) runs on a headless Linux host.
+  Gated to Linux; the Android cross-build is unaffected.
+- Version bumped `0.1.8` -> `0.1.9` across `package.json`, `tauri.conf.json`,
+  `Cargo.toml`.
+
+---
+
 ## Commits (newest first)
 
 | SHA | Description |

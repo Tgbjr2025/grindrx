@@ -4,6 +4,7 @@
 
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import type { ExpiringImageMessage, ImageMessage } from "$lib/model/message";
+	import { resolveAuthedImage } from "$lib/utils/authed-image";
 	import { MessageMediaState } from "./message-media.svelte";
 
 	let {
@@ -12,6 +13,23 @@
 		$props();
 
 	const media = new MessageMediaState();
+
+	// PhotoSwipe opens the raw `<a href>` directly, with no auth header, so an
+	// authenticated CDN image would be a black box in fullscreen. Resolve the
+	// URL to an authed `data:` URL once and use it for both the inline thumbnail
+	// and the lightbox so the bytes are fetched a single time.
+	let displayUrl = $state(message.url);
+	$effect(() => {
+		const raw = message.url;
+		displayUrl = raw;
+		let cancelled = false;
+		void resolveAuthedImage(raw).then((data) => {
+			if (!cancelled && data && message.url === raw) displayUrl = data;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 
 	$effect(() => {
 		const gallery = media.el;
@@ -117,14 +135,14 @@
 	bind:this={media.el}
 >
 	<a
-		href={message.url}
+		href={displayUrl}
 		data-pswp-width={message.width ?? undefined}
 		data-pswp-height={message.height ?? undefined}
 		aria-label="Open image"
 		class="block item"
 	>
 		<AuthedImage
-			src={message.url}
+			src={displayUrl}
 			alt=""
 			class={[
 				"w-full rounded-lg bg-card-foreground/10 object-cover",

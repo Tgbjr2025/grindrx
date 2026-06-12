@@ -193,11 +193,15 @@ async fn run_message_loop(
                             if event_type == "chat.v1.message_sent" {
                                 let state = app.state::<crate::state::AppState>();
                                 if !state.is_foreground.load(Ordering::Relaxed) {
-                                    // FIX 3: only notify if someone else sent this message
-                                    let sender_id = val["payload"]["senderId"]
-                                        .as_str()
-                                        .unwrap_or("");
-                                    if sender_id != our_profile_id {
+                                    // FIX 3 (+v0.1.9): only notify if someone ELSE sent this message.
+                                    // senderId can arrive as a JSON string or number depending on the
+                                    // event shape; handle both so our own sent messages never self-notify.
+                                    let sender_is_self = match &val["payload"]["senderId"] {
+                                        Value::String(s) => s.as_str() == our_profile_id,
+                                        Value::Number(n) => n.to_string() == our_profile_id,
+                                        _ => false,
+                                    };
+                                    if !sender_is_self {
                                         maybe_notify(app, &val);
                                     }
                                 }
@@ -295,7 +299,7 @@ fn maybe_notify(app: &AppHandle, val: &Value) {
 
     app.notification()
         .builder()
-        .title("GrindX")
+        .title("GrindrX")
         .body(&body)
         .channel_id("grindx_messages")
         .show()

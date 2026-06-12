@@ -1,6 +1,6 @@
 {
 	"name": "grindrx",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"license": "MIT",
 	"author": "GrindrX (https://git.dominusaxis.com/dominus/open-grind)",
 	"type": "module",
@@ -8,6 +8,7 @@
 		"docs": "bun run --cwd docs start",
 		"build": "vite build",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"lint": "eslint src",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"dev": "bun dev:desktop",
 		"dev:web": "vite dev",

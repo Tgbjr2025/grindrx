@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
-const APP_VERSION: &str = "26.7.0.159416";
-const BUILD_NUMBER: &str = "159416";
+const APP_VERSION: &str = "26.9.1.163471";
+const BUILD_NUMBER: &str = "163471";
 const MAX_ANDROID_VERSION: u8 = 16;
 
 struct DeviceProfile {

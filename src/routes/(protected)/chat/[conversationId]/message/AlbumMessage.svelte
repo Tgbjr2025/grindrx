@@ -7,6 +7,7 @@
 	import { type AlbumContentResponse, getAlbumContent } from "$lib/api/album";
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import type { AlbumMessage } from "$lib/model/message";
+	import { resolveAuthedImage } from "$lib/utils/authed-image";
 	import { MessageMediaState } from "./message-media.svelte";
 
 	let { message, isOut = false }: { message: AlbumMessage["body"]; isOut?: boolean } = $props();
@@ -31,6 +32,8 @@
 		content: (AlbumContentResponse["content"][number] & {
 			width: number;
 			height: number;
+			// Auth-resolved `data:` URL (or raw url fallback) used by the lightbox.
+			src: string;
 		})[];
 	};
 
@@ -51,10 +54,16 @@
 					...res,
 					content: await Promise.all(
 						res.content.map(async (slide) => {
+							// Resolve the authed CDN url to a data: URL once; the lightbox
+							// (and dimension probing below) can't send the auth header, so a
+							// raw url would render as a black box.
+							const resolved = slide.url
+								? ((await resolveAuthedImage(slide.url)) ?? slide.url)
+								: null;
 							if (slide.contentType.startsWith("video/")) {
-								if (!slide.url) return { ...slide, width: 0, height: 0 };
+								if (!resolved) return { ...slide, src: "", width: 0, height: 0 };
 								const video = document.createElement("video");
-								video.src = slide.url;
+								video.src = resolved;
 								video.load();
 								try {
 									await new Promise<void>((resolve, reject) => {
@@ -77,6 +86,7 @@
 									});
 									return {
 										...slide,
+										src: resolved,
 										width: video.videoWidth,
 										height: video.videoHeight,
 									};
@@ -84,9 +94,9 @@
 									video.remove();
 								}
 							} else {
-								if (!slide.url) return { ...slide, src: "", width: 0, height: 0 };
+								if (!resolved) return { ...slide, src: "", width: 0, height: 0 };
 								const img = document.createElement("img");
-								img.src = slide.url;
+								img.src = resolved;
 								try {
 									await new Promise<void>((resolve, reject) => {
 										if (img.complete) resolve();
@@ -152,8 +162,8 @@
 				});
 				lightbox.addFilter("numItems", () => album.content.length);
 				lightbox.addFilter("itemData", (_, index) => {
-					const { url, width, height } = album.content[index];
-					return { src: url, width, height };
+					const { src, width, height } = album.content[index];
+					return { src: src || undefined, width, height };
 				});
 				lightbox.on("contentLoad", (event) => {
 					const { content } = event;
@@ -162,7 +172,7 @@
 						event.preventDefault();
 						content.element = document.createElement("div");
 						const video = document.createElement("video");
-						video.src = slide.url;
+						video.src = slide.src || "";
 						video.controls = true;
 						video.playsInline = true;
 						video.className = "max-w-full max-h-[80vh]";

@@ -40,13 +40,14 @@ export const albumExpirationSchema = z.object({
 export const albumContentMin = z.object({
 	contentId: z.number().int(),
 	contentType: z.string(),
-	coverUrl: z.url().or(z.literal("")),
+	// API returns null for cover/thumb/url while content is processing or rejected.
+	coverUrl: z.url().or(z.literal("")).nullable(),
 	statusId: z.number().int(),
 });
 
 export const albumContentSchema = albumContentMin.extend({
-	thumbUrl: z.url().or(z.literal("")),
-	url: z.url().or(z.literal("")),
+	thumbUrl: z.url().or(z.literal("")).nullable(),
+	url: z.url().or(z.literal("")).nullable(),
 	processing: z.boolean().nullable(),
 	rejectionId: z.unknown().nullable(),
 });

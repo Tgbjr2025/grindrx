@@ -9,6 +9,8 @@ import ts from "typescript-eslint";
 import svelteConfig from "./svelte.config.js";
 
 export default defineConfig(
+	// Don't lint generated / build output or the Rust side (huge + slow).
+	{ ignores: ["build/", ".svelte-kit/", "dist/", "node_modules/", "src-tauri/"] },
 	js.configs.recommended,
 	...ts.configs.recommendedTypeChecked,
 	prettier,
