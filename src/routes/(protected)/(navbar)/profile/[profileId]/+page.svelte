@@ -7,6 +7,7 @@
 	import { fetchRest } from "$lib/api";
 	import { blockProfile } from "$lib/api/block";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
+	import { getAdjacentProfileId } from "$lib/stores/grid-order.svelte";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
@@ -101,10 +102,94 @@
 			toast.error("Failed to update favorite. Please try again.");
 		}
 	}
+
+	// --- Swipe between profiles -------------------------------------------
+	// A horizontal drag navigates to the previous/next profile in the grid
+	// order published by the grid (see $lib/stores/grid-order). We only act on
+	// a clearly-horizontal, single-finger gesture so vertical scrolling and
+	// pinch-zoom are left untouched, and we ignore drags that start inside the
+	// image carousel's lightbox triggers handled by PhotoSwipe.
+	const SWIPE_TRIGGER = 70; // px of horizontal travel to commit a navigation
+
+	const prevProfileId = $derived(getAdjacentProfileId(profileId, "prev"));
+	const nextProfileId = $derived(getAdjacentProfileId(profileId, "next"));
+
+	let swipeStartX = $state<number | null>(null);
+	let swipeStartY = $state<number | null>(null);
+	let swipeDx = $state(0);
+	let swiping = $state(false);
+
+	function goToProfile(id: number) {
+		goto(`/profile/${id}`).catch((err) => console.error(err));
+	}
+
+	function onSwipeStart(event: TouchEvent) {
+		if (event.touches.length !== 1) {
+			swipeStartX = null;
+			return;
+		}
+		swipeStartX = event.touches[0].clientX;
+		swipeStartY = event.touches[0].clientY;
+		swipeDx = 0;
+		swiping = false;
+	}
+
+	function onSwipeMove(event: TouchEvent) {
+		if (swipeStartX === null || swipeStartY === null) return;
+		if (event.touches.length !== 1) {
+			swipeStartX = null;
+			swipeDx = 0;
+			swiping = false;
+			return;
+		}
+		const dx = event.touches[0].clientX - swipeStartX;
+		const dy = event.touches[0].clientY - swipeStartY;
+		if (!swiping) {
+			// Decide intent on the first meaningful movement.
+			if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+			if (Math.abs(dx) <= Math.abs(dy)) {
+				// Vertical gesture — let the page scroll, abandon swipe.
+				swipeStartX = null;
+				return;
+			}
+			swiping = true;
+		}
+		// Only allow movement toward a profile that actually exists.
+		const canGo = dx < 0 ? nextProfileId !== null : prevProfileId !== null;
+		swipeDx = canGo ? dx : dx * 0.25; // resist at the ends
+	}
+
+	function onSwipeEnd() {
+		if (swipeStartX === null) {
+			swipeDx = 0;
+			swiping = false;
+			return;
+		}
+		const dx = swipeDx;
+		swipeStartX = null;
+		swipeStartY = null;
+		swipeDx = 0;
+		swiping = false;
+		if (dx <= -SWIPE_TRIGGER && nextProfileId !== null) {
+			goToProfile(nextProfileId);
+		} else if (dx >= SWIPE_TRIGGER && prevProfileId !== null) {
+			goToProfile(prevProfileId);
+		}
+	}
 </script>
 
-<div class="flex">
-	<main class="w-full max-w-200 m-auto relative">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	class="flex"
+	ontouchstart={onSwipeStart}
+	ontouchmove={onSwipeMove}
+	ontouchend={onSwipeEnd}
+	ontouchcancel={onSwipeEnd}
+>
+	<main
+		class="w-full max-w-200 m-auto relative"
+		style="transform: translateX({swipeDx}px); transition: {swiping ? 'none' : 'transform 0.2s ease'};"
+	>
 		{#await profile}
 			<div class="flex flex-col">
 				<Skeleton class="w-full aspect-3/4 max-h-[min(70vh,500px)] rounded-none" />

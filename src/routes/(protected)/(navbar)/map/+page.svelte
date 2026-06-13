@@ -4,6 +4,7 @@
 	import { goto } from "$app/navigation";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import { decodeGeohash } from "$lib/model/geohash";
+	import { getExploreLocation } from "$lib/stores/explore-location.svelte";
 	import { gridState } from "../(root)/grid-state.svelte";
 	import { profileCache, resolvePartialBatch } from "../(root)/grid";
 	import type { FullGridProfile } from "../(root)/grid.ts";
@@ -148,7 +149,8 @@
 
 	onMount(async () => {
 		const prefs = await preferences;
-		const geohash = prefs.geohash;
+		// Mirror the grid: when exploring a remote area, centre the map there too.
+		const geohash = getExploreLocation()?.geohash ?? prefs.geohash;
 		if (!geohash || !mapEl) return;
 
 		const { lat, lon } = decodeGeohash(geohash);
@@ -224,7 +226,7 @@
 	});
 
 	const hasLocation = $derived(
-		preferences.then((p) => !!p.geohash),
+		preferences.then((p) => !!(getExploreLocation()?.geohash ?? p.geohash)),
 	);
 
 	const profileCount = $derived(

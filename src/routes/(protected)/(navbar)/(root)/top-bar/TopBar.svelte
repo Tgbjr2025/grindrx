@@ -5,10 +5,13 @@
 	import { expoOut } from "svelte/easing";
 	import { Tween } from "svelte/motion";
 
+	import { ArrowsClockwiseIcon } from "phosphor-svelte";
+
 	import {
 		getPreferences,
 		setPreferences,
 	} from "$lib/app-data/preferences.svelte";
+	import { Button } from "$lib/components/ui/button";
 	import { defaultFilters } from "$lib/components/filters/filters";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
 	import Filters from "../GridFilters.svelte";
@@ -146,6 +149,15 @@
 		>
 			<LocationChange expansion={0} onUpdate={onUpdatePreferences} />
 		</div>
+		<Button
+			variant="secondary"
+			size="icon"
+			class="shrink-0"
+			aria-label="Refresh grid"
+			onclick={onRefreshGrid}
+		>
+			<ArrowsClockwiseIcon />
+		</Button>
 		<QuickFilters bind:openFilters bind:filters {onUpdateFilters} />
 	</div>
 </ProgressiveBlur>

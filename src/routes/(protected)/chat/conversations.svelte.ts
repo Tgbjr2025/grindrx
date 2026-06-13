@@ -13,17 +13,15 @@ import {
 } from "$lib/ws.svelte";
 import type { Conversation } from "$lib/model/conversation";
 import type { ApiResponseMessage } from "$lib/model/message";
+import type { getConversation } from "./[conversationId]/messages";
+
+type ConversationProfile = Awaited<
+	ReturnType<typeof getConversation>
+>["profile"];
 
 export type CachedConversation = {
 	messages: ApiResponseMessage[];
-	profile: {
-		distance: number | null;
-		mediaHash: string | null;
-		name: string | null;
-		onlineUntil: number | null;
-		profileId: number;
-		showDistance: boolean;
-	};
+	profile: ConversationProfile;
 	pageKey: string | null;
 	cachedAt: number;
 };

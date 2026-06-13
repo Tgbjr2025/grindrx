@@ -77,7 +77,7 @@
 							},
 						]}
 					>
-						<DisplayName name={profile.name} />
+						<DisplayName name={profile.name ?? null} />
 					</Card.Title>
 					{#if conversationState.wsStatus === "disconnected"}
 						<Card.Description class="truncate text-xs text-amber-500">
@@ -87,7 +87,7 @@
 						<Card.Description class="truncate text-xs text-muted-foreground italic">
 							typing...
 						</Card.Description>
-					{:else if profile.distance === null}
+					{:else if profile.distance == null}
 						<Card.Description class="truncate text-xs">
 							Distance unknown
 						</Card.Description>

@@ -19,8 +19,10 @@
 
 	let {
 		pinPos = $bindable(),
+		pinLabel = $bindable(),
 	}: {
 		pinPos?: { lat: number; lon: number };
+		pinLabel?: string | null;
 	} = $props();
 
 	let map: LeafletMap | undefined = $state();
@@ -31,6 +33,7 @@
 		if (map) {
 			const onMapClick: LeafletMouseEventHandlerFn = ({ latlng }) => {
 				pinPos = { lat: latlng.lat, lon: latlng.lng };
+				pinLabel = null;
 			};
 			map.on("click", onMapClick);
 			return () => {
@@ -151,6 +154,7 @@
 								variant="link"
 								onclick={() => {
 									pinPos = { lat: place.lat, lon: place.lon };
+									pinLabel = place.name;
 									map?.setView([place.lat, place.lon], 17);
 									showSearchResults = false;
 								}}
