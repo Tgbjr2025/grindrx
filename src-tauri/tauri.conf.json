@@ -25,7 +25,7 @@
 			}
 		],
 		"security": {
-			"csp": "default-src 'self' tauri: asset:; connect-src 'self' tauri: asset: https://grindr.mobi https://analytics.dominusaxis.com https://git.dominusaxis.com; img-src 'self' tauri: asset: data: https://cdns.grindr.com https://*.grindr.com blob:; media-src 'self' tauri: asset: blob: https://*.grindr.com; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+			"csp": "default-src 'self' tauri: asset:; connect-src 'self' tauri: asset: https://grindr.mobi https://*.cloudfront.net https://analytics.dominusaxis.com https://git.dominusaxis.com; img-src 'self' tauri: asset: data: https://cdns.grindr.com https://*.grindr.com https://*.cloudfront.net blob:; media-src 'self' tauri: asset: blob: https://*.grindr.com https://*.cloudfront.net; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
 		}
 	},
 	"bundle": {

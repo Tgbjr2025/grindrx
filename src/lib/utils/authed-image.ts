@@ -15,6 +15,24 @@ import { invoke } from "@tauri-apps/api/core";
  * silent). Callers should fall back to the raw URL when this returns `null`.
  */
 export async function resolveAuthedImage(url: string): Promise<string | null> {
+	// Grindr serves media two different ways:
+	//   - cdns.grindr.com/...              -> bearer-token gated, needs fetch_authed_bytes
+	//   - *.cloudfront.net/...?Signature=  -> pre-signed URL, loads directly with NO auth
+	// Routing a signed CloudFront URL through fetch_authed_bytes always fails (the Rust
+	// SSRF allowlist only permits grindr.com/.mobi, and attaching our bearer token to a
+	// third-party host would leak it). So only auth-fetch grindr hosts; return everything
+	// else unchanged so the <img>/lightbox loads the signed URL directly.
+	let host = "";
+	try {
+		host = new URL(url).hostname.toLowerCase();
+	} catch {
+		return url;
+	}
+	const needsAuthFetch =
+		host === "cdns.grindr.com" ||
+		host.endsWith(".grindr.com") ||
+		host.endsWith(".grindr.mobi");
+	if (!needsAuthFetch) return url;
 	try {
 		return await invoke<string>("fetch_authed_bytes", { url });
 	} catch (error) {

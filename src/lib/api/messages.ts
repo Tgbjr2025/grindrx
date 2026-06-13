@@ -10,20 +10,23 @@ import { unixTimestampMsSchema } from "$lib/model/types";
 import type { Conversation } from "$lib/model/conversation";
 
 const conversationMessagesSchema = z.object({
-	lastReadTimestamp: z.number().nonnegative().nullable(),
+	lastReadTimestamp: z.number().nonnegative().nullable().catch(null),
 	// Parse each message individually below so one unrecognized/malformed message
 	// (e.g. a shared album with a null thumbnail, or a message type we don't model
 	// yet) can't throw the whole conversation parse and blank the chat.
 	messages: z.array(z.unknown()),
-	pageKey: z.string().nullable().optional(),
+	pageKey: z.string().nullable().optional().catch(null),
+	// Tolerate drift in the profile sub-object too: the 10s reconcile poll only
+	// consumes `messages`, so a single changed/added profile field must NOT throw
+	// the whole parse and freeze the chat (same philosophy as the v0.1.9 grid fix).
 	profile: z.object({
-		distance: z.number().nullable(),
-		mediaHash: z.string().nullable(),
-		name: z.string().nullable(),
-		onlineUntil: z.number().nullable(),
+		distance: z.number().nullable().optional().catch(null),
+		mediaHash: z.string().nullable().optional().catch(null),
+		name: z.string().nullable().optional().catch(null),
+		onlineUntil: z.number().nullable().optional().catch(null),
 		profileId: z.number().int(),
-		showDistance: z.boolean(),
-	}),
+		showDistance: z.boolean().optional().catch(true),
+	}).catch({ distance: null, mediaHash: null, name: null, onlineUntil: null, profileId: 0, showDistance: true }),
 });
 
 /**

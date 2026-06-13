@@ -96,8 +96,15 @@
 	}
 
 	async function handleSendPhoto(photo: ProfilePhoto) {
+		// Grindr stopped returning a mediaId in /v3.1/me/profile/images (only mediaHash),
+		// and its send endpoint still rejects an Image message without one (HTTP 400).
+		// Until the new send format is known, fail fast with a clear message instead of
+		// queuing a doomed optimistic message that locks up the chat.
 		if (photo.mediaId === undefined) {
-			toast.error("Can't send this photo — Grindr didn't return a media ID for it");
+			toast.error(
+				"Grindr no longer provides the ID needed to re-send a saved photo. Pick a new photo from your gallery instead.",
+				{ duration: 8000 },
+			);
 			return;
 		}
 		sendingHash = photo.mediaHash;

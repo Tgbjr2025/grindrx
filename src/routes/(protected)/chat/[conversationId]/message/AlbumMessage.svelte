@@ -68,6 +68,7 @@
 								try {
 									await new Promise<void>((resolve, reject) => {
 										if (video.readyState >= 1) resolve();
+										setTimeout(() => resolve(), 6000);
 										video.addEventListener("loadedmetadata", () => resolve(), {
 											once: true,
 										});
@@ -96,10 +97,17 @@
 							} else {
 								if (!resolved) return { ...slide, src: "", width: 0, height: 0 };
 								const img = document.createElement("img");
-								img.src = resolved;
+								// Measure aspect ratio from the lightweight thumbnail, not the
+								// full-res photo. Decoding every full image at once (Promise.all)
+								// froze the WebView on album open.
+								const thumbProbe = slide.thumbUrl
+									? ((await resolveAuthedImage(slide.thumbUrl)) ?? slide.thumbUrl)
+									: resolved;
+								img.src = thumbProbe;
 								try {
 									await new Promise<void>((resolve, reject) => {
 										if (img.complete) resolve();
+										setTimeout(() => resolve(), 6000);
 										img.addEventListener("load", () => resolve(), {
 											once: true,
 										});
@@ -116,11 +124,13 @@
 											},
 										);
 									});
+									const longest = Math.max(img.naturalWidth, img.naturalHeight, 1);
+									const upscale = Math.max(1, 2048 / longest);
 									return {
 										...slide,
-										src: img.src,
-										width: img.naturalWidth,
-										height: img.naturalHeight,
+										src: resolved,
+										width: Math.round((img.naturalWidth || 0) * upscale),
+										height: Math.round((img.naturalHeight || 0) * upscale),
 									};
 								} finally {
 									img.remove();

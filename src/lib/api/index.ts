@@ -168,13 +168,14 @@ export function parseApiResponse<TSchema extends z.ZodType>(options: {
 		return parsed.data;
 	}
 
-	console.error("API response schema validation failed", {
-		path: options.path,
-		method: options.method ?? "GET",
-		schema: options.schema.meta()?.title,
-		issues: parsed.error.issues,
-		response: options.data,
-	});
+	console.error(
+		"API response schema validation failed " +
+			JSON.stringify({
+				path: options.path,
+				method: options.method ?? "GET",
+				issues: parsed.error.issues.slice(0, 10),
+			}),
+	);
 
 	throw parsed.error;
 }
