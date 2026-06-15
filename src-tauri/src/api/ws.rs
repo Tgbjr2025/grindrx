@@ -16,7 +16,23 @@ use crate::error::AppError;
 use crate::state::AppState;
 
 const WS_URL: &str = "wss://grindr.mobi/v1/ws";
+/// Keepalive ping cadence while the app is in the foreground.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
+/// Slower keepalive while backgrounded — fewer radio wakeups means the phone
+/// can stay in deep sleep between pings. Incoming messages are still delivered
+/// immediately via the read loop regardless of the heartbeat cadence; the
+/// heartbeat only exists to detect a dead connection.
+const HEARTBEAT_INTERVAL_BACKGROUND: Duration = Duration::from_secs(120);
+/// Reconnect backoff ceiling while foregrounded — keep reconnects snappy so an
+/// active user isn't left offline.
+const RECONNECT_BACKOFF_CAP_FOREGROUND: Duration = Duration::from_secs(30);
+/// Reconnect backoff ceiling while backgrounded. A phone left overnight on a
+/// flaky network must NOT attempt a full TLS handshake every 30s; cap it far
+/// higher so retries are sparse when nobody is looking.
+const RECONNECT_BACKOFF_CAP_BACKGROUND: Duration = Duration::from_secs(300);
+/// A connection that stayed up at least this long is considered healthy, so the
+/// reconnect backoff is reset for fast recovery on the next blip.
+const HEALTHY_CONNECTION_THRESHOLD: Duration = Duration::from_secs(60);
 
 /// Outcome of `run_message_loop` / `connect_and_run`.
 /// Distinguishes a clean shutdown (command channel closed) from a
@@ -51,7 +67,17 @@ async fn run_ws_loop(app: AppHandle) {
     loop {
         state.auth_notify.notified().await;
 
-        match connect_and_run(&app).await {
+        let started = std::time::Instant::now();
+        let outcome = connect_and_run(&app).await;
+
+        // A connection that stayed up for a while was healthy: reset the backoff
+        // so recovery is fast the next time the network blips, instead of
+        // inheriting a stale 30s/5min delay from earlier failures.
+        if started.elapsed() >= HEALTHY_CONNECTION_THRESHOLD {
+            backoff = Duration::from_secs(1);
+        }
+
+        match outcome {
             WsOutcome::ChannelClosed => {
                 // Command sender dropped — application is shutting down.
                 break;
@@ -66,7 +92,14 @@ async fn run_ws_loop(app: AppHandle) {
                 app.emit("ws:disconnected", ()).ok();
                 state.auth_notify.notify_one();
                 sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
+                // Back off far harder while backgrounded so an idle phone on a
+                // bad network doesn't burn battery reconnecting all night.
+                let cap = if state.is_foreground.load(Ordering::Relaxed) {
+                    RECONNECT_BACKOFF_CAP_FOREGROUND
+                } else {
+                    RECONNECT_BACKOFF_CAP_BACKGROUND
+                };
+                backoff = (backoff * 2).min(cap);
             }
         }
     }
@@ -173,14 +206,25 @@ async fn run_message_loop(
     our_profile_id: &str,
     app: &AppHandle,
 ) -> WsOutcome {
-    let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
-    heartbeat.tick().await; // consume the immediate first tick
+    let state = app.state::<crate::state::AppState>();
 
     // FIX 1: track pong state here instead of blocking read.next() in the heartbeat arm.
     // When true, the next heartbeat tick without a Pong means the connection is dead.
     let mut waiting_for_pong = false;
 
     loop {
+        // Foreground-aware, idle-based keepalive: re-armed every loop iteration,
+        // so a Ping is only sent after a genuine lull in traffic. While
+        // backgrounded the interval is longer, letting the radio sleep between
+        // pings — the single biggest battery win here. Real messages still
+        // arrive instantly via the read arm regardless of this cadence.
+        let heartbeat_interval = if state.is_foreground.load(Ordering::Relaxed) {
+            HEARTBEAT_INTERVAL
+        } else {
+            HEARTBEAT_INTERVAL_BACKGROUND
+        };
+        let heartbeat = sleep(heartbeat_interval);
+
         tokio::select! {
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
@@ -246,7 +290,7 @@ async fn run_message_loop(
             // timer fires again, that means no Pong arrived in a full interval —
             // treat the connection as dead. Real messages (including Pong) are
             // handled in the read arm above and are never dropped.
-            _ = heartbeat.tick() => {
+            _ = heartbeat => {
                 if waiting_for_pong {
                     return WsOutcome::Disconnected(AppError::Http(
                         "WS heartbeat timeout — no pong received".to_owned(),
