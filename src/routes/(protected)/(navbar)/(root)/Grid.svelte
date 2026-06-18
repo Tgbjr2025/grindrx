@@ -9,6 +9,7 @@
 	import { Spinner } from "$lib/components/ui/spinner";
 	import { setGridOrder } from "$lib/stores/grid-order.svelte";
 	import { gridState } from "./grid-state.svelte";
+	import GridWindow from "./GridWindow.svelte";
 	import ProfileMiniCard from "./ProfileMiniCard.svelte";
 
 	let {
@@ -25,6 +26,11 @@
 
 	// Publish the ordered profile ids so the profile detail view can swipe
 	// to the next/previous profile in the same order shown here.
+	//
+	// IMPORTANT: this must reflect EVERY loaded profile, not just the windowed/
+	// on-screen ones — profile-swipe walks the full order. `gridProfiles` is the
+	// complete de-duplicated list (GridWindow only changes what is *rendered*, not
+	// this array), so swipe is unaffected by the windowing below.
 	$effect(() => {
 		setGridOrder(gridProfiles.map((item) => item.id));
 	});
@@ -43,6 +49,39 @@
 			scrolled = true;
 			window.scrollTo({ top: gridState.scrollY, behavior: "instant" });
 		}
+	});
+
+	// --- Grid metrics (for windowing) --------------------------------------
+	// The windowing in GridWindow collapses off-screen rows to equal-height
+	// spacers so memory stays bounded. To size those spacers without shifting
+	// the page we measure the live grid: the number of column tracks and the
+	// height of one (square) cell. A ResizeObserver keeps this correct across
+	// the responsive breakpoints and orientation changes — no hardcoded columns.
+	let gridEl = $state<HTMLDivElement | null>(null);
+	let columns = $state(2);
+	let rowHeight = $state(0);
+
+	function measureGrid() {
+		if (!gridEl) return;
+		const style = getComputedStyle(gridEl);
+		const tracks = style.gridTemplateColumns
+			.split(" ")
+			.filter((t) => t && t !== "0px");
+		if (tracks.length > 0) columns = tracks.length;
+		// Square cells: row height == column track width. Parse the first track.
+		const firstTrack = parseFloat(tracks[0] ?? "");
+		if (Number.isFinite(firstTrack) && firstTrack > 0) rowHeight = firstTrack;
+	}
+
+	$effect(() => {
+		if (!gridEl) return;
+		measureGrid();
+		const ro =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(() => measureGrid());
+		ro?.observe(gridEl);
+		return () => ro?.disconnect();
 	});
 
 	// --- Pull-to-refresh ---------------------------------------------------
@@ -165,6 +204,7 @@
 {/if}
 
 <div
+	bind:this={gridEl}
 	class="grid grid-cols-2 xxs:grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 w-full gap-0.5 px-1 pb-2 flex-1"
 	style="transform: translateY({pullActive ? pullDistance : 0}px); transition: {pullStartY ===
 	null
@@ -198,25 +238,27 @@
 			</Empty.Root>
 		</div>
 	{:else}
-		{#each gridProfiles as item (item.id)}
-			{#if item.type === "full"}
-				<ProfileMiniCard
-					id={item.id}
-					displayName={item.displayName}
-					age={item.age}
-					distance={item.distance}
-					medias={item.profilePhotosHashes?.map((mediaHash) => ({
-						mediaHash,
-					})) ?? []}
-					onlineUntil={item.onlineUntil}
-				/>
-			{:else}
-				<div
-					class="aspect-square bg-muted animate-pulse rounded-sm"
-					use:observePartial={{ batchIndex: item.batchIndex }}
-				></div>
-			{/if}
-		{/each}
+		<GridWindow items={gridProfiles} {columns} {rowHeight}>
+			{#snippet children(item)}
+				{#if item.type === "full"}
+					<ProfileMiniCard
+						id={item.id}
+						displayName={item.displayName}
+						age={item.age}
+						distance={item.distance}
+						medias={item.profilePhotosHashes?.map((mediaHash) => ({
+							mediaHash,
+						})) ?? []}
+						onlineUntil={item.onlineUntil}
+					/>
+				{:else}
+					<div
+						class="aspect-square bg-muted animate-pulse rounded-sm"
+						use:observePartial={{ batchIndex: item.batchIndex }}
+					></div>
+				{/if}
+			{/snippet}
+		</GridWindow>
 		{#if gridState.loadingMore}
 			{#each Array.from({ length: 20 })}
 				<div class="aspect-square bg-muted animate-pulse rounded-sm"></div>
