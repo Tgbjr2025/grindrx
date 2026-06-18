@@ -96,20 +96,22 @@
 	}
 
 	async function handleSendPhoto(photo: ProfilePhoto) {
-		// Grindr stopped returning a mediaId in /v3.1/me/profile/images (only mediaHash),
-		// and its send endpoint still rejects an Image message without one (HTTP 400).
-		// Until the new send format is known, fail fast with a clear message instead of
-		// queuing a doomed optimistic message that locks up the chat.
-		if (photo.mediaId === undefined) {
+		// Sending a saved photo requires the numeric mediaId that now lives in
+		// /v4/me/profile's `medias` array (it was dropped from the legacy images
+		// endpoint). If it's still missing — e.g. only the legacy fallback was
+		// reachable — fail fast with a clear message instead of queuing a doomed
+		// optimistic message that locks up the chat (HTTP 400 on send).
+		if (typeof photo.mediaId !== "number" || photo.mediaId <= 0) {
 			toast.error(
-				"Grindr no longer provides the ID needed to re-send a saved photo. Pick a new photo from your gallery instead.",
+				"Grindr didn't return the ID needed to re-send this saved photo. Pick a new photo from your gallery instead.",
 				{ duration: 8000 },
 			);
 			return;
 		}
+		const mediaId = photo.mediaId;
 		sendingHash = photo.mediaHash;
 		try {
-			await onSendPhoto({ ...photo, mediaId: photo.mediaId });
+			await onSendPhoto({ ...photo, mediaId });
 			toast.success("Photo sent!");
 			open = false;
 		} catch (err) {

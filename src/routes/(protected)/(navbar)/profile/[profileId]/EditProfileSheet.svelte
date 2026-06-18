@@ -4,6 +4,7 @@
 	import { fetchRest } from "$lib/api";
 	import { getGenders } from "$lib/api/genders";
 	import { fetchPronouns } from "$lib/api/pronouns";
+	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import Input from "$lib/components/ui/input/input.svelte";
 	import Label from "$lib/components/ui/label/label.svelte";
@@ -33,6 +34,14 @@
 		vaccines as vaccineLabels,
 		type VaccineId,
 	} from "$lib/model/profile";
+	import {
+		heightFromInput,
+		heightToInput,
+		heightUnitLabel,
+		weightFromInput,
+		weightToInput,
+		weightUnitLabel,
+	} from "$lib/utils/measurements";
 
 	let {
 		open = $bindable(false),
@@ -76,8 +85,16 @@
 	let aboutMe = $state<string>(profileData.aboutMe ?? "");
 	let sexualPosition = $state<SexualPositionId | "">(profileData.sexualPosition ?? "");
 	let bodyType = $state<BodyTypeId | "">(profileData.bodyType ?? "");
-	let height = $state<string>(profileData.height !== null ? String(profileData.height) : "");
-	let weight = $state<string>(profileData.weight !== null ? String(Math.round(profileData.weight / 1000)) : "");
+	let height = $state<string>(
+		profileData.height !== null
+			? String(heightToInput(profileData.height, getDistanceUnit()))
+			: "",
+	);
+	let weight = $state<string>(
+		profileData.weight !== null
+			? String(weightToInput(profileData.weight, getDistanceUnit()))
+			: "",
+	);
 	let ethnicity = $state<EthnicityId | "">(profileData.ethnicity ?? "");
 	let relationshipStatus = $state<RelationshipStatusId | "">(
 		profileData.relationshipStatus ?? "",
@@ -105,8 +122,14 @@
 			aboutMe = profileData.aboutMe ?? "";
 			sexualPosition = profileData.sexualPosition ?? "";
 			bodyType = profileData.bodyType ?? "";
-			height = profileData.height !== null ? String(profileData.height) : "";
-			weight = profileData.weight !== null ? String(Math.round(profileData.weight / 1000)) : "";
+			height =
+				profileData.height !== null
+					? String(heightToInput(profileData.height, getDistanceUnit()))
+					: "";
+			weight =
+				profileData.weight !== null
+					? String(weightToInput(profileData.weight, getDistanceUnit()))
+					: "";
 			ethnicity = profileData.ethnicity ?? "";
 			relationshipStatus = profileData.relationshipStatus ?? "";
 			selectedLookingFor = new Set(profileData.lookingFor);
@@ -202,8 +225,10 @@
 				aboutMe: aboutMe.trim() !== "" ? aboutMe.trim() : null,
 				sexualPosition: sexualPosition !== "" ? sexualPosition : null,
 				bodyType: bodyType !== "" ? bodyType : null,
-				height: height !== "" ? Number(height) : null,
-				weight: weight !== "" ? Number(weight) * 1000 : null,
+				height:
+					height !== "" ? heightFromInput(Number(height), getDistanceUnit()) : null,
+				weight:
+					weight !== "" ? weightFromInput(Number(weight), getDistanceUnit()) : null,
 				ethnicity: ethnicity !== "" ? ethnicity : null,
 				relationshipStatus: relationshipStatus !== "" ? relationshipStatus : null,
 				lookingFor: Array.from(selectedLookingFor),
@@ -376,26 +401,22 @@
 
 			<!-- Height -->
 			<div class="flex flex-col gap-1.5">
-				<Label for="edit-height">Height (cm)</Label>
+				<Label for="edit-height">Height ({heightUnitLabel(getDistanceUnit())})</Label>
 				<Input
 					id="edit-height"
 					type="number"
-					min={100}
-					max={250}
-					placeholder="e.g. 178"
+					placeholder={heightUnitLabel(getDistanceUnit()) === "in" ? "e.g. 70" : "e.g. 178"}
 					bind:value={height}
 				/>
 			</div>
 
 			<!-- Weight -->
 			<div class="flex flex-col gap-1.5">
-				<Label for="edit-weight">Weight (kg)</Label>
+				<Label for="edit-weight">Weight ({weightUnitLabel(getDistanceUnit())})</Label>
 				<Input
 					id="edit-weight"
 					type="number"
-					min={30}
-					max={200}
-					placeholder="e.g. 75"
+					placeholder={weightUnitLabel(getDistanceUnit()) === "lbs" ? "e.g. 165" : "e.g. 75"}
 					bind:value={weight}
 				/>
 			</div>

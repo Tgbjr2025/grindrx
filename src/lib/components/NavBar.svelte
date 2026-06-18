@@ -5,7 +5,8 @@
 	import DropIcon from "phosphor-svelte/lib/DropIcon";
 	import EyeIcon from "phosphor-svelte/lib/EyeIcon";
 	import FireIcon from "phosphor-svelte/lib/FireIcon";
-	import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
+	// "Nearby"/Map tab removed per request — import disabled with the tab below.
+	// import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
 
 	import UserIcon from "phosphor-svelte/lib/UserIcon";
 
@@ -53,9 +54,11 @@
 		<a href="/views" aria-label="Views" data-active={page.route.id === "/(protected)/(navbar)/views"}>
 			<EyeIcon weight="fill" />
 		</a>
+		<!-- "Nearby"/Map tab removed per request; remaining tabs reflow to fill the space.
 		<a href="/map" aria-label="Map" data-active={page.route.id === "/(protected)/(navbar)/map"}>
 			<MapPinIcon weight="fill" />
 		</a>
+		-->
 		<a href="/chat" aria-label="Inbox" data-active={page.route.id?.startsWith("/(protected)/chat")}>
 			<span class="relative inline-flex">
 				<ChatCircleIcon weight="fill" />

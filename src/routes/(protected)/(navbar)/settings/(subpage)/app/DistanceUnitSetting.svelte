@@ -8,8 +8,11 @@
 
 <Item.Root variant="outline">
 	<Item.Content class="max-xxxxs:min-w-0">
-		<Item.Title>Distance unit</Item.Title>
-		<Item.Description>Choose how distances are displayed.</Item.Description>
+		<Item.Title>Measurement units</Item.Title>
+		<Item.Description>
+			Choose metric (km, cm, kg) or imperial (mi, ft/in, lbs) for distance,
+			height and weight.
+		</Item.Description>
 	</Item.Content>
 	<Item.Actions>
 		<div class="flex rounded-lg overflow-hidden border border-border text-sm font-medium">
@@ -23,7 +26,7 @@
 				]}
 				onclick={() => setDistanceUnit("km")}
 			>
-				km
+				Metric
 			</button>
 			<button
 				type="button"
@@ -35,7 +38,7 @@
 				]}
 				onclick={() => setDistanceUnit("mi")}
 			>
-				mi
+				Imperial
 			</button>
 		</div>
 	</Item.Actions>
