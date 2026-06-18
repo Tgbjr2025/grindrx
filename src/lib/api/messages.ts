@@ -6,7 +6,8 @@ import {
 	apiResponseMessageSchema,
 	messageSchema,
 } from "$lib/model/message";
-import { unixTimestampMsSchema } from "$lib/model/types";
+// Dead import removed: `unixTimestampMsSchema` was imported but never referenced
+// in this module (message timestamp parsing lives in $lib/model/message).
 import type { Conversation } from "$lib/model/conversation";
 
 const conversationMessagesSchema = z.object({

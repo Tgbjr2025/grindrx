@@ -55,8 +55,17 @@
 	<title>Open Grind</title>
 </svelte:head>
 {#await preferences then { geohash: deviceGeohash, incognito }}
-	{@const geohash = explore?.geohash ?? deviceGeohash}
-	{#if geohash === null}
+	<!--
+		`nearbyGeoHash` (the server's distance reference) must stay the device's
+		real location even while exploring; the chosen remote area is passed as a
+		separate `exploreGeoHash` so distances stay correct and the server's explore
+		aggregation is used (see grid-state). Without this the explore area was
+		routed through nearbyGeoHash, which the server treats as your own location.
+		Fall back to the explore hash only when there is no device location at all.
+	-->
+	{@const nearbyGeohash = deviceGeohash ?? explore?.geohash ?? null}
+	{@const exploreGeohash = explore?.geohash ?? null}
+	{#if nearbyGeohash === null}
 		<main class="m-auto flex flex-1 max-w-full">
 			<LocationChooser onUpdate={() => (preferences = getPreferences())} />
 		</main>
@@ -90,7 +99,7 @@
 					{/if}
 				</div>
 			{/if}
-			<Grid {geohash} />
+			<Grid geohash={nearbyGeohash} {exploreGeohash} />
 		</main>
 	{/if}
 {/await}

@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::StreamExt;
+use reqwest::redirect::Policy;
 use reqwest::Method;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -231,6 +232,15 @@ pub async fn fetch_authed_bytes(
     {
         let parsed = reqwest::Url::parse(&url)
             .map_err(|_| AppError::Http("Invalid URL".to_owned()))?;
+        // FIX 13: enforce https BEFORE attaching the Authorization header.
+        // Without this, a caller-supplied `http://...grindr.com/...` URL would
+        // send the user's Grindr session token in cleartext. (The host check
+        // alone does not constrain the scheme.)
+        if parsed.scheme() != "https" {
+            return Err(AppError::Http(
+                "Only https URLs are allowed for authed fetches".to_owned(),
+            ));
+        }
         let host = parsed.host_str().unwrap_or("");
         if !is_allowed_grindr_host(host) {
             return Err(AppError::Http(format!(
@@ -240,7 +250,25 @@ pub async fn fetch_authed_bytes(
         }
     }
 
-    let http = state.client()?.http.read().await.clone();
+    // FIX 13: build a dedicated client that refuses redirects. The host/scheme
+    // allowlist above only validates the initial URL; a 30x redirect to an
+    // off-allowlist host (or to http://) would otherwise re-send the
+    // Authorization header to an unvetted destination. reqwest does NOT strip
+    // Authorization across cross-origin redirects, so we must not follow any.
+    let base = state.client()?.http.read().await.clone();
+    let http = match reqwest::Client::builder()
+        .redirect(Policy::none())
+        // Match the shared client's timeouts so this path doesn't hang
+        // indefinitely on a half-open CDN connection.
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        // Fall back to the shared client if the dedicated builder fails for any
+        // reason; behavior is unchanged from before this fix in that case.
+        Err(_) => base,
+    };
 
     let response = http
         .get(&url)

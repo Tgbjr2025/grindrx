@@ -49,8 +49,13 @@ export class ConversationState {
 	#typingTimer: ReturnType<typeof setTimeout> | null = null;
 	#pollTimer: ReturnType<typeof setInterval> | null = null;
 	#removeReconcileListener: () => void;
-	#removeWsConnectedListener: (() => void) | null = null;
-	#removeWsDisconnectedListener: (() => void) | null = null;
+	// Store the *promises* (not the resolved unlisten fns). Storing only the
+	// resolved fn leaked the listener when destroy() ran before the listen()
+	// promise settled — the unlisten was assigned after destroy had already
+	// checked the field. Awaiting the promise in destroy() is leak-safe and
+	// mirrors the #unlistenWs* handlers below.
+	#removeWsConnectedListener: Promise<() => void> | null = null;
+	#removeWsDisconnectedListener: Promise<() => void> | null = null;
 	#unlistenWs: Promise<() => void> | null = null;
 	#unlistenWsRetract: Promise<() => void> | null = null;
 	#unlistenWsTyping: Promise<() => void> | null = null;
@@ -87,27 +92,22 @@ export class ConversationState {
 			this.#startPolling();
 		}
 
-		// Listen for WS connect / disconnect to toggle polling.
-		ws.onConnected(() => {
+		// Listen for WS connect / disconnect to toggle polling. Keep the promises so
+		// destroy() can await + unlisten even if it runs before listen() resolves.
+		this.#removeWsConnectedListener = ws.onConnected(() => {
 			if (this.#destroyed) return;
 			this.#stopPolling();
-		})
-			.then((unlisten) => {
-				this.#removeWsConnectedListener = unlisten;
-			})
-			.catch(console.error);
+		});
+		this.#removeWsConnectedListener.catch(console.error);
 
-		import("@tauri-apps/api/event")
-			.then(({ listen }) =>
+		this.#removeWsDisconnectedListener = import("@tauri-apps/api/event").then(
+			({ listen }) =>
 				listen<void>("ws:disconnected", () => {
 					if (this.#destroyed) return;
 					this.#startPolling();
 				}),
-			)
-			.then((unlisten) => {
-				this.#removeWsDisconnectedListener = unlisten;
-			})
-			.catch(console.error);
+		);
+		this.#removeWsDisconnectedListener.catch(console.error);
 
 		this.#unlistenWs = ws.on(
 			"chat.v1.message_sent",
@@ -140,8 +140,27 @@ export class ConversationState {
 						return;
 					}
 				}
-				if (this.messages.some((m) => m.messageId === event.payload.messageId))
+				// chat.v1.message_sent also fires when an existing message is unsent
+				// or gains/loses a reaction (per the Grindr notification-event docs;
+				// there is no separate message_reaction/message_retracted event from
+				// the real server). Previously this branch returned immediately on a
+				// known messageId, so live reactions from the other party and live
+				// unsend/retract flips were silently dropped until the 10s reconcile
+				// poll. Update the existing message in place instead.
+				const existingIdx = this.messages.findIndex(
+					(m) => m.messageId === event.payload.messageId,
+				);
+				if (existingIdx >= 0) {
+					const parsedExisting = apiResponseMessageSchema.safeParse(event.payload);
+					if (parsedExisting.success) {
+						this.messages[existingIdx] = {
+							...parsedExisting.data,
+							status: this.messages[existingIdx].status,
+						};
+						this.#syncCache();
+					}
 					return;
+				}
 				const parsed = apiResponseMessageSchema.safeParse(event.payload);
 				if (!parsed.success) {
 					console.error("[ws] failed to parse incoming message", parsed.error);
@@ -149,11 +168,43 @@ export class ConversationState {
 				}
 				const msg: OptimisticMessage = { ...parsed.data, status: "sent" };
 				this.messages = [msg, ...this.messages];
+				// A Retract message references the message it deletes via
+				// body.targetMessageId. Flip the target to a tombstone in place so the
+				// live view matches what a reload renders (the dedicated
+				// chat.v1.message_retracted handler never fires — the real server
+				// delivers retracts through chat.v1.message_sent).
+				if (
+					msg.type === "Retract" &&
+					msg.body &&
+					typeof msg.body === "object" &&
+					"targetMessageId" in msg.body &&
+					typeof (msg.body as { targetMessageId?: unknown }).targetMessageId ===
+						"string"
+				) {
+					const targetId = (msg.body as { targetMessageId: string })
+						.targetMessageId;
+					const targetIdx = this.messages.findIndex(
+						(m) => m.messageId === targetId,
+					);
+					if (targetIdx >= 0) {
+						this.messages[targetIdx] = {
+							...this.messages[targetIdx],
+							type: "Retract",
+							unsent: true,
+							body: { targetMessageId: targetId },
+						} as OptimisticMessage;
+					}
+				}
 				this.#syncCache();
-				void this.reportRead({
-					messageId: msg.messageId,
-					timestamp: msg.timestamp,
-				});
+				// Only report read for messages from the other party — our own messages
+				// (e.g. echoed from another device) must not generate a self read-receipt.
+				// Mirrors the guard in #reconcileMessages.
+				if (msg.senderId !== this.ourProfileId) {
+					void this.reportRead({
+						messageId: msg.messageId,
+						timestamp: msg.timestamp,
+					});
+				}
 			},
 		);
 
@@ -264,9 +315,12 @@ export class ConversationState {
 		if (this.#readTimer !== null) clearTimeout(this.#readTimer);
 		if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
 		this.#stopPolling();
-		if (this.#removeWsConnectedListener) this.#removeWsConnectedListener();
-		if (this.#removeWsDisconnectedListener)
-			this.#removeWsDisconnectedListener();
+		this.#removeWsConnectedListener
+			?.then((unlisten) => unlisten())
+			.catch(console.error);
+		this.#removeWsDisconnectedListener
+			?.then((unlisten) => unlisten())
+			.catch(console.error);
 	}
 
 	#startPolling(): void {
@@ -307,10 +361,17 @@ export class ConversationState {
 			const recentCutoff = Date.now() - 60_000;
 			const next: OptimisticMessage[] = [];
 			const seenLocalIds = new Set<string>();
+			// Still-pending optimistic messages we authored. Used below to adopt the
+			// server copy onto the pending entry instead of rendering a duplicate when
+			// the reconcile poll observes our just-sent message before the send()
+			// response has rewritten its temp id.
+			const pendingMine: OptimisticMessage[] = [];
 			let dropped = 0;
 			for (const local of this.messages) {
 				if (local.status !== "sent") {
 					// FIX 9: always preserve pending/error messages
+					if (local.status === "pending" && local.senderId === this.ourProfileId)
+						pendingMine.push(local);
 					next.push(local);
 					continue;
 				}
@@ -331,6 +392,28 @@ export class ConversationState {
 			const fresh: OptimisticMessage[] = [];
 			for (const sv of result.messages) {
 				if (seenLocalIds.has(sv.messageId)) continue;
+				// Dedup against a still-pending optimistic message we authored: if the
+				// server now reports a message of the same type with a near-identical
+				// timestamp, it IS our pending message (temp id not yet rewritten).
+				// Adopt the server id/data onto the pending entry in place so the user
+				// never sees the message twice. Each pending is matched at most once.
+				if (sv.senderId === this.ourProfileId) {
+					const mineIdx = pendingMine.findIndex(
+						(p) =>
+							p.type === sv.type &&
+							Math.abs(p.timestamp - sv.timestamp) < 60_000,
+					);
+					if (mineIdx >= 0) {
+						const pending = pendingMine[mineIdx];
+						pendingMine.splice(mineIdx, 1);
+						pending.messageId = sv.messageId;
+						pending.timestamp = sv.timestamp;
+						pending.reactions = sv.reactions;
+						pending.unsent = sv.unsent;
+						pending.status = "sent";
+						continue;
+					}
+				}
 				const msg: OptimisticMessage = { ...sv, status: "sent" as const };
 				next.push(msg);
 				fresh.push(msg);

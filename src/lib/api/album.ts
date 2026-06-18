@@ -2,13 +2,11 @@ import z from "zod";
 
 import { fetchRest } from "$lib/api";
 import {
-	AlbumExpiration,
 	albumContentSchema,
 	albumDetailsSchema,
 	type AlbumExpirationType,
 	albumMinSchema,
 } from "$lib/model/album";
-import { apiResponseMessageSchema } from "$lib/model/message";
 
 const albumResponseSchema = z.object({
 	...albumMinSchema.shape,
@@ -47,18 +45,29 @@ export async function getMyAlbums() {
 	);
 }
 
-function expiresAtMs(expirationType: AlbumExpirationType): number | null {
-	const now = Date.now();
-	switch (expirationType) {
-		case "TEN_MINUTES": return now + 10 * 60 * 1000;
-		case "ONE_HOUR": return now + 60 * 60 * 1000;
-		case "ONE_DAY": return now + 24 * 60 * 60 * 1000;
-		case "ONCE": return null; // view-count-limited, not time-limited — server controls expiry
-		case "INDEFINITE": return null;
-		default: return null;
-	}
-}
-
+/**
+ * Share one of OUR albums with another profile.
+ *
+ * Uses Grindr's dedicated album-share endpoint `POST /v4/albums/{albumId}/shares`,
+ * which GRANTS the recipient view access to the album AND (per the documented
+ * behaviour) automatically delivers the shared-album message into the chat with
+ * every listed profile.
+ *
+ * This is the key fix for the "recipient receives the album but it stays locked"
+ * bug: the previous implementation posted a raw `Album`/`ExpiringAlbumV2` chat
+ * message via `/v4/chat/message/send`, which only references the album. That path
+ * never registers a share grant, so on the recipient's side `isViewable` is false
+ * and the album renders locked. Going through `/shares` is what actually entitles
+ * the recipient to unlock it.
+ *
+ * The endpoint returns an empty body (no messageId). Because the share auto-sends
+ * the album to chat, the real chat message arrives over the WebSocket
+ * `chat.v1.message_sent` event and is reconciled by ConversationState. We return a
+ * synthetic id purely to satisfy the existing `{ messageId }` caller contract in
+ * conversation-state without having to touch that out-of-scope file; the optimistic
+ * pending message it created is upgraded/deduped by the WS event and the poll
+ * reconcile, not by this id.
+ */
 export async function shareAlbum({
 	albumId,
 	profileId,
@@ -67,23 +76,17 @@ export async function shareAlbum({
 	albumId: number;
 	profileId: number;
 	expirationType: AlbumExpirationType;
-}) {
-	const isExpiring = expirationType !== "INDEFINITE";
-	const expiresAtValue = expiresAtMs(expirationType);
-	const res = await fetchRest("/v4/chat/message/send", {
+}): Promise<{ messageId: string }> {
+	const res = await fetchRest(`/v4/albums/${albumId}/shares`, {
 		method: "POST",
 		body: {
-			type: isExpiring ? "ExpiringAlbumV2" : "Album",
-			target: { type: "Direct", targetId: profileId },
-			body: {
-				albumId,
-				expirationType,
-				...(expiresAtValue !== null ? { expiresAt: expiresAtValue } : {}),
-			},
+			profiles: [{ profileId, expirationType }],
 		},
 	});
 	if (res.status >= 400) {
 		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
 	}
-	return res.jsonParsed(apiResponseMessageSchema);
+	// Response body is empty; the chat message is delivered via the share itself
+	// and reconciled through the WebSocket message_sent event.
+	return { messageId: `album-share-${albumId}-${profileId}-${Date.now()}` };
 }

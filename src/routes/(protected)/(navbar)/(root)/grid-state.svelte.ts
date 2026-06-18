@@ -25,22 +25,39 @@ class GridState {
 	currentQuery: z.infer<typeof cascadeV3QuerySchema> | null = null;
 	scrollY = 0;
 
+	// `#geohash` is always the device's real location -> `nearbyGeoHash`, the
+	// reference point the server uses for distances. `#exploreGeohash` is the
+	// optional "Explore other areas" override and maps to the dedicated
+	// `exploreGeoHash` cascade param — NOT `nearbyGeoHash`. Routing the remote
+	// area through `nearbyGeoHash` used to make the server treat the remote
+	// point as the user's own location (wrong distances, and it bypasses the
+	// server's explore aggregation), so the two are kept distinct here. The
+	// cache key combines both so toggling Explore (or switching areas) refetches.
 	#geohash: string | null = null;
+	#exploreGeohash: string | null = null;
 	#loadingBatches = new Set<number>();
 
-	load(geohash: string): void {
-		if (untrack(() => this.#geohash === geohash && this.items.length > 0))
+	load(geohash: string, exploreGeohash: string | null = null): void {
+		if (
+			untrack(
+				() =>
+					this.#geohash === geohash &&
+					this.#exploreGeohash === exploreGeohash &&
+					this.items.length > 0,
+			)
+		)
 			return;
 		this.#geohash = geohash;
+		this.#exploreGeohash = exploreGeohash;
 		this.#reset();
-		void this.#fetchProfiles(geohash);
+		void this.#fetchProfiles(geohash, exploreGeohash);
 	}
 
 	refresh(): void {
 		if (!this.#geohash) return;
 		this.#reset();
 		this.scrollY = 0;
-		void this.#fetchProfiles(this.#geohash);
+		void this.#fetchProfiles(this.#geohash, this.#exploreGeohash);
 	}
 
 	#reset(): void {
@@ -120,11 +137,15 @@ class GridState {
 		}
 	}
 
-	async #fetchProfiles(geohash: string): Promise<void> {
+	async #fetchProfiles(
+		geohash: string,
+		exploreGeohash: string | null = null,
+	): Promise<void> {
 		try {
 			const { gridSearchFilters } = await getPreferences();
 			const query = {
 				nearbyGeoHash: geohash,
+				...(exploreGeohash && { exploreGeoHash: exploreGeohash }),
 				favorites: gridSearchFilters?.isFavorite || undefined,
 				onlineOnly: gridSearchFilters?.isOnline || undefined,
 				rightNow: gridSearchFilters?.isRightNow || undefined,

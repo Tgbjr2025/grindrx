@@ -14,14 +14,22 @@
 
 	let {
 		geohash,
+		exploreGeohash = null,
 	}: {
+		// The device's real location -> nearbyGeoHash (distance reference point).
 		geohash: string;
+		// Optional "Explore other areas" override -> exploreGeoHash. Kept distinct
+		// from `geohash` so distances stay correct and the server explore path is
+		// used; see grid-state.load for why these must not be collapsed.
+		exploreGeohash?: string | null;
 	} = $props();
 
 	const gridProfiles = $derived(uniqBy(gridState.items, "id"));
 
 	$effect.pre(() => {
-		gridState.load(geohash);
+		// Forward the explore override so it maps to the dedicated exploreGeoHash
+		// cascade param instead of being conflated with nearbyGeoHash.
+		gridState.load(geohash, exploreGeohash);
 	});
 
 	// Publish the ordered profile ids so the profile detail view can swipe
