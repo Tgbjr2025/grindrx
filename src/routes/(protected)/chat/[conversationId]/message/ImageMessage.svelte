@@ -54,8 +54,8 @@
 					children: "a",
 					pswpModule: () => import("photoswipe"),
 					mainClass: "pswp--buttons-visible",
-					showAnimationDuration: 500,
-					hideAnimationDuration: 500,
+					showAnimationDuration: 200,
+					hideAnimationDuration: 200,
 				});
 				lightbox.addFilter("itemData", (itemData) => {
 					const img = itemData.element?.querySelector("img");
@@ -167,32 +167,12 @@
 </div>
 
 <style>
-	:global(.pswp--open .pswp__img) {
-		animation: pswp-radius-open var(--pswp-transition-duration)
-			var(--default-transition-timing-function, ease) forwards;
-	}
-
-	:global(.pswp--open.pswp--closing .pswp__img),
-	:global(.pswp__container--closing .pswp__img) {
-		animation: pswp-radius-close var(--pswp-transition-duration)
-			var(--default-transition-timing-function, ease) forwards;
-	}
-
-	@keyframes pswp-radius-open {
-		from {
-			border-radius: var(--pswp-thumb-radius);
-		}
-		to {
-			border-radius: 0px;
-		}
-	}
-
-	@keyframes pswp-radius-close {
-		from {
-			border-radius: 0px;
-		}
-		to {
-			border-radius: var(--pswp-border-radius);
-		}
+	/* The fullscreen image previously morphed its border-radius over the open/
+	   close animation. Animating border-radius forces the WebView to re-raster
+	   the full-resolution bitmap every frame, which froze the UI when opening a
+	   just-shared (large) photo. Dropping that animation keeps the open instant
+	   and smooth; PhotoSwipe still fades/zooms. */
+	:global(.pswp__img) {
+		border-radius: 0;
 	}
 </style>

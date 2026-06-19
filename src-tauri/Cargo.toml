@@ -1,6 +1,6 @@
 [package]
 name = "open-grind"
-version = "0.1.12"
+version = "0.1.13"
 description = "FLOSS Grindr client"
 authors = ["GrindrX (https://git.dominusaxis.com/dominus/open-grind)"]
 homepage = "https://git.dominusaxis.com/dominus/open-grind"
