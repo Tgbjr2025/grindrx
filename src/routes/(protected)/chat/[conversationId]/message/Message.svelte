@@ -13,6 +13,7 @@
 	import MessageWrapper from "./MessageWrapper.svelte";
 	import Reaction from "./Reaction.svelte";
 	import TextMessage from "./TextMessage.svelte";
+	import UnsentMessage from "./UnsentMessage.svelte";
 	import UnsupportedMessage from "./UnsupportedMessage.svelte";
 
 	let {
@@ -26,6 +27,7 @@
 		onDelete,
 		isRead,
 		onVisible,
+		onUnsend,
 	}: {
 		message: ApiResponseMessage;
 		isOut: boolean;
@@ -37,6 +39,7 @@
 		onDelete?: () => void;
 		isRead: boolean | null;
 		onVisible?: () => void;
+		onUnsend?: () => void;
 	} = $props();
 
 	const firstInStack = $derived(indexInStack === 0);
@@ -169,6 +172,8 @@
 			<ImageMessage message={message.body} />
 		{:else if message.type === "Album" || message.type === "ExpiringAlbum" || message.type === "ExpiringAlbumV2"}
 			<AlbumMessage message={message.body} {isOut} />
+		{:else if message.type === "Unsent"}
+			<UnsentMessage />
 		{:else}
 			<UnsupportedMessage type={message.type} />
 		{/if}
@@ -268,5 +273,6 @@
 		reactionAvailable={message.reactions.length === 0 && !isOut}
 		reportProfileId={!isOut ? message.senderId : undefined}
 		{onDelete}
+		{onUnsend}
 	/>
 {/if}

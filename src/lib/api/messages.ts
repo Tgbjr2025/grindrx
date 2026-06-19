@@ -187,3 +187,24 @@ export async function deleteMessageForMe({
 		}
 	});
 }
+
+export async function unsendMessage({
+	conversationId,
+	messageId,
+}: {
+	conversationId: Conversation["data"]["conversationId"];
+	messageId: ApiResponseMessage["messageId"];
+}) {
+	return await fetchRest(`/v4/chat/message/unsend`, {
+		method: "POST",
+		body: {
+			conversationId,
+			messageId,
+		},
+	}).then((res) => {
+		if (res.status !== 200) {
+			console.log(res.json());
+			throw new Error("Failed to unsend message");
+		}
+	});
+}

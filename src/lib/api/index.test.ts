@@ -60,14 +60,12 @@ describe("parseApiResponse", () => {
 			}),
 		).toThrow(z.ZodError);
 
-		expect(consoleError).toHaveBeenCalledWith(
-			"API response schema validation failed",
-			expect.objectContaining({
-				path: "/v5/chat/conversation/abc/message",
-				method: "GET",
-				response: { messages: [{ messageId: 123 }] },
-			}),
-		);
+		// Our build logs this as a single JSON string (not an object arg) so the
+		// Android WebView console shows readable text instead of "[object Object]".
+		const logged = consoleError.mock.calls[0]?.[0] as string;
+		expect(logged).toContain("API response schema validation failed");
+		expect(logged).toContain("/v5/chat/conversation/abc/message");
+		expect(logged).toContain('"method":"GET"');
 
 		consoleError.mockRestore();
 	});

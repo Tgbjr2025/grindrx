@@ -2,7 +2,7 @@
 	import { tick, untrack } from "svelte";
 	import { toast } from "svelte-sonner";
 
-	import { deleteMessageForMe } from "$lib/api/messages";
+	import { deleteMessageForMe, unsendMessage } from "$lib/api/messages";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import { Spinner } from "$lib/components/ui/spinner";
 	import type { ConversationState } from "./conversation-state.svelte";
@@ -153,6 +153,23 @@
 						toast.error("Failed to react to message");
 					}
 				}}
+				onUnsend={isOut && !message.unsent
+					? async () => {
+							let revert: (() => void) | undefined;
+							try {
+								({ revert } = conversationState.markMessageAsUnsent(
+									message.messageId,
+								));
+								await unsendMessage({
+									conversationId: conversationState.conversationId,
+									messageId: message.messageId,
+								});
+							} catch {
+								toast.error("Failed to unsend message");
+								revert?.();
+							}
+						}
+					: undefined}
 			/>
 		{/each}
 	{/if}
