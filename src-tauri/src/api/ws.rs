@@ -190,19 +190,28 @@ async fn run_message_loop(
                             let safe_type = event_type.replace('.', "_");
                             app.emit(&format!("grindr:{safe_type}"), &val).ok();
 
-                            if event_type == "chat.v1.message_sent" {
-                                let state = app.state::<crate::state::AppState>();
-                                if !state.is_foreground.load(Ordering::Relaxed) {
-                                    // FIX 3 (+v0.1.9): only notify if someone ELSE sent this message.
-                                    // senderId can arrive as a JSON string or number depending on the
-                                    // event shape; handle both so our own sent messages never self-notify.
-                                    let sender_is_self = match &val["payload"]["senderId"] {
-                                        Value::String(s) => s.as_str() == our_profile_id,
-                                        Value::Number(n) => n.to_string() == our_profile_id,
-                                        _ => false,
-                                    };
-                                    if !sender_is_self {
-                                        maybe_notify(app, &val);
+                            // Background notifications. The WS loop keeps running while the
+                            // app is backgrounded — the Android foreground service keeps the
+                            // process (and thus this tokio task) alive — so we post system
+                            // notifications for message/tap events the user hasn't seen.
+                            if !app
+                                .state::<crate::state::AppState>()
+                                .is_foreground
+                                .load(Ordering::Relaxed)
+                            {
+                                // Only notify if someone ELSE sent this. senderId can arrive as
+                                // a JSON string or number depending on the event shape; handle
+                                // both so our own actions never self-notify.
+                                let sender_is_self = match &val["payload"]["senderId"] {
+                                    Value::String(s) => s.as_str() == our_profile_id,
+                                    Value::Number(n) => n.to_string() == our_profile_id,
+                                    _ => false,
+                                };
+                                if !sender_is_self {
+                                    match event_type {
+                                        "chat.v1.message_sent" => maybe_notify_message(app, &val),
+                                        "tap.v1.tap_sent" => maybe_notify_tap(app, &val),
+                                        _ => {}
                                     }
                                 }
                             }
@@ -280,30 +289,76 @@ async fn run_message_loop(
     }
 }
 
-fn maybe_notify(app: &AppHandle, val: &Value) {
-    let body = match val["payload"]["type"].as_str() {
+/// Build a short, human-readable preview for a `chat.v1.message_sent` payload.
+fn message_preview(val: &Value) -> String {
+    match val["payload"]["type"].as_str() {
         Some("Text") => val["payload"]["body"]["text"]
             .as_str()
             .unwrap_or("New message")
             .chars()
             .take(80)
             .collect::<String>(),
-        Some("Image") => "Sent you a photo".to_owned(),
+        Some("Image") | Some("ExpiringImage") => "Sent you a photo".to_owned(),
         Some("Album") | Some("ExpiringAlbum") | Some("ExpiringAlbumV2") => {
             "Shared an album".to_owned()
         }
         Some("Audio") => "Sent you a voice message".to_owned(),
-        Some("Video") => "Sent you a video".to_owned(),
+        Some("Video") | Some("PrivateVideo") | Some("NonExpiringVideo") => {
+            "Sent you a video".to_owned()
+        }
+        Some("Gaymoji") => "Sent you a Gaymoji".to_owned(),
+        Some("Giphy") => "Sent you a GIF".to_owned(),
+        Some("Location") => "Shared a location".to_owned(),
         _ => "New message".to_owned(),
-    };
+    }
+}
 
+/// Posts a system notification for an incoming chat message.
+///
+/// `chat.v1.message_sent` payload is a Message (see docs messaging/messages):
+/// it carries `conversationId` and a numeric `senderId` but no display name,
+/// so the title is the app name. The conversationId is appended to the body's
+/// hidden tail and (more importantly) emitted so the frontend deep-link handler
+/// can route a tap to /chat/{conversationId}.
+fn maybe_notify_message(app: &AppHandle, val: &Value) {
+    let body = message_preview(val);
+    let conversation_id = val["payload"]["conversationId"].as_str().unwrap_or("");
+
+    post_notification(app, "GrindrX", &body, conversation_id);
+}
+
+/// Posts a system notification for an incoming tap (`tap.v1.tap_sent`).
+/// The tap payload includes `senderDisplayName`, so we can use it as the title.
+fn maybe_notify_tap(app: &AppHandle, val: &Value) {
+    let title = val["payload"]["senderDisplayName"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("GrindrX");
+    // Taps don't belong to a conversation; route a tap to the taps screen.
+    post_notification(app, title, "sent you a tap", "");
+}
+
+/// Shared notification poster. Uses the existing `grindx_messages` Android
+/// channel created in MainActivity. Also emits a `notification:posted` event so
+/// the (foreground) webview / a deep-link handler can record the target
+/// conversation; the native tap routing is handled in MainActivity via the
+/// notification intent's `conversationId` extra (see REPORT — needs frontend wiring).
+fn post_notification(app: &AppHandle, title: &str, body: &str, conversation_id: &str) {
     app.notification()
         .builder()
-        .title("GrindrX")
-        .body(&body)
+        .title(title)
+        .body(body)
         .channel_id("grindx_messages")
         .show()
         .ok();
+
+    if !conversation_id.is_empty() {
+        app.emit(
+            "notification:posted",
+            serde_json::json!({ "conversationId": conversation_id }),
+        )
+        .ok();
+    }
 }
 
 #[tauri::command]

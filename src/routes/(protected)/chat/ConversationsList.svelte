@@ -14,13 +14,22 @@
 	let searchQuery = $state("");
 
 	const filteredEntries = $derived(
-		searchQuery.trim() === ""
+		(searchQuery.trim() === ""
 			? conversations.entries
 			: conversations.entries.filter((c) =>
 					(c.data.name ?? "")
 						.toLowerCase()
 						.includes(searchQuery.trim().toLowerCase()),
-				),
+				)
+		)
+			// Newest activity first, so a conversation that just received a
+			// message jumps to the top of the inbox instead of staying in place.
+			.slice()
+			.sort(
+				(a, b) =>
+					(b.data.lastActivityTimestamp ?? 0) -
+					(a.data.lastActivityTimestamp ?? 0),
+			),
 	);
 
 	onMount(() => {

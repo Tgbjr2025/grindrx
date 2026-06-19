@@ -369,10 +369,23 @@ export class ConversationState {
 			let dropped = 0;
 			for (const local of this.messages) {
 				if (local.status !== "sent") {
-					// FIX 9: always preserve pending/error messages
-					if (local.status === "pending" && local.senderId === this.ourProfileId)
-						pendingMine.push(local);
-					next.push(local);
+					// FIX 9: preserve still-pending messages so an in-flight send isn't
+					// dropped mid-poll.
+					if (local.status === "pending") {
+						if (local.senderId === this.ourProfileId) pendingMine.push(local);
+						next.push(local);
+					} else {
+						// BUG 2: do NOT retain failed (status "error") messages. A failed
+						// optimistic Image bubble that survives every 10s reconcile gets
+						// re-spread into a new object by processMessages, which re-fires
+						// ImageMessage's $effect and re-fetches+re-decodes a multi-MB data
+						// URL on the WebView main thread -> UI lock. Dropping the failed
+						// entry on the next reconcile (the "Failed to send" toast already
+						// notified the user) breaks that loop. Pending/sent are unaffected.
+						// Count it as dropped so the array below is actually rebuilt even
+						// when there are no fresh server messages.
+						dropped++;
+					}
 					continue;
 				}
 				seenLocalIds.add(local.messageId);
@@ -576,19 +589,30 @@ export class ConversationState {
 	async sendPhoto({
 		mediaId,
 		mediaHash,
+		url,
 		createdAt,
 	}: {
 		mediaId: number;
 		mediaHash: string;
+		// Signed media URL from the chat-media upload endpoint. Used as the send
+		// body URL and the lightbox (full-res) source.
+		url?: string;
 		createdAt: number | null;
 	}): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
 		const tempId = `pending-${crypto.randomUUID()}`;
+		// For the inline optimistic bubble, prefer a small public THUMBNAIL when we
+		// have a 40-char public hash — this caps the main-thread decode size. The
+		// signed upload URL (full-res) is reserved for the real send body + lightbox.
+		const isPublicHash = /^[0-9a-f]{40}$/i.test(mediaHash);
+		const inlineUrl = isPublicHash
+			? `https://cdns.grindr.com/images/thumb/320x320/${mediaHash}`
+			: (url ?? `https://cdns.grindr.com/images/${mediaHash}`);
 		const optimistic: OptimisticMessage = {
 			type: "Image",
 			body: {
 				mediaId,
-				url: `https://cdns.grindr.com/images/${mediaHash}`,
+				url: inlineUrl,
 				width: null,
 				height: null,
 				imageHash: mediaHash,
@@ -610,6 +634,7 @@ export class ConversationState {
 				toUserId: this.profile.profileId,
 				mediaId,
 				mediaHash,
+				url,
 				createdAt,
 			});
 			const msg = this.messages.find((m) => m.messageId === tempId);

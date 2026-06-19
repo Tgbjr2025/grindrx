@@ -111,11 +111,17 @@ export async function sendProfilePhotoMessage({
 	toUserId,
 	mediaId,
 	mediaHash,
+	url,
 	createdAt,
 }: {
 	toUserId: number;
+	// The numeric id minted by `POST /v5/chat/media/upload`. Type "Image" sends
+	// 400 (urn:gr:err:internal_error) without it.
 	mediaId: number;
 	mediaHash: string;
+	// The signed media URL returned by the upload endpoint. Falls back to the
+	// public CDN path if a caller has no signed URL on hand.
+	url?: string;
 	createdAt: number | null;
 }) {
 	const res = await fetchRest("/v4/chat/message/send", {
@@ -125,7 +131,7 @@ export async function sendProfilePhotoMessage({
 			target: { type: "Direct", targetId: toUserId },
 			body: {
 				mediaId,
-				url: `https://cdns.grindr.com/images/${mediaHash}`,
+				url: url ?? `https://cdns.grindr.com/images/${mediaHash}`,
 				width: null,
 				height: null,
 				imageHash: mediaHash,

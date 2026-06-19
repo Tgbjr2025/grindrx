@@ -65,6 +65,34 @@
 		},
 	);
 
+	type DeepLinkWindow = Window & {
+		__handleNotificationDeepLink?: (conversationId: string) => void;
+		__pendingNotificationDeepLink?: string;
+	};
+
+	$effect(() => {
+		// Routes a tapped OS notification (set by the native NotificationService /
+		// MainActivity) to the right conversation.
+		const w = window as DeepLinkWindow;
+		const handle = (conversationId: string) => {
+			if (!conversationId) return;
+			if (page.url.pathname.includes(`/chat/${conversationId}`)) return;
+			void goto(`/chat/${conversationId}`);
+		};
+		w.__handleNotificationDeepLink = handle;
+		// Drain a deep-link that arrived before this handler was registered
+		// (e.g. cold start from a notification tap).
+		if (w.__pendingNotificationDeepLink) {
+			handle(w.__pendingNotificationDeepLink);
+			w.__pendingNotificationDeepLink = undefined;
+		}
+		return () => {
+			if (w.__handleNotificationDeepLink === handle) {
+				w.__handleNotificationDeepLink = undefined;
+			}
+		};
+	});
+
 	onDestroy(() => {
 		unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
 	});

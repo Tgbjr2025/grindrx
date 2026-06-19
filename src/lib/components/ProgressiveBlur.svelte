@@ -1,5 +1,14 @@
 <script lang="ts">
-	// Credit: https://kennethnym.com/blog/progressive-blur-in-css/ by @kennethnym
+	// Originally a 9-layer stacked `backdrop-filter` progressive blur
+	// (credit: https://kennethnym.com/blog/progressive-blur-in-css/).
+	//
+	// PERF FIX: stacking multiple `backdrop-filter` layers makes the Android
+	// WebView compositor re-render the whole region every frame (a self-
+	// invalidating loop), pinning the GPU at 120fps with the JS thread idle.
+	// On screens with images behind the bars (grid, profile, chat) this read
+	// as a hard "freeze" and drained the battery. We now render a SINGLE
+	// masked backdrop-filter layer, which keeps the blur look without the
+	// per-frame recompositing loop.
 
 	let {
 		class: className,
@@ -17,44 +26,21 @@
 		tag?: keyof HTMLElementTagNameMap;
 	} = $props();
 
-	const blurConfig = [
-		{ blur: 1, gradient: [0, 10, 30, 40] },
-		{ blur: 2, gradient: [10, 20, 40, 50] },
-		{ blur: 4, gradient: [15, 30, 50, 60] },
-		{ blur: 8, gradient: [20, 40, 60, 70] },
-		{ blur: 12, gradient: [30, 50, 70, 80] },
-		{ blur: 16, gradient: [40, 60, 80, 90] },
-		{ blur: 24, gradient: [50, 70, 90, 100] },
-		{ blur: 32, gradient: [60, 80] },
-		{ blur: 64, gradient: [70, 100] },
-	];
+	// Mask fades the blur out away from the bar so it reads as a gradual blur.
+	const maskGradient = `linear-gradient(
+		${direction === "bottomToTop" ? "to bottom" : "to top"},
+		rgba(0, 0, 0, 0) 0%,
+		rgba(0, 0, 0, 1) 55%
+	)`;
 </script>
 
 <svelte:element this={tag} class={className}>
 	<div class={["absolute top-0 left-0 size-full z-11", bgClass]}></div>
-	{#each blurConfig as config, index}
-		<div
-			class={[
-				"blur-filter absolute top-0 left-0 size-full",
-				{
-					"z-10": index === blurConfig.length - 1,
-				},
-			]}
-			style:mask={`linear-gradient(
-					${direction === "bottomToTop" ? "to bottom" : "to top"},
-					rgba(0, 0, 0, 0) ${config.gradient[0]}%, 
-					rgba(0, 0, 0, 1) ${config.gradient[1]}%${
-						config.gradient.length === 4
-							? `,
-						rgba(0, 0, 0, 1) ${config.gradient[2]}%, 
-						rgba(0, 0, 0, 0) ${config.gradient[3]}%
-					`
-							: ""
-					} 
-				);`}
-			style="--pblur: {config.blur}px"
-		></div>
-	{/each}
+	<div
+		class="blur-filter absolute top-0 left-0 size-full z-10"
+		style:mask={maskGradient}
+		style:-webkit-mask={maskGradient}
+	></div>
 	<div class={["relative z-12", contentClass]}>
 		{@render children?.()}
 	</div>
@@ -62,6 +48,7 @@
 
 <style lang="postcss">
 	.blur-filter {
-		backdrop-filter: blur(var(--pblur));
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
 	}
 </style>

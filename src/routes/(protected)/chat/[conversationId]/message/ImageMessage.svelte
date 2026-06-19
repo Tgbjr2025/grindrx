@@ -19,8 +19,18 @@
 	// URL to an authed `data:` URL once and use it for both the inline thumbnail
 	// and the lightbox so the bytes are fetched a single time.
 	let displayUrl = $state(message.url);
+	// BUG 2: the reconcile poll re-runs processMessages every 10s, which spreads
+	// each message into a NEW object. That changes `message`'s identity (and thus
+	// `message.body`/`message.url` as reactive reads) even when the underlying URL
+	// string is byte-for-byte identical. Without a guard, this effect would re-fire
+	// and re-invoke `fetch_authed_bytes`, re-fetching + re-decoding a multi-MB data
+	// URL on the WebView main thread on every poll -> UI lock. Track the last raw
+	// URL we resolved and early-return when it hasn't actually changed.
+	let lastResolvedUrl: string | undefined = $state(undefined);
 	$effect(() => {
 		const raw = message.url;
+		if (raw === lastResolvedUrl) return;
+		lastResolvedUrl = raw;
 		displayUrl = raw;
 		let cancelled = false;
 		void resolveAuthedImage(raw).then((data) => {

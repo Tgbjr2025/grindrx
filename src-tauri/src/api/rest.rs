@@ -184,15 +184,6 @@ pub async fn upload_image(
         .decode(&image_base64)
         .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
 
-    let ext = if mime_type.contains("png") { "photo.png" } else { "photo.jpg" };
-
-    let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(ext)
-        .mime_str(&mime_type)
-        .map_err(|e| AppError::Http(e.to_string()))?;
-
-    let form = reqwest::multipart::Form::new().part("photo", part);
-
     let authorization = state
         .client()?
         .authorization_header()
@@ -201,11 +192,23 @@ pub async fn upload_image(
 
     let http = state.client()?.http.read().await.clone();
 
+    // Upload to the CHAT-MEDIA endpoint, not the legacy profile-images endpoint.
+    //
+    // `POST /v5/chat/media/upload` is the only endpoint that mints a real numeric
+    // `mediaId` (`{ mediaId, mediaHash, url }`). The legacy
+    // `/v3.1/me/profile/images` (and `/v4/me/profile`) return only a `mediaHash`,
+    // and `POST /v4/chat/message/send` (type "Image") REQUIRES the numeric
+    // `mediaId` -- sending a hash-only photo yields HTTP 400
+    // (urn:gr:err:internal_error). See docs: grindr-api/users/profiles#upload-media.
+    //
+    // The body is the raw file bytes (NOT multipart); the doc requires a correct
+    // `Content-Type` header describing the image.
     let response = http
-        .post(format!("{BASE_URL}/v3.1/me/profile/images"))
+        .post(format!("{BASE_URL}/v5/chat/media/upload?takenOnGrindr=false"))
         .header("Authorization", authorization)
         .header("L-Grindr-Roles", grindr_roles_header_value())
-        .multipart(form)
+        .header("Content-Type", &mime_type)
+        .body(bytes)
         .send()
         .await?;
 

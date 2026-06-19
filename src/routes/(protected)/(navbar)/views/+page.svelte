@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { formatDistanceToNowStrict } from "date-fns";
-	import { ArrowsClockwiseIcon, EyeIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, EyeIcon, LockSimpleIcon, UserIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
@@ -10,28 +10,94 @@
 	import { formatDistance } from "$lib/utils/distance";
 	import { Spinner } from "$lib/components/ui/spinner";
 
+	// `/v7/views/list` returns TWO arrays:
+	//   - `profiles`: fully-visible viewers (have a profileId -> clickable). For a
+	//     free account Grindr usually unlocks only the most recent one or two.
+	//   - `previews`: the remaining viewers, returned MASKED (no profileId) — this
+	//     is what Grindr's own free tier blurs/hides. We surface them too so the
+	//     list matches the `totalViewers` count instead of showing just 1.
+	// Only `profileId` is essential for a clickable row; everything else is
+	// rendered defensively, so keep fields tolerant of Grindr schema drift.
 	const viewSchema = z
 		.object({
 			profileId: z.coerce.number(),
-			displayName: z.string().nullable(),
-			profileImageMediaHash: z.string().nullable(),
-			seen: z.number().nullable(),
-			onlineUntil: z.number().nullable(),
-			distance: z.number().nullable(),
+			displayName: z.string().nullable().optional().catch(null),
+			profileImageMediaHash: z.string().nullable().optional().catch(null),
+			seen: z.number().nullable().optional().catch(null),
+			onlineUntil: z.number().nullable().optional().catch(null),
+			distance: z.number().nullable().optional().catch(null),
 		})
 		.passthrough();
 
-	const responseSchema = z
+	// Masked preview entries have no profileId.
+	const previewSchema = z
 		.object({
-			totalViewers: z.number(),
-			profiles: z.array(viewSchema),
+			profileImageMediaHash: z.string().nullable().optional().catch(null),
+			seen: z.number().nullable().optional().catch(null),
+			lastViewed: z.number().nullable().optional().catch(null),
+			distance: z.number().nullable().optional().catch(null),
 		})
 		.passthrough();
+
+	type View = z.infer<typeof viewSchema>;
+	type Preview = z.infer<typeof previewSchema>;
+
+	// Parse each entry individually and drop only malformed ones, so a single bad
+	// profile can't blank the entire list (Grindr API schema drift).
+	const dropBad = <T,>(schema: z.ZodType<T>) =>
+		z.array(z.unknown()).transform((items) =>
+			items.flatMap((item) => {
+				const parsed = schema.safeParse(item);
+				return parsed.success ? [parsed.data] : [];
+			}),
+		);
+
+	const responseSchema = z
+		.object({
+			totalViewers: z.number().catch(0),
+			profiles: dropBad(viewSchema).catch([] as View[]),
+			previews: dropBad(previewSchema).catch([] as Preview[]),
+		})
+		.passthrough();
+
+	type Row = {
+		key: string;
+		clickable: boolean;
+		profileId?: number;
+		displayName: string | null;
+		profileImageMediaHash: string | null;
+		seen: number | null;
+		distance: number | null;
+	};
 
 	let tick = $state(0);
 	const views = $derived.by(async () => {
 		void tick;
-		return fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
+		const r = await fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
+		const rows: Row[] = [
+			...r.profiles.map(
+				(p): Row => ({
+					key: `p${p.profileId}`,
+					clickable: true,
+					profileId: p.profileId,
+					displayName: p.displayName ?? null,
+					profileImageMediaHash: p.profileImageMediaHash ?? null,
+					seen: p.seen ?? null,
+					distance: p.distance ?? null,
+				}),
+			),
+			...r.previews.map(
+				(p, i): Row => ({
+					key: `v${i}`,
+					clickable: false,
+					displayName: null,
+					profileImageMediaHash: p.profileImageMediaHash ?? null,
+					seen: p.seen ?? p.lastViewed ?? null,
+					distance: p.distance ?? null,
+				}),
+			),
+		];
+		return { totalViewers: r.totalViewers, rows };
 	});
 </script>
 
@@ -45,8 +111,8 @@
 		<div class="flex flex-1 items-center justify-center">
 			<Spinner class="size-6" />
 		</div>
-	{:then { profiles, totalViewers }}
-		{#if profiles.length === 0}
+	{:then { rows, totalViewers }}
+		{#if rows.length === 0}
 			<Empty.Root>
 				<Empty.Header>
 					<Empty.Media variant="icon">
@@ -61,14 +127,11 @@
 		{:else}
 			<p class="text-xs text-muted-foreground px-3 pt-3 pb-1">{totalViewers} viewers</p>
 			<ul class="flex flex-col py-2">
-				{#each profiles as view (view.profileId)}
+				{#each rows as view (view.key)}
 					<li>
-						<a
-							href="/profile/{view.profileId}"
-							class="flex items-center gap-3 hover:bg-muted/60 active:bg-muted transition-colors rounded-2xl px-3 py-2.5"
-						>
+						{#snippet rowInner()}
 							<div
-								class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center"
+								class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center relative"
 							>
 								{#if view.profileImageMediaHash}
 									<img
@@ -79,29 +142,46 @@
 										draggable="false"
 									/>
 								{:else}
-									<UserIcon
-										weight="fill"
-										color="var(--color-stone-400)"
-										class="size-8"
-									/>
+									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
+								{/if}
+								{#if !view.clickable}
+									<div
+										class="absolute bottom-0 right-0 m-0.5 rounded-full bg-black/60 p-0.5"
+										title="Locked viewer"
+									>
+										<LockSimpleIcon weight="fill" class="size-3 text-yellow-400" />
+									</div>
 								{/if}
 							</div>
 							<div class="flex flex-col gap-1 min-w-0 flex-1">
 								<span class="font-semibold truncate">
 									{view.displayName ?? "Anonymous"}
 								</span>
-								{#if view.seen !== null}
+								{#if view.seen != null}
 									<span class="text-sm text-muted-foreground">
 										Viewed {formatDistanceToNowStrict(view.seen, { addSuffix: true })}
 									</span>
 								{/if}
-								{#if view.distance !== null}
+								{#if view.distance != null}
 									<span class="text-xs text-muted-foreground/70">
 										{formatDistance(view.distance, getDistanceUnit())} away
 									</span>
 								{/if}
 							</div>
-						</a>
+						{/snippet}
+
+						{#if view.clickable}
+							<a
+								href="/profile/{view.profileId}"
+								class="flex items-center gap-3 hover:bg-muted/60 active:bg-muted transition-colors rounded-2xl px-3 py-2.5"
+							>
+								{@render rowInner()}
+							</a>
+						{:else}
+							<div class="flex items-center gap-3 rounded-2xl px-3 py-2.5 opacity-90">
+								{@render rowInner()}
+							</div>
+						{/if}
 					</li>
 				{/each}
 			</ul>

@@ -9,21 +9,44 @@
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
 
+	// Only the fields the UI actually consumes (profileId, displayName,
+	// profileImageMediaHash, distance, tapType, isMutual) need to survive a
+	// parse. Everything Grindr may add/rename/drop is tolerated via
+	// `.optional().nullable()` + `.catch()` + `.passthrough()` so a single
+	// server-side shape change can't fail the whole response. Per the API docs
+	// (docs/content/grindr-api/interest/taps.md) several of these fields "may be
+	// absent", so required-but-nullable was an all-or-nothing trap.
 	const tapSchema = z
 		.object({
 			profileId: z.coerce.number(),
-			displayName: z.string().nullable(),
-			profileImageMediaHash: z.string().nullable(),
-			distance: z.number().nullable(),
-			tapType: z.number().nullable(),
-			timestamp: z.number().nullable(),
-			isMutual: z.boolean().optional(),
+			displayName: z.string().nullable().optional().catch(null),
+			profileImageMediaHash: z.string().nullable().optional().catch(null),
+			distance: z.number().nullable().optional().catch(null),
+			tapType: z.number().nullable().optional().catch(null),
+			timestamp: z.number().nullable().optional().catch(null),
+			isMutual: z.boolean().nullable().optional().catch(null),
 		})
 		.passthrough();
 
 	const responseSchema = z
 		.object({
-			profiles: z.array(tapSchema),
+			// Parse each tap independently: a single malformed entry (missing
+			// profileId, unexpected type, etc.) must not throw out the whole list
+			// and blank the screen. Unparseable taps are dropped + logged.
+			profiles: z
+				.array(z.unknown())
+				.nullable()
+				.optional()
+				.transform((rawTaps) =>
+					(rawTaps ?? []).flatMap((raw) => {
+						const result = tapSchema.safeParse(raw);
+						if (result.success) return [result.data];
+						console.warn("[GrindrX] dropping unparseable tap", {
+							issue: result.error.issues[0],
+						});
+						return [];
+					}),
+				),
 		})
 		.passthrough();
 
@@ -34,10 +57,10 @@
 	});
 
 	const tapEmoji: Record<number, string> = {
-		1: "👋",
-		2: "😊",
-		3: "🔥",
-		4: "😈",
+		// Tap IDs per Grindr API: 0=FRIENDLY, 1=HOT, 2=LOOKING (see docs/.../interest/taps.md)
+		0: "👋",
+		1: "🔥",
+		2: "😈",
 	};
 </script>
 
@@ -82,7 +105,7 @@
 								{:else}
 									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
 								{/if}
-								{#if tap.tapType !== null && tapEmoji[tap.tapType]}
+								{#if tap.tapType !== null && tap.tapType !== undefined && tapEmoji[tap.tapType]}
 									<span class="absolute -bottom-0.5 -right-0.5 text-base leading-none">
 										{tapEmoji[tap.tapType]}
 									</span>
@@ -95,7 +118,7 @@
 										<span class="text-xs font-medium text-accent">Mutual</span>
 									{/if}
 								</div>
-								{#if tap.distance !== null}
+								{#if tap.distance !== null && tap.distance !== undefined}
 									<span class="text-xs text-muted-foreground/70">
 										{formatDistance(tap.distance, getDistanceUnit())} away
 									</span>

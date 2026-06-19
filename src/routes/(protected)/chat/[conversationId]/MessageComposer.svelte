@@ -4,7 +4,7 @@
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
-	import { type ProfilePhoto, uploadProfileImage } from "$lib/api/profile";
+	import { uploadProfileImage } from "$lib/api/profile";
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
@@ -20,7 +20,7 @@
 	}: {
 		onSend: (params: Message) => void | Promise<void>;
 		onSendAlbum: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
-		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; createdAt: number | null }) => Promise<void>;
+		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; url?: string; createdAt: number | null }) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
 
@@ -45,12 +45,13 @@
 		await onSendAlbum(albumId, expirationType);
 	}
 
-	async function onSendPhoto(photo: ProfilePhoto & { mediaId: number }) {
-		await onSendPhotoOptimistic({
-			mediaId: photo.mediaId,
-			mediaHash: photo.mediaHash,
-			createdAt: photo.createdAt ?? null,
-		});
+	async function onSendPhoto(params: {
+		mediaId: number;
+		mediaHash: string;
+		url: string;
+		createdAt: number | null;
+	}) {
+		await onSendPhotoOptimistic(params);
 	}
 
 	async function onFileSelected(event: Event) {
@@ -61,14 +62,11 @@
 
 		uploading = true;
 		try {
-			const { mediaHash, mediaId } = await uploadProfileImage(file);
-			if (mediaId === undefined) {
-				toast.error("Upload succeeded but Grindr didn't return a media ID — can't send");
-				return;
-			}
+			const { mediaHash, mediaId, url } = await uploadProfileImage(file);
 			await onSendPhotoOptimistic({
 				mediaId,
 				mediaHash,
+				url,
 				createdAt: Date.now(),
 			});
 		} catch (err) {

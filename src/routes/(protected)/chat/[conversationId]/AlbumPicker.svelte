@@ -4,7 +4,11 @@
 
 	import { getMyAlbums, type MyAlbum } from "$lib/api/album";
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
-	import { getProfileUploadedPhotos, type ProfilePhoto } from "$lib/api/profile";
+	import {
+		getProfileUploadedPhotos,
+		prepareSavedPhotoForSend,
+		type ProfilePhoto,
+	} from "$lib/api/profile";
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -17,7 +21,12 @@
 	}: {
 		open: boolean;
 		onShare: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
-		onSendPhoto: (photo: ProfilePhoto & { mediaId: number }) => Promise<void>;
+		onSendPhoto: (params: {
+			mediaId: number;
+			mediaHash: string;
+			url: string;
+			createdAt: number | null;
+		}) => Promise<void>;
 	} = $props();
 
 	type Tab = "albums" | "photos";
@@ -96,22 +105,19 @@
 	}
 
 	async function handleSendPhoto(photo: ProfilePhoto) {
-		// Sending a saved photo requires the numeric mediaId that now lives in
-		// /v4/me/profile's `medias` array (it was dropped from the legacy images
-		// endpoint). If it's still missing — e.g. only the legacy fallback was
-		// reachable — fail fast with a clear message instead of queuing a doomed
-		// optimistic message that locks up the chat (HTTP 400 on send).
-		if (typeof photo.mediaId !== "number" || photo.mediaId <= 0) {
-			toast.error(
-				"Grindr didn't return the ID needed to re-send this saved photo. Pick a new photo from your gallery instead.",
-				{ duration: 8000 },
-			);
-			return;
-		}
-		const mediaId = photo.mediaId;
+		// A saved photo only carries a public mediaHash — Grindr's profile
+		// endpoints no longer expose a numeric mediaId, which the chat-send
+		// endpoint requires. Mint a fresh chat-usable mediaId by re-uploading the
+		// saved photo's bytes through the chat-media upload endpoint.
 		sendingHash = photo.mediaHash;
 		try {
-			await onSendPhoto({ ...photo, mediaId });
+			const minted = await prepareSavedPhotoForSend(photo.mediaHash);
+			await onSendPhoto({
+				mediaId: minted.mediaId,
+				mediaHash: minted.mediaHash,
+				url: minted.url,
+				createdAt: photo.createdAt ?? null,
+			});
 			toast.success("Photo sent!");
 			open = false;
 		} catch (err) {
