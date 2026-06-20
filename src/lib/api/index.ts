@@ -171,6 +171,13 @@ export async function fetchRest(
 				// the success shape yields a useless "Unexpected token …" instead of
 				// the real failure, so raise a structured error carrying the status.
 				if (this.status < 200 || this.status >= 300) {
+					// TEMP DIAGNOSTIC: log the real status + raw body so the
+					// server-side reason for codes like CAS-4001 is visible in
+					// Android logcat (filter: `adb logcat | grep GrindrX-API`).
+					// Remove once the CAS-4001 cause is identified.
+					console.error(
+						`[GrindrX-API] HTTP ${this.status} ${options.method || "GET"} ${path} :: ${text.slice(0, 500)}`,
+					);
 					throw new ApiHttpError(this.status, text, path);
 				}
 				try {
