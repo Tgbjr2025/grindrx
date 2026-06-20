@@ -71,6 +71,52 @@ export function asAppError(error: unknown) {
 	}
 }
 
+/**
+ * Raised when the backend relays a non-2xx HTTP response. The Grindr REST API
+ * normally returns a JSON error envelope (`{ code, message }`), but some
+ * endpoints — notably the cascade/explore grid — answer with a bare text code
+ * such as `CAS-4001`. This class normalises both shapes so callers receive the
+ * HTTP status and the server code instead of a `JSON.parse` SyntaxError
+ * ("Unexpected token 'C', \"CAS-4001\" is not valid JSON").
+ */
+export class ApiHttpError extends Error {
+	readonly status: number;
+	readonly body: string;
+	readonly code: string | number | null;
+
+	constructor(status: number, body: string, path: string) {
+		const trimmed = body.trim();
+		let code: string | number | null = null;
+		let serverMessage: string | null = null;
+		try {
+			const parsed: unknown = JSON.parse(trimmed);
+			if (parsed && typeof parsed === "object") {
+				const obj = parsed as Record<string, unknown>;
+				if (typeof obj.code === "string" || typeof obj.code === "number") {
+					code = obj.code;
+				}
+				if (typeof obj.message === "string") {
+					serverMessage = obj.message;
+				}
+			}
+		} catch {
+			// Not JSON — treat a short body as a bare error code (e.g. "CAS-4001").
+			if (trimmed && trimmed.length <= 64) {
+				code = trimmed;
+			}
+		}
+		const detail =
+			serverMessage ?? (code != null ? String(code) : trimmed.slice(0, 120));
+		super(
+			`Request to ${path} failed (HTTP ${status}${detail ? `: ${detail}` : ""})`,
+		);
+		this.name = "ApiHttpError";
+		this.status = status;
+		this.body = body;
+		this.code = code;
+	}
+}
+
 export async function fetchRest(
 	path: string,
 	options: {
@@ -118,16 +164,23 @@ export async function fetchRest(
 						requestBlockedAlertState.open = true;
 					}
 					throw new Error("Request blocked");
-				} else {
-					try {
-						return JSON.parse(text);
-					} catch (error) {
-						console.error("Failed to parse JSON response", {
-							path,
-							text,
-						});
-						throw error;
-					}
+				}
+				// A non-2xx body is an ERROR payload, not the success schema. It may
+				// be Grindr's JSON envelope ({ code, message }) or — for the
+				// cascade/explore grid — a bare code like `CAS-4001`. Parsing it as
+				// the success shape yields a useless "Unexpected token …" instead of
+				// the real failure, so raise a structured error carrying the status.
+				if (this.status < 200 || this.status >= 300) {
+					throw new ApiHttpError(this.status, text, path);
+				}
+				try {
+					return JSON.parse(text);
+				} catch (error) {
+					console.error("Failed to parse JSON response", {
+						path,
+						text,
+					});
+					throw error;
 				}
 			},
 			jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {

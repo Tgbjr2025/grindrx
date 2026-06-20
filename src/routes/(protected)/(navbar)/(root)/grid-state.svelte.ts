@@ -2,6 +2,7 @@ import { untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import z from "zod";
 
+import { ApiHttpError } from "$lib/api";
 import { getPreferences } from "$lib/app-data/preferences.svelte";
 import type { cascadeV3QuerySchema } from "$lib/model/grid/cascade/query/v3";
 import {
@@ -214,13 +215,30 @@ class GridState {
 			this.loading = false;
 		} catch (err) {
 			console.error(err);
-			this.error =
-				err instanceof Error
-					? err
-					: new Error("Failed to fetch profiles", { cause: err });
+			this.error = toGridError(err, exploreGeohash);
 			this.loading = false;
 		}
 	}
+}
+
+// Turn a fetch failure into a message worth showing in the grid. A server HTTP
+// error (e.g. the cascade `CAS-4001` returned when exploring a remote area) is
+// surfaced with its code and an actionable hint instead of a raw parse error.
+function toGridError(err: unknown, exploreGeohash: string | null): Error {
+	if (err instanceof ApiHttpError) {
+		const code = err.code != null ? ` (${err.code})` : "";
+		if (exploreGeohash) {
+			return new Error(
+				`This area couldn't be loaded${code}. It may be unavailable right now — try another spot or reset to your location.`,
+			);
+		}
+		return new Error(
+			`Couldn't load profiles${code}. Pull to refresh to try again.`,
+		);
+	}
+	return err instanceof Error
+		? err
+		: new Error("Failed to fetch profiles", { cause: err });
 }
 
 export const gridState = new GridState();
