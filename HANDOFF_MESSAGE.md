@@ -1,6 +1,6 @@
 # HANDOFF_MESSAGE — grindrx-work
 
-> Last reconciled 2026-06-18 04:16 UTC. Copy the block below verbatim as the bootstrap prompt for the next session.
+> Last reconciled 2026-06-23 08:16 UTC. Copy the block below verbatim as the bootstrap prompt for the next session.
 
 ---
 
@@ -28,37 +28,39 @@ You are resuming work on **grindrx-work** (`/home/ubuntu/grindrx-work` on server
 - **R22** Sign only with the canonical keystore (KEYS.md cert SHA-256).
 - **R23** Do not touch `README.md` or other upstream product docs.
 
-**Context you must respect (current as of HEAD `03f88f2` + the 2026-06-18 04:16 UTC dirty tree):**
+**Context you must respect (current as of HEAD `b112cb3`, 2026-06-20 06:48 UTC; tree clean):**
 - This is a **BUILD TREE**, not a running service. No daemon to babysit here.
-- Version is **0.1.9** (committed, `28b1648`). Branch is `audit/v0.1.9-fixes`.
-- The working tree is **DIRTY** with **8 modified code files** as of the last probe (the set is
-  MOVING — it grew from 3 to 8 between 03:58 and 04:16 UTC). It contains:
-  - 2 machine-specific gradle autogen files (`tauri.build.gradle.kts`, `tauri.settings.gradle` —
-    dirty ON PURPOSE, `/home/ubuntu/...` paths);
-  - a **TEMP `[diag-mediaid]` probe in `src/lib/api/profile.ts`** (diagnostic, expected to be removed);
-  - **five in-flight UNCOMMITTED audit fixes:** `src-tauri/src/api/rest.rs` (FIX 13 — enforce https
-    before attaching the auth header + redirect-refusing client, closing a session-token leak),
-    `src/lib/api/album.ts` (album-share now grants via `/v4/albums/{id}/shares` so the recipient can
-    unlock), `src/lib/api/messages.ts` (dead-import cleanup), `grid-state.svelte.ts` (Explore-location
-    routed through `exploreGeoHash`), `conversation-state.svelte.ts` (WS listener-leak + self
-    read-receipt guard). These have NO rollback tag — tag + FIX_NOTES before any commit/ship (R9/R10).
-  **Do NOT discard, stash, reset, checkout, or clean the tree (R20).**
-- **Other agents are editing the code (Rust, chat, albums, grid) in parallel.** The commit log and
-  dirty tree are moving targets — re-probe `git log --oneline -8` and `git status -s` / `git diff` (R7).
-- Open issues: app freeze under image memory (windowing added in `03f88f2`, verify on-device);
-  saved-photo-send 400 (Grindr dropped mediaId — pending the real source); album-share doesn't unlock
-  for recipient (fix in progress, uncommitted in `album.ts`); WS DNS flaky on cellular AND the phone
-  keeps dropping off Tailscale (blocks adb installs).
+- Version is **0.1.13** (committed — `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
+  all agree). HEAD `b112cb3` "chore(api): log real HTTP status + body for non-2xx responses".
+- The working tree is **CLEAN** in this checkout. The in-flight audit fixes that the previous handoff
+  described as uncommitted (rest.rs token-leak/redirect, album.ts share-unlock, messages.ts dead-import,
+  grid-state Explore geohash, conversation-state WS-leak) are now **all committed** in `17d47f3`. The
+  old TEMP `[diag-mediaid]` probe in `profile.ts` is **gone** (the saved-photo 400 was root-caused —
+  see below). **Do NOT discard, stash, reset, checkout, or clean the tree (R20).**
+- **NEW temp trap:** HEAD `b112cb3` added a **TEMPORARY on-device diagnostic** — a `[GrindrX-API]`
+  logcat probe (`adb logcat | grep GrindrX-API`) that logs the real HTTP status + body for non-2xx API
+  responses, to surface the server-side cause of cascade error codes like `CAS-4001`. **Expected to be
+  removed once CAS-4001 is root-caused.**
+- **NOTE on a real BUILD checkout:** the 2 machine-specific gradle autogen files
+  (`tauri.build.gradle.kts`, `tauri.settings.gradle`) will still show dirty ON PURPOSE on a host that
+  has run a build (they carry that host's absolute paths). They are NOT in a fresh clone. Never commit
+  them.
 - Build via the **Nix** path in `BUILDING.md` only (`nix run .#build-android`). Sign only with the
   keystore in `KEYS.md`. Install is adb-over-Tailscale to the S26 Ultra (`100.64.176.13:5555`) — verify
   the phone is online first.
+- Open issues: **CAS-4001 / cascade bare-text error codes** — the explore/cascade endpoint can answer
+  with a bare code (not JSON); `3e1d412` now surfaces it as an actionable message and `b112cb3` logs the
+  raw cause, but the *server-side reason* is still under investigation (the new logcat probe is hunting
+  it). App freeze under image memory / WebView compositor — multiple fixes landed (`03f88f2` grid
+  windowing, `bccb55d` blur-layer collapse + async decode, `b5d182e` lightbox border-radius morph,
+  `3e1d412` map/location-picker blur) — confirm gone on-device. WS DNS flaky on cellular AND the phone
+  keeps dropping off Tailscale (blocks adb installs).
 - `grindx-ping.service` is a separate program — not this project.
 
 **Immediate next action:**
-Run `git -C /home/ubuntu/grindrx-work status -s`, `git log --oneline -8`, and `git diff --stat`,
-compare against `SESSION_STATE.md`, and report any delta to Tom (the tree moves because of concurrent
-agents). **Do NOT commit, build, sign, or push.** The previous v0.1.9 R3 hold has been cleared (it was
-committed); but do not ship anything new without Tom's explicit authorization, a rollback tag (R9), and
-FIX_NOTES (R10).
+Run `git status -s`, `git log --oneline -8`, and `git diff --stat`, compare against `SESSION_STATE.md`,
+and report any delta to Tom. **Do NOT commit, build, sign, or push** without Tom's explicit
+authorization, a rollback tag (R9), and FIX_NOTES (R10). The next substantive task is root-causing
+CAS-4001 (then removing the temp `[GrindrX-API]` logcat probe) and field-verifying the freeze fixes.
 
 ---

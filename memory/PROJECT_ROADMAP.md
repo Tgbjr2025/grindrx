@@ -1,6 +1,6 @@
 # PROJECT_ROADMAP — grindrx-work
 
-> Operator: **Tom**. Created 2026-06-09 06:57 UTC (bootstrap). Last reconciled 2026-06-18 04:16 UTC.
+> Operator: **Tom**. Created 2026-06-09 06:57 UTC (bootstrap). Last reconciled 2026-06-23 08:16 UTC.
 
 ## What it is
 
@@ -19,13 +19,14 @@
 4. **App icon — DONE.** Tom picked concept **A** (monogram G); `d3c0392` regenerated all android/ios/desktop icon assets. [verified: `git log`]
 5. **Media compatibility — DONE (committed, partially open on-device).** `eaf60dc` (2026-06-13): CSP now allows CloudFront (`https://*.cloudfront.net`) which made images/albums actually display; conversation/profile schema-drift tolerance; direct signed-URL image loads; album thumb-probe; graceful saved-photo send. Some on-device behaviour still open (saved-photo 400, album-share unlock) — see Known Open Issues in SESSION_STATE. See `memory/FIX_NOTES_media_features.md`. [verified: `git show eaf60dc`, CSP in tauri.conf.json]
 6. **New features — DONE (committed).** `1d09c10` (2026-06-13): pull-to-refresh + refresh button (grid), swipe between profiles (profile page), Explore-location (browse a remote location, new `stores/explore-location.svelte.ts`); plus map-tile CSP (OpenStreetMap + Carto basemap hosts in img-src) so map tiles render. [verified: `git show 1d09c10`]
-7. **Grid windowing perf — ADDED, verify (HEAD).** `03f88f2` (2026-06-18): viewport windowing (`GridWindow.svelte`) to bound image memory and fix the WebView freeze. Not yet field-verified on-device. [verified: `git show 03f88f2`]
-8. **Audit-hardening + bug fixes — IN PROGRESS (UNCOMMITTED, in the dirty tree).** Concurrent audit tasks have produced five uncommitted code changes on `audit/v0.1.9-fixes`: `rest.rs` (FIX 13 — enforce https before attaching the auth header + a redirect-refusing client, closing a session-token leak); `album.ts` (album-share now grants via `/v4/albums/{id}/shares` so the recipient can unlock — the in-flight fix for the album-share open issue); `messages.ts` (dead-import cleanup); `grid-state.svelte.ts` (Explore-location routed through `exploreGeoHash`); `conversation-state.svelte.ts` (WS listener-leak fix + self read-receipt guard). NOT committed, NO rollback tag yet — tag + FIX_NOTES required before any ship (R9/R10). See SESSION_STATE dirty-set + `memory/FIX_NOTES_media_features.md`. [verified: `git diff` @ 2026-06-18 04:16 UTC]
-9. **Signed release build — NOT STARTED.** Produce the release apk via `nix run .#build-android` and sign it with the project keystore (cert SHA-256 in `KEYS.md`). The apk currently in `~` is a **debug** build only. [verified: BUILDING.md, KEYS.md]
+7. **Grid windowing perf — DONE (committed).** `03f88f2` (2026-06-18): viewport windowing (`GridWindow.svelte`) to bound image memory. Field-verify on-device still advised. [verified: `git show 03f88f2`]
+8. **Audit-hardening + bug fixes — DONE (committed).** The formerly-uncommitted audit fixes landed in `17d47f3` (2026-06-18): `rest.rs` FIX 13 (enforce https before attaching the auth header + redirect-refusing client, closing a session-token leak), `album.ts` album-share grant via `/v4/albums/{id}/shares` (recipient can unlock), chat live-update + dup-message race, Explore geohash plumbing. `a6fed16` then fixed the saved-photo 400 (mediaId from `/v4/me/profile`), added metric/imperial units, and removed the Map/nearby bottom tab. See `memory/FIX_NOTES_media_features.md` §4. [verified: `git show 17d47f3 a6fed16`]
+9. **v0.1.12 / v0.1.13 releases — DONE.** `bccb55d` (v0.1.12, 2026-06-19): compositor-freeze fix (single masked blur layer), off-main-thread image decode + upload downscale, real mediaId via `/v5/chat/media/upload`, background notifications (foreground service + deep-link), inbox newest-first sort, masked views/previews, tolerant taps schema. `715a248` ported unsend-messages (#89). `b5d182e` (v0.1.13): lightbox-open freeze fix. `3e1d412` + `b112cb3` (HEAD): surface server error codes (`ApiHttpError`, CAS-4001) + a temp `[GrindrX-API]` logcat diagnostic. Version is **0.1.13**. [verified: `git show`, version probe]
+10. **CAS-4001 root-cause — IN PROGRESS.** The explore/cascade endpoint can return a bare text error code (e.g. `CAS-4001`) instead of JSON. `3e1d412` surfaces it cleanly; the temp `[GrindrX-API]` logcat probe at HEAD is hunting the server-side cause. **Remove the probe once diagnosed.** [verified: `git show b112cb3`]
+11. **Signed release build — NOT STARTED.** Produce the release apk via `nix run .#build-android` and sign it with the project keystore (cert SHA-256 in `KEYS.md`). Any apk in `~` is a **debug** build only. [verified: BUILDING.md, KEYS.md]
 
-> **Concurrency note:** as of 2026-06-18 multiple other agents are editing the code (Rust, chat,
-> albums, grid) in parallel. Treat the working tree and commit log as moving targets; re-probe
-> before acting (R7).
+> **Re-probe note:** this project has had multiple agents editing in parallel; treat the working tree
+> and commit log as moving targets; re-probe before acting (R7).
 
 ## Success criterion
 
