@@ -204,12 +204,48 @@ Hang doors, adjust hinges so all gaps (reveals) are even and consistent. This ev
 
 ---
 
-## 10. Rough cost & time
+## 10. Materials cost breakdown
 
-- **Materials:** ~$350–$700 depending on species (oak/cherry high end, poplar+ply
-  paint-grade low end) + ~$150–$250 in hardware (soft-close slides and good hinges
-  add up).
-- **Time:** A weekend builder should plan **3–5 working days**: 1 day cutting/carcass,
+Itemized below in 2026 US retail prices (big-box + hardwood dealer). Quantities are
+sized for this exact 72 × 60 × 18 cabinet with the center partition, 5 doors, and
+4 drawers. Three columns show how the total shifts with your wood/finish choice:
+
+- **Budget (paint-grade):** birch/maple plywood + poplar solid stock, painted.
+- **Mid (natural):** maple plywood + soft-maple or red-oak solid stock, stained/clear.
+- **Premium (natural):** white-oak (or cherry) plywood + matching solid stock, clear.
+
+| Item | Qty | Budget | Mid | Premium |
+|---|---|---:|---:|---:|
+| 3/4" plywood (carcass, partition, shelves) | 4 sheets | $280 | $340 | $520 |
+| 1/2" plywood — back + drawer boxes (Baltic birch) | 2 sheets | $120 | $130 | $140 |
+| 1/4" plywood — door panels + drawer bottoms | 1 sheet | $35 | $40 | $50 |
+| Solid hardwood — face frame, doors, drawer fronts | ~40 bd ft | $150 | $210 | $320 |
+| Concealed soft-close hinges | 10 | $55 | $55 | $70 |
+| Full-extension soft-close slides (18") | 4 pairs | $80 | $90 | $100 |
+| Shelf pins | 1 pack | $8 | $8 | $8 |
+| Knobs / pulls | 9 | $45 | $55 | $80 |
+| Screws, pocket screws, glue, brads | — | $40 | $40 | $40 |
+| Finish (primer+paint **or** stain+poly) | — | $65 | $75 | $85 |
+| **Subtotal** | | **$878** | **$1,043** | **$1,413** |
+| Contingency / waste (~10%) | | $88 | $104 | $141 |
+| **Estimated total** | | **≈ $965** | **≈ $1,150** | **≈ $1,555** |
+
+**Notes & ways to trim cost:**
+- The biggest lever is **plywood + solid stock species.** Going white oak roughly
+  doubles those two line items vs. paint-grade.
+- **Cherry** lands between Mid and Premium (≈ $7/bd ft solid, similar ply premium).
+- Buying a **mixed-grade plywood** (good one face, where it won't show on interiors)
+  can shave $40–80 off the carcass.
+- **Drawer slides and hinges** are where cheap hardware shows — the soft-close
+  versions above are worth it on a gift cabinet; basic slides would save ~$50.
+- Prices swing regionally and with lumber markets; treat these as ±15%.
+
+**Bottom line:** budget roughly **$950–$1,000 painted**, **~$1,150 in natural maple/oak**,
+or **~$1,550 in premium white oak/cherry**, hardware included.
+
+## 10b. Time
+
+- A weekend builder should plan **3–5 working days**: 1 day cutting/carcass,
   1 day drawers, 1 day doors, 1–2 days finishing (with dry time).
 
 ---
