@@ -9,6 +9,10 @@
 
 ## 1. Design at a glance
 
+![Front elevation of the pantry cabinet](pantry-cabinet-elevation.png)
+
+*Front elevation (painted Shaker version). Same layout works in natural wood.*
+
 ```
         60" wide
  ┌───────────────────────┐  ─┐
