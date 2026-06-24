@@ -362,6 +362,85 @@ budget-minimum at HD Mt. Pleasant.
 
 ---
 
+## 12. Complete shopping list — painted pine + GOOD (Blum) hardware
+
+This is the grab-and-go list for **HD Mt. Pleasant + a hardware order**. Build:
+**select-pine show parts, sande/birch plywood carcass, painted, with Blum soft-close
+hardware.** Configured for 5 doors (4 paired upper + 1 lower) and 4 drawers.
+Quantities include a little surplus so you're not making a second trip.
+
+### A. Sheet goods (Home Depot)
+| Qty | Item | ~Each | ~Total |
+|---:|---|---:|---:|
+| 4 | 3/4" sande plywood 4×8 — carcass, partition, shelves, drawer fronts | $48 | $192 |
+| 2 | 1/2" birch plywood 4×8 — back panel + drawer boxes | $58 | $116 |
+| 1 | 1/4" plywood 4×8 — door panels + drawer bottoms | $35 | $35 |
+
+*(Optional insurance: +1 sheet 3/4" — easy to use up on shelves/toe kick.)*
+
+### B. Solid pine — select or finger-joint primed (Home Depot)
+| Qty | Item | Use | ~Each | ~Total |
+|---:|---|---|---:|---:|
+| 6 | 1×6×8 select pine | Face frame + door rails/stiles (rip to width) | $15 | $90 |
+| 2 | 1×8×8 select pine | Wide drawer fronts / toe kick | $20 | $40 |
+
+> Rip face-frame parts to 1-1/2" and door frame parts to 2-1/4" from the 1×6 stock.
+
+### C. GOOD hardware (order from a cabinet-hardware supplier — Blum)
+| Qty | Item | ~Each | ~Total |
+|---:|---|---:|---:|
+| 10 | **Blum CLIP top BLUMOTION** soft-close concealed hinge, 110°, full-overlay | $9 | $90 |
+| 10 | Blum mounting plates (cam, 0mm) | $2 | $20 |
+| 4 pr | **Blum TANDEM 563H** 18" full-extension soft-close slides (+ locking devices) | $40 | $160 |
+| 1 | 5mm shelf pins (box of ~50) + 5mm drilling jig | — | $25 |
+| 9 | Knobs / pulls (5 doors + 4 drawers — let Mom pick) | $8 | $72 |
+| 1 | Anti-tip / wall-anchor brackets + #10 × 3" screws | — | $15 |
+
+*(Lower-cost-but-still-good alternative: Accuride 3832 soft-close slides ≈ $28/pair,
+saving ~$50. Blum Tandem is the premium feel.)*
+
+### D. Fasteners, glue & consumables (Home Depot)
+| Item | ~Cost |
+|---|---:|
+| Kreg pocket screws, 1-1/4" coarse (box) | $9 |
+| #8 × 2" wood screws (assembly) | $8 |
+| 18-ga brad nails 1-1/4" (back + trim) | $7 |
+| Titebond II wood glue (16 oz) | $12 |
+| Sandable wood filler (nail holes) | $8 |
+| Iron-on edge banding (birch/pine, 25 ft) — for any show ply edges | $15 |
+
+### E. Finish — paint (Home Depot)
+| Item | ~Cost |
+|---|---:|
+| Zinsser **BIN** shellac primer, 1 qt (knot-blocking — essential over pine) | $20 |
+| Cabinet enamel, 2 qt (BM Advance / PPG Breakthrough / SW ProClassic), color of choice | $55 |
+| Foam rollers, 2-1/2" sash brush, sanding sponges (220 + 320) | $30 |
+
+### Estimated grand total
+
+| Group | ~Cost |
+|---|---:|
+| A. Sheet goods | $343 |
+| B. Solid pine | $130 |
+| C. Good hardware (Blum) | $382 |
+| D. Fasteners & consumables | $59 |
+| E. Finish | $105 |
+| **Subtotal** | **≈ $1,019** |
+| + ~8% misc/waste | $82 |
+| **Grand total** | **≈ $1,100** |
+
+> **The jump from the $845 budget build is almost entirely the Blum hardware
+> (~+$240).** It's the right call on a gift cabinet — soft-close doors and
+> butter-smooth full-extension drawers are what separate "homemade" from "built-in."
+> Everything else stays cheap pine + paint.
+
+**Where to buy the Blum hardware:** Home Depot carries *some* Blum, but selection is
+thin — order hinges and TANDEM slides online (Cabinetparts, Richelieu, Rockler, or
+Amazon) for the full range and better pricing. Get the **18" slides** (your cabinet
+is 18" deep) and **full-overlay** hinges to match the door style in §7.
+
+---
+
 *Tip: before cutting a single board, dry-stack your plywood and chalk the layout on
 the floor at full 60×72 size. Seeing it 1:1 makes the proportions — and how the
 drawers and doors should fall — obvious. Adjust to suit Mom's reach and what she
