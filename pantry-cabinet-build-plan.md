@@ -295,6 +295,51 @@ shelf prices for items this store stocks; confirm at the store or homedepot.com.
 - Watch for HD's **bulk/2-pack board pricing** and credit-card promos — buying
   poplar/oak in multi-packs typically beats singles per board foot.
 
+## 10d. Rock-bottom build — pine + paint (cheapest)
+
+The lowest-cost version: **pine solid stock + sande plywood, painted.** This is the
+budget-minimum at HD Mt. Pleasant.
+
+**Pine board options at HD (pick by how much knot you'll tolerate under paint):**
+
+| Pine type | HD 1×6×8 | ~$/bd ft | Notes |
+|---|---:|---:|---|
+| Whitewood / common pine | ~$8–9 | ~$2 | Cheapest; knotty — knots bleed through paint |
+| Select pine | ~$14–16 | ~$3.5–4 | Few/no knots; best cheap choice for a gift |
+| Finger-joint **primed** pine | ~$13–15 | ~$3.5 | Knot-free, pre-primed — paints beautifully |
+
+| Line | Pine + paint (select pine) |
+|---|---:|
+| 3/4" sande plywood ×4 | $192 |
+| 1/2" plywood ×2 (back + drawer boxes) | $90 |
+| 1/4" plywood ×1 | $32 |
+| Solid pine ~40 bd ft (select) | $150 *(common pine: ~$95)* |
+| Soft-close hinges ×10 | $60 |
+| Soft-close slides ×4 pair | $80 |
+| Shelf pins | $8 |
+| Knobs / pulls ×9 | $40 |
+| Screws, glue, brads | $45 |
+| Primer (knot-blocking) + paint | $70 |
+| **Subtotal** | **≈ $767** |
+| + ~10% waste | $77 |
+| **Total** | **≈ $845** *(common pine: ≈ $785)* |
+
+**Make cheap pine look good (and last):**
+- **Use a knot-blocking primer** — shellac-based **Zinsser BIN** (or a stain-blocking
+  primer) over every knot, or pine sap and tannin will bleed yellow/brown through
+  white paint within weeks. This is the #1 thing people skip and regret.
+- **Select or finger-joint primed pine** for the face frame, doors, and drawer
+  fronts (the show parts). Save common/whitewood pine for hidden structure. Spending
+  ~$55 more on select pine is worth it on a piece your mom sees every day.
+- Pine is **soft and dents easily** — round-over sharp edges and consider an extra
+  topcoat of durable enamel on the doors/drawer fronts that get handled.
+- **Want it even cheaper?** Dropping soft-close hinges/slides for standard ones saves
+  ~$60, bringing it near **$720–725**. I'd keep the soft-close — it's the detail that
+  makes it feel built-in rather than budget.
+
+> Bottom line: a **painted pine pantry runs about $780–850** at HD Mt. Pleasant,
+> hardware included — the cheapest way to build this cabinet without it looking cheap.
+
 ## 10b. Time
 
 - A weekend builder should plan **3–5 working days**: 1 day cutting/carcass,
