@@ -243,6 +243,58 @@ sized for this exact 72 × 60 × 18 cabinet with the center partition, 5 doors, 
 **Bottom line:** budget roughly **$950–$1,000 painted**, **~$1,150 in natural maple/oak**,
 or **~$1,550 in premium white oak/cherry**, hardware included.
 
+## 10c. Localized to Home Depot — Mt. Pleasant, MI (Store #2732)
+
+*5650 E Pickard St, Mt. Pleasant, MI 48858. Prices are current Home Depot 2026
+shelf prices for items this store stocks; confirm at the store or homedepot.com.*
+
+**What HD Mt. Pleasant can supply (per-item):**
+
+| Item | HD product | ~Price |
+|---|---|---|
+| 3/4" birch plywood 4×8 | Columbia PureBond / Swaner birch | $70–75 / sheet |
+| 3/4" sande plywood 4×8 (cheaper) | SANDEPLY 18mm | ~$48 / sheet |
+| 3/4" oak plywood 4×8 | Oak veneer ply | $85–95 / sheet |
+| 1/2" birch plywood 4×8 | (use for back + drawer boxes) | $55–65 / sheet |
+| 1/4" plywood 4×8 (panels/bottoms) | Birch / sande | $30–40 / sheet |
+| Poplar S4S boards | Builders Choice 1×6×8 ≈ $24 | ≈ $6 / bd ft |
+| Red oak S4S boards | Builders Choice 1×6×8 ≈ $44 | ≈ $10–12 / bd ft |
+| Soft-close concealed hinges | Everbilt / Blum | $5–7 each |
+| Full-extension soft-close slides 18" | Everbilt / Liberty | $18–22 / pair |
+
+**Two builds HD can fully supply, costed at their prices:**
+
+| Line | Painted (poplar + birch ply) | Natural red oak (oak ply + oak) |
+|---|---:|---:|
+| 3/4" plywood ×4 | $288 (birch) *(sande: $192)* | $360 (oak) |
+| 1/2" birch plywood ×2 | $120 | $120 |
+| 1/4" plywood ×1 | $35 | $40 |
+| Solid hardwood ~40 bd ft | $240 (poplar) | $440 (red oak) |
+| Hinges ×10 | $60 | $60 |
+| Slides ×4 pair | $80 | $80 |
+| Shelf pins | $8 | $8 |
+| Knobs / pulls ×9 | $45 | $55 |
+| Screws, glue, brads | $45 | $45 |
+| Finish | $65 (primer+paint) | $75 (stain+poly) |
+| **Subtotal** | **≈ $986** | **≈ $1,283** |
+| + ~10% waste | $99 | $128 |
+| **Total at HD Mt. Pleasant** | **≈ $1,085** | **≈ $1,410** |
+
+**Local realities worth knowing:**
+- HD's **solid hardwood costs more than a hardwood dealer** (their poplar ≈ $6/bd ft,
+  red oak ≈ $10–12/bd ft vs. ~$3.50 / ~$5 at a dealer). On ~40 bd ft that's the
+  difference between the table above and the lower §10 estimate — sourcing solid
+  stock from a dealer saves **$100–250**.
+- **White oak and cherry are NOT stocked** at Home Depot. For the "premium" build
+  you'd buy boards (and likely the matching veneer plywood) from a **dedicated
+  hardwood dealer or sawmill** — central Michigan has several within an hour. HD
+  can still supply the carcass plywood, hardware, and finish.
+- Using **SANDEPLY (sande)** instead of birch plywood for the carcass drops ~$96,
+  but it has more voids and a rougher face — fine hidden inside, less ideal for
+  show surfaces. Birch ply is the better call on a gift piece.
+- Watch for HD's **bulk/2-pack board pricing** and credit-card promos — buying
+  poplar/oak in multi-packs typically beats singles per board foot.
+
 ## 10b. Time
 
 - A weekend builder should plan **3–5 working days**: 1 day cutting/carcass,
