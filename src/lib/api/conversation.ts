@@ -6,9 +6,21 @@ import {
 	fullConversationSchema,
 } from "$lib/model/conversation";
 
+// Parse each inbox entry independently so one malformed conversation (schema
+// drift, an unrecognised last-message type) can't throw the entire inbox load
+// and leave the chat list blank. Bad entries are dropped + logged.
 const conversationsSchema = z.object({
-	entries: z.array(fullConversationSchema),
-	nextPage: z.number().nullable(),
+	entries: z.array(z.unknown()).transform((raw) =>
+		raw.flatMap((entry) => {
+			const result = fullConversationSchema.safeParse(entry);
+			if (result.success) return [result.data];
+			console.warn("[GrindrX] dropping unparseable conversation", {
+				issue: result.error.issues[0],
+			});
+			return [];
+		}),
+	),
+	nextPage: z.number().nullable().catch(null),
 });
 
 export async function getConversations(page: number = 1) {

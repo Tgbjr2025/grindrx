@@ -63,11 +63,25 @@ export async function getProfile(profileId: number) {
 	return promise;
 }
 
+const getProfilesProfileSchema = z.object({
+	...profileShortSchema.shape,
+	...profileRightNowSchema.shape,
+});
+
+// Parse each profile independently. Grindr drifts this schema regularly, and a
+// single malformed record in a /v3/profiles batch (up to 150 ids) would
+// otherwise throw the whole response and leave every one of those grid tiles
+// stuck as a skeleton. Mirror the tolerant per-item parse used by the v3
+// cascade: drop + log the bad ones, keep the rest.
 const getProfilesResponseSchema = z.object({
-	profiles: z.array(
-		z.object({
-			...profileShortSchema.shape,
-			...profileRightNowSchema.shape,
+	profiles: z.array(z.unknown()).transform((raw) =>
+		raw.flatMap((p) => {
+			const result = getProfilesProfileSchema.safeParse(p);
+			if (result.success) return [result.data];
+			console.warn("[GrindrX] dropping unparseable profile", {
+				issue: result.error.issues[0],
+			});
+			return [];
 		}),
 	),
 });

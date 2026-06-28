@@ -17,7 +17,9 @@ import {
 
 const cascadeV4ResponseProfileSchema = z.object({
 	...cascadeResponseProfileSchema.shape,
-	primaryImageUrl: z.url(),
+	// Grindr sends relative paths / empty strings here; don't reject a profile
+	// over a non-absolute image URL.
+	primaryImageUrl: z.url().nullable().catch(null),
 	favorite: z.boolean().optional(),
 	viewed: z.boolean().optional(),
 	chatted: z.boolean().optional(),
@@ -32,7 +34,8 @@ export const cascadeV4ResponseFullProfileV1Schema = z.object({
 		age: z.number().int().nonnegative().optional(),
 		heightCm: z.number().nonnegative().optional(),
 		weightGrams: z.number().nonnegative().optional(),
-		bodyType: bodyTypeSchema,
+		// Tolerate an unrecognised body-type id rather than dropping the profile.
+		bodyType: bodyTypeSchema.nullable().catch(null),
 	}),
 });
 
@@ -86,5 +89,21 @@ export const cascadeV4ResponseItemSchema = z.discriminatedUnion("type", [
 
 export const cascadeV4ResponseSchema = z.object({
 	...cascadeResponseSchema.shape,
-	items: z.array(cascadeV4ResponseItemSchema),
+	// Tolerate top-level shape drift so the grid still renders.
+	nextPage: z.number().int().nonnegative().nullable().catch(null),
+	shuffled: z.boolean().catch(false),
+	// Parse each cascade item independently: an unrecognised item `type` or a
+	// single malformed profile must not throw out the entire response and blank
+	// the grid. Unparseable items are dropped + logged (mirrors the v3 cascade).
+	items: z.array(z.unknown()).transform((rawItems) =>
+		rawItems.flatMap((raw) => {
+			const result = cascadeV4ResponseItemSchema.safeParse(raw);
+			if (result.success) return [result.data];
+			console.warn("[GrindrX] dropping unparseable cascade item", {
+				type: (raw as { type?: unknown } | null)?.type,
+				issue: result.error.issues[0],
+			});
+			return [];
+		}),
+	),
 });
