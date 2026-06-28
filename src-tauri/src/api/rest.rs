@@ -222,7 +222,7 @@ pub async fn upload_image(
 pub async fn fetch_authed_bytes(
     state: tauri::State<'_, AppState>,
     url: String,
-) -> Result<String, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     let authorization = state
         .client()?
         .authorization_header()
@@ -286,13 +286,6 @@ pub async fn fetch_authed_bytes(
         )));
     }
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_owned();
-
     // FIX 3: stream the body with a running counter so chunked responses with
     // no Content-Length are also capped. `response.bytes()` would buffer
     // everything before we could check the size.
@@ -307,8 +300,13 @@ pub async fn fetch_authed_bytes(
         body.extend_from_slice(&chunk);
     }
 
-    let b64 = STANDARD.encode(&body);
-    Ok(format!("data:{};base64,{}", content_type, b64))
+    // Return the RAW bytes over the IPC bridge as an ArrayBuffer, not a base64
+    // `data:` URL. Base64 inflates the payload ~33% and — far worse on Android —
+    // forced the WebView main thread to receive and re-parse a multi-MB string
+    // per image, which froze the UI when an album opened several at once. The
+    // frontend wraps these bytes in a Blob (content-type sniffed from the magic
+    // bytes) and a `blob:` object URL.
+    Ok(tauri::ipc::Response::new(body))
 }
 
 #[derive(Deserialize)]

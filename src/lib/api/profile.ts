@@ -12,7 +12,7 @@ import {
 	profileSchema,
 	profileShortSchema,
 } from "$lib/model/profile";
-import { fetchAuthedDataUrl } from "$lib/utils/authed-image";
+import { fetchAuthedBytes } from "$lib/utils/authed-image";
 
 const profileResponseSchema = z.object({
 	profiles: z.array(profileSchema).length(1),
@@ -307,16 +307,10 @@ export async function prepareSavedPhotoForSend(
 ): Promise<UploadedMedia> {
 	// Pull the full-resolution profile image (largest reliably-available size).
 	const cdnUrl = `https://cdns.grindr.com/images/profile/1024x1024/${mediaHash}`;
-	const dataUrl = await fetchAuthedDataUrl(cdnUrl);
-	if (!dataUrl || !dataUrl.startsWith("data:")) {
+	const fetched = await fetchAuthedBytes(cdnUrl);
+	if (!fetched) {
 		throw new Error("Could not fetch the saved photo to re-send it.");
 	}
-
-	// `fetchAuthedDataUrl` returns `data:<mime>;base64,<payload>`.
-	const commaIdx = dataUrl.indexOf(",");
-	const header = dataUrl.slice(5, commaIdx); // strip leading "data:"
-	const mimeType = header.split(";")[0] || "image/jpeg";
-	const imageBase64 = dataUrl.slice(commaIdx + 1);
-
-	return uploadImageBytes(imageBase64, mimeType);
+	const imageBase64 = bytesToBase64(new Uint8Array(fetched.buffer));
+	return uploadImageBytes(imageBase64, fetched.mime);
 }
