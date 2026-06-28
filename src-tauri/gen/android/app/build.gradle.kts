@@ -34,7 +34,7 @@ android {
     namespace = "org.opengrind"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "org.opengrind"
+        applicationId = "com.grindrx.app"
         minSdk = prop("opengrind.android.minSdk").toInt()
         targetSdk = prop("opengrind.android.targetSdk").toInt()
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
