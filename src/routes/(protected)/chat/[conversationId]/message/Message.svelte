@@ -28,6 +28,7 @@
 		isRead,
 		onVisible,
 		onUnsend,
+		onRetry,
 	}: {
 		message: ApiResponseMessage;
 		isOut: boolean;
@@ -40,6 +41,7 @@
 		isRead: boolean | null;
 		onVisible?: () => void;
 		onUnsend?: () => void;
+		onRetry?: () => void;
 	} = $props();
 
 	const firstInStack = $derived(indexInStack === 0);
@@ -248,7 +250,17 @@
 			{#if status === "pending"}
 				Sending...
 			{:else if status === "error"}
-				<span class="text-destructive"> Failed to send </span>
+				{#if onRetry}
+					<button
+						type="button"
+						class="text-destructive underline underline-offset-2"
+						onclick={onRetry}
+					>
+						Failed to send — tap to retry
+					</button>
+				{:else}
+					<span class="text-destructive"> Failed to send </span>
+				{/if}
 			{:else}
 				{#if isRead !== null}
 					{#if isRead}

@@ -170,6 +170,9 @@
 							}
 						}
 					: undefined}
+				onRetry={isOut && message.status === "error"
+					? () => conversationState.retry(message.messageId)
+					: undefined}
 			/>
 		{/each}
 	{/if}
