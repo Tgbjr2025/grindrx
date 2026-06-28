@@ -48,26 +48,19 @@
 	// FIX 14: moved loading logic out of $effect into explicit function to avoid reactive loop
 	async function loadAlbumContent() {
 		albumState = { status: "loading" };
-		console.log("[GRX-DIAG] loadAlbumContent start album", message.albumId);
 		try {
-			const meta = await getAlbumContent(message.albumId);
-			console.log("[GRX-DIAG] album meta got slides=", meta.content.length);
-			const loaded = await Promise.resolve(meta).then(
+			const loaded = await getAlbumContent(message.albumId).then(
 				async (res) => ({
 					...res,
 					content: await Promise.all(
-						res.content.map(async (slide, slideIdx) => {
-							console.log("[GRX-DIAG] slide", slideIdx, "type", slide.contentType, "resolving full");
+						res.content.map(async (slide) => {
 							// Resolve the authed CDN url to a renderable (object) URL once; the
 							// lightbox (and dimension probing below) can't send the auth header,
-							// so a raw url would render as a black box. resolveAuthedImage is
-							// concurrency-limited + cached/deduped, so opening a multi-photo
-							// album no longer fires every full-res fetch+decode at once (the
-							// spike that pinned native memory and froze the WebView).
+							// so a raw url would render as a black box. resolveAuthedImage caps
+							// and times out the per-image fetch so album-open can't hang.
 							const resolved = slide.url
 								? ((await resolveAuthedImage(slide.url)) ?? slide.url)
 								: null;
-							console.log("[GRX-DIAG] slide", slideIdx, "full resolved", String(resolved).slice(0, 30));
 							if (slide.contentType.startsWith("video/")) {
 								if (!resolved) return { ...slide, src: "", width: 0, height: 0 };
 								const video = document.createElement("video");
@@ -148,11 +141,9 @@
 					),
 				}),
 			);
-			console.log("[GRX-DIAG] album all slides done, opening lightbox");
 			cachedAlbum = loaded;
 			albumState = { status: "open", album: loaded };
 		} catch (error) {
-			console.log("[GRX-DIAG] album load FAILED", String(error).slice(0, 200));
 			console.error(error);
 			toast.error("Failed to load album content");
 			albumState = { status: "idle" };

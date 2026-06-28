@@ -309,6 +309,36 @@ pub async fn fetch_authed_bytes(
     Ok(tauri::ipc::Response::new(body))
 }
 
+/// Fetch the latest release JSON for the in-app update banner.
+///
+/// This is done natively rather than with a WebView `fetch()` because the
+/// Forgejo API at `git.dominusaxis.com` does not send `Access-Control-Allow-Origin`,
+/// so a browser fetch from the `tauri.localhost` origin is blocked by CORS and the
+/// update check silently fails. The URL is fixed (not caller-supplied), so there is
+/// no SSRF surface, and no Authorization header is attached.
+#[tauri::command]
+pub async fn fetch_latest_release() -> Result<String, AppError> {
+    const RELEASES_URL: &str =
+        "https://git.dominusaxis.com/api/v1/repos/dominus/open-grind/releases/latest";
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    let response = http
+        .get(RELEASES_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(AppError::Http(format!(
+            "release check failed with status {}",
+            response.status()
+        )));
+    }
+    Ok(response.text().await.unwrap_or_default())
+}
+
 #[derive(Deserialize)]
 struct RequestPayload {
     method: String,

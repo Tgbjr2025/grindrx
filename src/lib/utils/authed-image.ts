@@ -118,7 +118,6 @@ export async function fetchAuthedBytes(
 	url: string,
 ): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
 	if (classifyHost(url) !== "auth") return null;
-	console.log("[GRX-DIAG] fetch start", url.slice(0, 80));
 	try {
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
 		const buffer = await Promise.race([
@@ -130,7 +129,6 @@ export async function fetchAuthedBytes(
 				),
 			),
 		]);
-		console.log("[GRX-DIAG] fetch ok", url.slice(0, 60), buffer.byteLength);
 		return { buffer, mime: sniffMime(new Uint8Array(buffer)) };
 	} catch (error) {
 		console.error(

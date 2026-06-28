@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { onMount } from "svelte";
 	import { getVersion } from "@tauri-apps/api/app";
+	import { invoke } from "@tauri-apps/api/core";
 	import { openUrl } from "@tauri-apps/plugin-opener";
 	import { XIcon } from "phosphor-svelte";
-
-	const RELEASES_API = "https://git.dominusaxis.com/api/v1/repos/dominus/open-grind/releases/latest";
+	import { onMount } from "svelte";
 
 	let updateAvailable = $state(false);
 	let releaseUrl = $state("");
@@ -43,12 +42,17 @@
 
 	onMount(async () => {
 		try {
-			const [current, res] = await Promise.all([
+			// Fetch the release info through Rust, not a WebView fetch: the Forgejo
+			// API sends no CORS headers, so a browser fetch from tauri.localhost is
+			// blocked and the update check would silently never fire.
+			const [current, body] = await Promise.all([
 				getVersion(),
-				fetch(RELEASES_API, { headers: { Accept: "application/json" } }),
+				invoke<string>("fetch_latest_release"),
 			]);
-			if (!res.ok) return;
-			const release = (await res.json()) as { tag_name?: string; html_url?: string };
+			const release = JSON.parse(body) as {
+				tag_name?: string;
+				html_url?: string;
+			};
 			if (!release.tag_name || !release.html_url) return;
 			if (isNewer(release.tag_name, current)) {
 				latestVersion = release.tag_name;
