@@ -107,29 +107,43 @@ class GridState {
 			const profileIds = batch.batch.map((p) => p.profileId);
 			const uncachedIds: number[] = [];
 
+			// Index items by id once. A findIndex per id scans the whole items
+			// array, which grows with infinite scroll — O(n^2) per batch of up to
+			// 150 ids.
+			let indexById = new Map(
+				this.items.map((item, i): [number, number] => [item.id, i]),
+			);
 			for (const id of profileIds) {
 				const cached = profileCache.get(id);
 				if (cached) {
-					const idx = this.items.findIndex((i) => i.id === id);
-					if (idx !== -1) this.items[idx] = cached;
+					const idx = indexById.get(id);
+					if (idx !== undefined) this.items[idx] = cached;
 				} else {
 					uncachedIds.push(id);
 				}
 			}
 
 			const resolved = await resolvePartialBatch(uncachedIds);
+
+			// Rebuild the index: items may have shifted during the await (a
+			// concurrent loadMore append or another batch).
+			indexById = new Map(
+				this.items.map((item, i): [number, number] => [item.id, i]),
+			);
+			const resolvedIds = new Set<number>();
 			for (const profile of resolved) {
 				profileCache.set(profile.id, profile);
-				const idx = this.items.findIndex((i) => i.id === profile.id);
-				if (idx !== -1) this.items[idx] = profile;
+				resolvedIds.add(profile.id);
+				const idx = indexById.get(profile.id);
+				if (idx !== undefined) this.items[idx] = profile;
 			}
 
-			const unresolved = uncachedIds.filter(
-				(id) => !resolved.some((profile) => profile.id === id),
+			const unresolved = new Set(
+				uncachedIds.filter((id) => !resolvedIds.has(id)),
 			);
-			for (const id of unresolved) {
-				const idx = this.items.findIndex((i) => i.id === id);
-				if (idx !== -1) this.items.splice(idx, 1);
+			if (unresolved.size > 0) {
+				// Drop all unresolved ids in one pass instead of N array splices.
+				this.items = this.items.filter((i) => !unresolved.has(i.id));
 			}
 		} catch (error) {
 			console.error(batchIndex, error);

@@ -71,11 +71,13 @@ export async function resolvePartialBatch(
 	profileIds: number[],
 ): Promise<FullGridProfile[]> {
 	const profiles = await getProfiles(profileIds);
+	// Map id -> request order once, instead of an indexOf scan per comparison
+	// (O(n^2 log n) sort) and an includes scan per filtered profile.
+	const order = new Map(profileIds.map((id, i): [number, number] => [id, i]));
 	return profiles
-		.filter(({ profileId }) => profileIds.includes(profileId))
+		.filter(({ profileId }) => order.has(profileId))
 		.sort(
-			(a, b) =>
-				profileIds.indexOf(a.profileId) - profileIds.indexOf(b.profileId),
+			(a, b) => (order.get(a.profileId) ?? 0) - (order.get(b.profileId) ?? 0),
 		)
 		.map((profile) => ({
 			type: "full" as const,

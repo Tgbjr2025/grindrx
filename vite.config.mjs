@@ -1,5 +1,6 @@
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { sveltePhosphorOptimize } from "phosphor-svelte/vite";
 import { defineConfig } from "vitest/config";
 
 // @ts-expect-error process is a nodejs global
@@ -7,7 +8,11 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-	plugins: [sveltekit(), tailwindcss()],
+	// sveltePhosphorOptimize rewrites barrel `from "phosphor-svelte"` imports to
+	// deep `phosphor-svelte/lib/Icon` imports at build time. phosphor-svelte has
+	// no `sideEffects: false`, so without this the barrel can pull a large slice
+	// of the icon set into the entry bundle. Must run before sveltekit().
+	plugins: [sveltePhosphorOptimize(), sveltekit(), tailwindcss()],
 
 	// Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
 	//
