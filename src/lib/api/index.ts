@@ -171,13 +171,17 @@ export async function fetchRest(
 				// the success shape yields a useless "Unexpected token …" instead of
 				// the real failure, so raise a structured error carrying the status.
 				if (this.status < 200 || this.status >= 300) {
-					// TEMP DIAGNOSTIC: log the real status + raw body so the
-					// server-side reason for codes like CAS-4001 is visible in
-					// Android logcat (filter: `adb logcat | grep GrindrX-API`).
-					// Remove once the CAS-4001 cause is identified.
-					console.error(
-						`[GrindrX-API] HTTP ${this.status} ${options.method || "GET"} ${path} :: ${text.slice(0, 500)}`,
-					);
+					// Diagnostic for the cascade/explore CAS-* error codes (e.g.
+					// CAS-4001): log status + a short snippet ONLY for the grid
+					// endpoints (filter: `adb logcat | grep GrindrX-API`). Scoped on
+					// purpose — chat/profile error bodies carry message content and
+					// PII, which must not be written to logcat. Remove once CAS-4001
+					// is root-caused.
+					if (/\/(cascade|explore|search)/.test(path)) {
+						console.warn(
+							`[GrindrX-API] HTTP ${this.status} ${options.method || "GET"} ${path} :: ${text.slice(0, 120)}`,
+						);
+					}
 					throw new ApiHttpError(this.status, text, path);
 				}
 				try {
@@ -199,10 +203,6 @@ export async function fetchRest(
 					method: options.method || "GET",
 				});
 			},
-			debugJsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
-				console.log(this.json());
-				return this.jsonParsed(schema);
-			},
 		};
 	} catch (error) {
 		const appError = asAppError(error);
@@ -210,7 +210,7 @@ export async function fetchRest(
 			if (appError.kind === "Auth" && appError.message === "Not logged in") {
 				toast("Please log in to continue");
 				goto("/auth/sign-in").catch((error) => console.error(error));
-				throw new Error("Auth required");
+				throw new Error("Auth required", { cause: error });
 			}
 		}
 		throw error;

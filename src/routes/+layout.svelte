@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { IconContext } from "phosphor-svelte";
+	import { invoke } from "@tauri-apps/api/core";
 	import "@fontsource-variable/ibm-plex-sans/wght.css";
 	import "@fontsource-variable/ibm-plex-sans/wght-italic.css";
 
 	import "../layout.css";
-	import { invoke } from "@tauri-apps/api/core";
 	import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
-	import { onMount } from "svelte";
 	import { afterNavigate } from "$app/navigation";
+	import { env } from "$env/dynamic/public";
+	import { IconContext } from "phosphor-svelte";
+	import { onMount } from "svelte";
 	import { Toaster } from "svelte-sonner";
 
 	import {
@@ -15,7 +16,25 @@
 		applyBackGestureHandler,
 	} from "$lib/android-native-bridge";
 
+	// Analytics is OFF by default: this is a privacy-focused client and the route
+	// path carries sensitive ids (which profiles you view, which chats you open).
+	// It only fires when explicitly enabled at build time, and even then the path
+	// is coarsened so no profile/conversation id leaves the device.
+	const analyticsEnabled = env.PUBLIC_ENABLE_ANALYTICS === "true";
+
+	// Collapse dynamic route segments (numeric ids, uuids, long hex hashes) to
+	// `:id` so a pageview never reveals *which* profile/conversation it was.
+	function coarsePath(pathname: string): string {
+		return pathname
+			.split("/")
+			.map((seg) =>
+				/^\d+$/.test(seg) || /^[0-9a-f-]{16,}$/i.test(seg) ? ":id" : seg,
+			)
+			.join("/");
+	}
+
 	async function trackPageview(url: string) {
+		if (!analyticsEnabled) return;
 		try {
 			await fetch("https://analytics.dominusaxis.com/api/send", {
 				method: "POST",
@@ -24,11 +43,11 @@
 					type: "event",
 					payload: {
 						website: "41d0a4bc-b714-4d6d-b7e4-d3ed182258a6",
-						url,
+						url: coarsePath(url),
 						hostname: "grindrx-app",
 						language: navigator.language || "en",
 						screen: `${screen.width}x${screen.height}`,
-						title: document.title || url,
+						title: "",
 						referrer: "",
 					},
 				}),
@@ -39,11 +58,11 @@
 	}
 
 	afterNavigate(({ to }) => {
-		if (to?.url) trackPageview(to.url.pathname);
+		if (to?.url) void trackPageview(to.url.pathname);
 	});
 
 	onMount(() => {
-		trackPageview(window.location.pathname);
+		void trackPageview(window.location.pathname);
 		applyAndroidInsets();
 		applyBackGestureHandler();
 
