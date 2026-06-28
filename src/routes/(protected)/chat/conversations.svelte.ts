@@ -4,8 +4,8 @@ import {
 	getConversations,
 	markConversationAsRead,
 } from "$lib/api/conversation";
-import { setTotalUnread } from "$lib/stores/unread.svelte";
 import { previewFromMessage } from "$lib/model/message";
+import { setTotalUnread } from "$lib/stores/unread.svelte";
 import {
 	chatV1ConversationDeleteEventSchema,
 	chatV1MessageSentEventSchema,
@@ -35,6 +35,11 @@ class ConversationsState {
 
 	readonly ourProfileId: number;
 	#activeConversationId: string | null = null;
+	// Conversations the user has read locally. If revealMessageRead is off we
+	// never tell the server, so it keeps reporting them unread; this set stops
+	// the periodic reconcile from resurrecting the badge until a new message
+	// genuinely arrives (which removes the id from the set).
+	#locallyRead = new Set<string>();
 	#wsPromises: Promise<() => void>[] = [];
 	#messageCache = new Map<string, CachedConversation>();
 	#firstConnect = true;
@@ -65,9 +70,23 @@ class ConversationsState {
 				if (entry) {
 					const isActive =
 						message.conversationId === this.#activeConversationId;
-					if (!isActive && message.senderId !== this.ourProfileId) {
-						entry.data.unreadCount += 1;
-						this.#syncUnread();
+					// chat.v1.message_sent ALSO fires when an existing message is
+					// unsent/retracted or gains/loses a reaction (the real server has
+					// no separate event). Those carry `unsent: true` or the existing
+					// message's older timestamp — only a genuinely newer, non-unsent
+					// inbound message is a new unread, else the badge inflates on every
+					// reaction the other party makes.
+					const isNewInbound =
+						!message.unsent &&
+						message.senderId !== this.ourProfileId &&
+						message.timestamp > (entry.data.lastActivityTimestamp ?? 0);
+					if (isNewInbound) {
+						// A real new message — let reconcile reflect server unread again.
+						this.#locallyRead.delete(message.conversationId);
+						if (!isActive) {
+							entry.data.unreadCount += 1;
+							this.#syncUnread();
+						}
 					}
 					if (!isActive) {
 						this.invalidateConversation(message.conversationId);
@@ -160,7 +179,14 @@ class ConversationsState {
 					existing.data.lastActivityTimestamp =
 						incoming.data.lastActivityTimestamp;
 					if (incoming.data.conversationId !== activeId) {
-						existing.data.unreadCount = incoming.data.unreadCount;
+						// Honor a local read: if the user opened this conversation but we
+						// suppressed the server read receipt (revealMessageRead off), the
+						// server still reports it unread — don't resurrect the badge.
+						existing.data.unreadCount = this.#locallyRead.has(
+							incoming.data.conversationId,
+						)
+							? 0
+							: incoming.data.unreadCount;
 					}
 				} else {
 					this.entries.unshift(incoming);
@@ -264,6 +290,9 @@ class ConversationsState {
 			(e) => e.data.conversationId === conversationId,
 		);
 		if (entry) {
+			// Remember the local read so a reconcile can't resurrect the badge from
+			// stale server state (see #locallyRead).
+			this.#locallyRead.add(conversationId);
 			const unreadCount = entry.data.unreadCount;
 			if (unreadCount > 0) {
 				entry.data.unreadCount = 0;
@@ -271,6 +300,7 @@ class ConversationsState {
 				markConversationAsRead({ conversationId }).catch((error) => {
 					console.error("Failed to mark conversation as read", error);
 					toast.error("Failed to mark conversation as read");
+					this.#locallyRead.delete(conversationId);
 					entry.data.unreadCount = unreadCount;
 					this.#syncUnread();
 				});

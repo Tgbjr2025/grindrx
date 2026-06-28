@@ -53,6 +53,7 @@ pub fn run() {
             api::rest::request,
             api::rest::upload_image,
             api::rest::fetch_authed_bytes,
+            api::rest::fetch_latest_release,
             set_foreground,
             api::ws::ws_connect,
             api::ws::ws_send,

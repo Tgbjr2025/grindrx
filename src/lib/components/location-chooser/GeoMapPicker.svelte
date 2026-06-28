@@ -141,8 +141,15 @@
 	</div>
 	{#if showSearchResults}
 		<div class="size-full z-1000 top-0 left-0 absolute p-1">
+			<!--
+				Solid background (no backdrop-blur): a full-screen `backdrop-blur`
+				sitting on top of the live, tiling Leaflet map forces the WebView to
+				re-composite and blur the whole map every frame, which freezes the
+				location picker on mobile. The background is already opaque, so the
+				blur was purely cosmetic.
+			-->
 			<div
-				class="bg-popover-foreground backdrop-blur-xl w-full h-full rounded-md flex flex-col text-popover shadow-md px-1 py-3 overflow-auto gap-2"
+				class="bg-popover-foreground w-full h-full rounded-md flex flex-col text-popover shadow-md px-1 py-3 overflow-auto gap-2"
 			>
 				{#await searchPlaces}
 					<Spinner class="m-auto size-8" />

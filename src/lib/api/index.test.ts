@@ -1,7 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import z from "zod";
 
-import { asAppError, parseApiResponse } from "$lib/api";
+import { ApiHttpError, asAppError, parseApiResponse } from "$lib/api";
+
+describe("ApiHttpError", () => {
+	it("captures a bare text error code like CAS-4001", () => {
+		const err = new ApiHttpError(403, "CAS-4001", "/v3/cascade");
+		expect(err.status).toBe(403);
+		expect(err.code).toBe("CAS-4001");
+		expect(err.body).toBe("CAS-4001");
+		expect(err.message).toContain("CAS-4001");
+		expect(err.message).toContain("403");
+		// Must NOT be a JSON parse error.
+		expect(err.message).not.toContain("is not valid JSON");
+	});
+
+	it("extracts code and message from a Grindr JSON error envelope", () => {
+		const err = new ApiHttpError(
+			429,
+			JSON.stringify({ code: 429, message: "Rate limited" }),
+			"/v3/cascade",
+		);
+		expect(err.code).toBe(429);
+		expect(err.message).toContain("Rate limited");
+	});
+
+	it("ignores an oversized non-JSON body rather than dumping it as a code", () => {
+		const err = new ApiHttpError(500, "x".repeat(200), "/v3/cascade");
+		expect(err.code).toBeNull();
+		expect(err.message).toContain("500");
+	});
+});
 
 describe("asAppError", () => {
 	it("formats string messages from structured app errors", () => {

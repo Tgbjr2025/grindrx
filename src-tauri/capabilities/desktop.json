@@ -1,7 +1,7 @@
 {
 	"$schema": "../gen/schemas/desktop-schema.json",
 	"identifier": "desktop-capability",
-	"description": "Desktop-only capability (opener, broad fs, clipboard)",
+	"description": "Desktop-only capability (opener). Filesystem access is scoped to the preferences file like the shared capability — broad fs:default is not needed, and a WebView compromise should not inherit full-disk read/write.",
 	"windows": [
 		"main"
 	],
@@ -12,6 +12,29 @@
 	],
 	"permissions": [
 		"opener:default",
-		"fs:default"
+		{
+			"identifier": "fs:allow-app-read",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-app-write",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-exists",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		}
 	]
 }

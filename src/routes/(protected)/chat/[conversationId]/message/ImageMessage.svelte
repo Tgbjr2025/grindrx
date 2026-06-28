@@ -3,8 +3,8 @@
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
-	import type { ExpiringImageMessage, ImageMessage } from "$lib/model/message";
 	import { resolveAuthedImage } from "$lib/utils/authed-image";
+	import type { ExpiringImageMessage, ImageMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
 	let {
@@ -66,35 +66,9 @@
 					return itemData;
 				});
 
-				function setScaledRadius(img: Element) {
-					if (!(img instanceof HTMLImageElement)) return;
-
-					const radius = parseFloat(getComputedStyle(img).borderRadius);
-
-					const rect = img.getBoundingClientRect();
-					const thumbW = rect.width;
-
-					const pswpScale = Math.min(
-						window.innerWidth / img.naturalWidth,
-						window.innerHeight / img.naturalHeight,
-					);
-					const pswpDisplayW = img.naturalWidth * pswpScale;
-
-					const scaledRadius = radius * (pswpDisplayW / thumbW);
-
-					document.documentElement.style.setProperty(
-						"--pswp-thumb-radius",
-						`${radius * 1.6}px`, // FIXME: no idea how this is calculated
-					);
-					document.documentElement.style.setProperty(
-						"--pswp-border-radius",
-						`${scaledRadius}px`,
-					);
-				}
-
-				lightbox.on("afterInit", () => {
-					gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
-				});
+				// Hide the inline thumbnail while the open/close zoom animation plays
+				// so the user doesn't see a duplicate behind the lightbox; restored
+				// on destroy.
 				lightbox.on("openingAnimationStart", () => {
 					gallery?.querySelectorAll(".item").forEach((item) => {
 						if (item instanceof HTMLElement) {
@@ -102,12 +76,7 @@
 						}
 					});
 				});
-				lightbox.on("openingAnimationEnd", () => {
-					document.documentElement.style.removeProperty("--pswp-border-radius");
-				});
-
 				lightbox.on("close", () => {
-					gallery?.querySelectorAll(".item img").forEach(setScaledRadius);
 					lightbox?.pswp?.element?.classList.add("pswp--closing");
 				});
 				lightbox.on("closingAnimationStart", () => {
@@ -118,7 +87,6 @@
 					});
 				});
 				lightbox.on("closingAnimationEnd", () => {
-					document.documentElement.style.removeProperty("--pswp-border-radius");
 					lightbox?.pswp?.element?.classList.remove("pswp--closing");
 				});
 

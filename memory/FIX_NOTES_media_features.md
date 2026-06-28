@@ -1,14 +1,12 @@
 # FIX_NOTES — media compat + features + grid windowing (post-v0.1.9)
 
-Operator: **Tom**. Branch: `audit/v0.1.9-fixes`. **NOT pushed** (R11). Version stays **0.1.9**
-(these commits did not bump it). Created 2026-06-18 03:58 UTC. Updated 2026-06-18 04:16 UTC (added
-section 4: the in-flight UNCOMMITTED audit fixes).
+Operator: **Tom**. Created 2026-06-18 03:58 UTC. Updated 2026-06-23 08:16 UTC (§4 fixes are now
+**committed in `17d47f3`**; repo has since advanced to **v0.1.13**).
 
-> Covers three commits landed after the v0.1.9 icon ship: `eaf60dc`, `1d09c10`, `03f88f2` (HEAD),
-> PLUS (section 4) the uncommitted audit fixes sitting in the dirty working tree as of 04:16 UTC.
-> Rollback reference point for the committed batch is the v0.1.9 state at `d3c0392` (icon ship).
-> There is no dedicated rollback tag for these media/feature commits, nor for the uncommitted
-> section-4 changes — if a ship is needed, tag before it (R9).
+> Covers three commits landed after the v0.1.9 icon ship: `eaf60dc`, `1d09c10`, `03f88f2`, PLUS
+> (section 4) the audit fixes that were uncommitted when this file was first written and have **since
+> been committed in `17d47f3`** (2026-06-18). Rollback reference point for the committed media/feature
+> batch is the v0.1.9 state at `d3c0392` (icon ship). If a fresh ship is needed, tag before it (R9).
 
 ---
 
@@ -54,12 +52,12 @@ Explore-location; map-tile CSP"
 - **Status: ADDED, NOT yet field-verified on-device.** Next agent should confirm the freeze is gone
   on the S26 Ultra under heavy scrolling.
 
-## 4. In-flight audit fixes — UNCOMMITTED (in the dirty tree as of 2026-06-18 04:16 UTC)
+## 4. Audit fixes — COMMITTED in `17d47f3` (2026-06-18 04:29 UTC)
 
-These are NOT yet committed — they sit in the working tree of `audit/v0.1.9-fixes`, made by
-concurrent audit tasks. Each was verified against `git diff` at 04:16 UTC. NO rollback tag exists for
-them; tag + write a ship FIX_NOTES before committing/shipping (R9/R10). A doc agent did not author
-these — they are tracked here for the next session.
+These were uncommitted ("in-flight") when this file was first written; they are now **committed** in
+`17d47f3` ("fix: album-share grant (unlock for recipient), token-leak in fetch_authed_bytes, chat
+live-update + dup-message race, Explore geohash plumbing"). The detail below is retained as the
+per-fix record. [verified: `git show 17d47f3 --stat`]
 
 - **`src-tauri/src/api/rest.rs` — "FIX 13": session-token leak hardening in `fetch_authed_bytes`.**
   (a) Reject any non-`https` URL *before* attaching the `Authorization` header — a caller-supplied
@@ -94,33 +92,35 @@ these — they are tracked here for the next session.
   `message_sent` from our own profile does not generate a self read-receipt (mirrors the
   `#reconcileMessages` guard).
 
-> Also still dirty (unchanged, dirty ON PURPOSE): the 2 machine-specific gradle autogen files
-> (`tauri.settings.gradle`, `tauri.build.gradle.kts` — `/home/ubuntu/...` paths), and the TEMP
-> `[diag-mediaid]` probe in `src/lib/api/profile.ts`.
+> On a host that has run a build, the 2 machine-specific gradle autogen files
+> (`tauri.settings.gradle`, `tauri.build.gradle.kts` — host-absolute paths) stay dirty ON PURPOSE;
+> never commit them. The TEMP `[diag-mediaid]` probe that once lived in `src/lib/api/profile.ts` has
+> been **removed** (the saved-photo 400 was root-caused — see below).
 
 ---
 
-## Open issues these commits address or leave open
+## Open issues — status as of v0.1.13 (HEAD `b112cb3`)
 
-1. **App freeze under image memory** — windowing added (`03f88f2`); VERIFY on-device. Intermittent
-   WebView memory pressure under heavy media may persist.
-2. **Saved-photo send 400** — root cause: **Grindr removed the usable `mediaId`** from
-   `/v3.1/me/profile/images`. `eaf60dc` made the send fail gracefully; the **TEMP `[diag-mediaid]`
-   probe** currently uncommitted in `src/lib/api/profile.ts` is a one-shot console probe trying
-   `/v4/me/profile/images`, `/v3/me/profile/images`, `/v4.1/me/profile/images`, `/v4/me/profile` to
-   find an endpoint that still returns a usable mediaId. **Still open — pending the real mediaId
-   source.** Remove the probe once root-caused.
-3. **Album-share doesn't unlock for the recipient** — **FIX IN PROGRESS (uncommitted, section 4):**
-   `album.ts` now grants via `/v4/albums/{id}/shares`. Not yet committed or field-verified.
-4. **WS DNS flakiness on cellular / Tailscale drops** — WebSocket DNS resolution unreliable over
+1. **App freeze under image memory / WebView compositor** — addressed across `03f88f2` (grid
+   windowing), `bccb55d` (single masked blur layer + off-main-thread decode + upload downscale),
+   `b5d182e` (drop lightbox border-radius morph), `3e1d412` (drop map/picker blur). **Verify on-device.**
+2. **Saved-photo send 400 — FIXED.** Root cause was Grindr dropping the usable `mediaId` from
+   `/v3.1/me/profile/images`. `a6fed16` now sources it from `/v4/me/profile` (saved photos) +
+   resolve-by-hash after upload; `bccb55d` mints a real `mediaId` via `/v5/chat/media/upload`. The
+   `[diag-mediaid]` probe has been removed.
+3. **Album-share doesn't unlock for the recipient — FIXED (committed `17d47f3`):** `album.ts` grants
+   via `/v4/albums/{id}/shares`. Field-verify on-device if not already.
+4. **CAS-4001 / cascade bare-text error codes — ACTIVE (new).** The explore/cascade endpoint can
+   answer with a bare text code rather than JSON. `3e1d412` added `ApiHttpError` + an actionable grid
+   message; `b112cb3` added a TEMP `[GrindrX-API]` logcat probe to capture the server cause. Root-cause
+   it, then **remove the probe**.
+5. **WS DNS flakiness on cellular / Tailscale drops** — WebSocket DNS resolution unreliable over
    cellular/mobile data (works on Wi-Fi); reconnect/backoff exists but DNS resolution itself is the
    weak point. Separately, the S26 Ultra **keeps dropping off Tailscale**, which blocks adb installs
    — confirm the phone is online first. **Open.**
 
 ## Validation / notes
-- No version bump (still 0.1.9). NOT pushed (R11). No signing (R22).
+- Repo is now at **0.1.13** (was 0.1.9 when this file was first written).
 - CSP changes verified present in `src-tauri/tauri.conf.json` (CloudFront + OSM/Carto + grindr CDN).
-- Section-4 changes verified against `git diff` @ 2026-06-18 04:16 UTC (uncommitted).
-- **Concurrency:** as of 2026-06-18 other agents are editing the code (Rust/chat/albums/grid) in
-  parallel; the dirty set may already have follow-up fixes or be committed. Re-probe `git log`/`git
-  status`/`git diff` before trusting this (R7).
+- Section-4 fixes verified committed in `17d47f3`. Re-probe `git log`/`git status`/`git diff` before
+  trusting any state here (R7).

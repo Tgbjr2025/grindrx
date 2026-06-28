@@ -1,11 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
-import { invoke } from "@tauri-apps/api/core";
 import { fetchRest } from "$lib/api";
-import { resolveAuthedImage } from "$lib/utils/authed-image";
 import {
-	mediaHashPublicSchema,
 	mediaHashPrivateSchema,
+	mediaHashPublicSchema,
 } from "$lib/model/media";
 import {
 	type Profile,
@@ -13,6 +12,7 @@ import {
 	profileSchema,
 	profileShortSchema,
 } from "$lib/model/profile";
+import { fetchAuthedBytes } from "$lib/utils/authed-image";
 
 const profileResponseSchema = z.object({
 	profiles: z.array(profileSchema).length(1),
@@ -63,11 +63,25 @@ export async function getProfile(profileId: number) {
 	return promise;
 }
 
+const getProfilesProfileSchema = z.object({
+	...profileShortSchema.shape,
+	...profileRightNowSchema.shape,
+});
+
+// Parse each profile independently. Grindr drifts this schema regularly, and a
+// single malformed record in a /v3/profiles batch (up to 150 ids) would
+// otherwise throw the whole response and leave every one of those grid tiles
+// stuck as a skeleton. Mirror the tolerant per-item parse used by the v3
+// cascade: drop + log the bad ones, keep the rest.
 const getProfilesResponseSchema = z.object({
-	profiles: z.array(
-		z.object({
-			...profileShortSchema.shape,
-			...profileRightNowSchema.shape,
+	profiles: z.array(z.unknown()).transform((raw) =>
+		raw.flatMap((p) => {
+			const result = getProfilesProfileSchema.safeParse(p);
+			if (result.success) return [result.data];
+			console.warn("[GrindrX] dropping unparseable profile", {
+				issue: result.error.issues[0],
+			});
+			return [];
 		}),
 	),
 });
@@ -293,16 +307,10 @@ export async function prepareSavedPhotoForSend(
 ): Promise<UploadedMedia> {
 	// Pull the full-resolution profile image (largest reliably-available size).
 	const cdnUrl = `https://cdns.grindr.com/images/profile/1024x1024/${mediaHash}`;
-	const dataUrl = await resolveAuthedImage(cdnUrl);
-	if (!dataUrl || !dataUrl.startsWith("data:")) {
+	const fetched = await fetchAuthedBytes(cdnUrl);
+	if (!fetched) {
 		throw new Error("Could not fetch the saved photo to re-send it.");
 	}
-
-	// `resolveAuthedImage` returns `data:<mime>;base64,<payload>`.
-	const commaIdx = dataUrl.indexOf(",");
-	const header = dataUrl.slice(5, commaIdx); // strip leading "data:"
-	const mimeType = header.split(";")[0] || "image/jpeg";
-	const imageBase64 = dataUrl.slice(commaIdx + 1);
-
-	return uploadImageBytes(imageBase64, mimeType);
+	const imageBase64 = bytesToBase64(new Uint8Array(fetched.buffer));
+	return uploadImageBytes(imageBase64, fetched.mime);
 }

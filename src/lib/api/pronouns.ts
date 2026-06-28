@@ -1,8 +1,9 @@
-import { fetchRest } from "$lib/api";
-import { pronounsSchema } from "$lib/model/pronouns";
 import z from "zod";
 
-type PronounsList = z.infer<typeof pronounsSchema>["pronouns"];
+import { fetchRest } from "$lib/api";
+import { pronounsSchema } from "$lib/model/pronouns";
+
+type PronounsList = z.infer<typeof pronounsSchema>;
 
 let cachedPronouns: PronounsList | null = null;
 export async function fetchPronouns() {
@@ -10,7 +11,7 @@ export async function fetchPronouns() {
 	const result = await fetchRest("/v1/pronouns").then((res) =>
 		res.jsonParsed(pronounsSchema),
 	);
-	cachedPronouns = result.pronouns;
+	cachedPronouns = result;
 	return cachedPronouns;
 }
 

@@ -1,7 +1,7 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
 	"productName": "GrindrX",
-	"version": "0.1.13",
+	"version": "0.1.14",
 	"identifier": "org.opengrind",
 	"build": {
 		"beforeDevCommand": "bun run dev:web",
@@ -25,7 +25,8 @@
 			}
 		],
 		"security": {
-			"csp": "default-src 'self' tauri: asset:; connect-src 'self' tauri: asset: https://grindr.mobi https://*.cloudfront.net https://analytics.dominusaxis.com https://git.dominusaxis.com; img-src 'self' tauri: asset: data: https://cdns.grindr.com https://*.grindr.com https://*.cloudfront.net https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org blob:; media-src 'self' tauri: asset: blob: https://*.grindr.com https://*.cloudfront.net; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+			"csp": "default-src 'self' tauri: asset:; connect-src 'self' tauri: asset: data: https://grindr.mobi https://*.cloudfront.net https://analytics.dominusaxis.com https://git.dominusaxis.com; img-src 'self' tauri: asset: data: https://cdns.grindr.com https://*.grindr.com https://*.cloudfront.net https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org blob:; media-src 'self' tauri: asset: blob: https://*.grindr.com https://*.cloudfront.net; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+			"dangerousDisableAssetCspModification": ["style-src"]
 		}
 	},
 	"bundle": {

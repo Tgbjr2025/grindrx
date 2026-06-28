@@ -222,7 +222,7 @@ pub async fn upload_image(
 pub async fn fetch_authed_bytes(
     state: tauri::State<'_, AppState>,
     url: String,
-) -> Result<String, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     let authorization = state
         .client()?
         .authorization_header()
@@ -286,13 +286,6 @@ pub async fn fetch_authed_bytes(
         )));
     }
 
-    let content_type = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_owned();
-
     // FIX 3: stream the body with a running counter so chunked responses with
     // no Content-Length are also capped. `response.bytes()` would buffer
     // everything before we could check the size.
@@ -307,8 +300,43 @@ pub async fn fetch_authed_bytes(
         body.extend_from_slice(&chunk);
     }
 
-    let b64 = STANDARD.encode(&body);
-    Ok(format!("data:{};base64,{}", content_type, b64))
+    // Return the RAW bytes over the IPC bridge as an ArrayBuffer, not a base64
+    // `data:` URL. Base64 inflates the payload ~33% and — far worse on Android —
+    // forced the WebView main thread to receive and re-parse a multi-MB string
+    // per image, which froze the UI when an album opened several at once. The
+    // frontend wraps these bytes in a Blob (content-type sniffed from the magic
+    // bytes) and a `blob:` object URL.
+    Ok(tauri::ipc::Response::new(body))
+}
+
+/// Fetch the latest release JSON for the in-app update banner.
+///
+/// This is done natively rather than with a WebView `fetch()` because the
+/// Forgejo API at `git.dominusaxis.com` does not send `Access-Control-Allow-Origin`,
+/// so a browser fetch from the `tauri.localhost` origin is blocked by CORS and the
+/// update check silently fails. The URL is fixed (not caller-supplied), so there is
+/// no SSRF surface, and no Authorization header is attached.
+#[tauri::command]
+pub async fn fetch_latest_release() -> Result<String, AppError> {
+    const RELEASES_URL: &str =
+        "https://git.dominusaxis.com/api/v1/repos/dominus/open-grind/releases/latest";
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    let response = http
+        .get(RELEASES_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(AppError::Http(format!(
+            "release check failed with status {}",
+            response.status()
+        )));
+    }
+    Ok(response.text().await.unwrap_or_default())
 }
 
 #[derive(Deserialize)]

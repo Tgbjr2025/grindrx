@@ -9,8 +9,8 @@ import {
 	apiResponseMessageSchema,
 	previewFromMessage,
 } from "$lib/model/message";
-import type { AlbumExpirationType } from "$lib/model/album";
 import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
+import type { AlbumExpirationType } from "$lib/model/album";
 import type {
 	ApiResponseMessage,
 	Message as MessageType,
@@ -97,6 +97,11 @@ export class ConversationState {
 		this.#removeWsConnectedListener = ws.onConnected(() => {
 			if (this.#destroyed) return;
 			this.#stopPolling();
+			// Catch up the open thread on anything that arrived while the socket was
+			// down. The disconnect-time poll was just stopped and the WS replays
+			// nothing, so without this a message received during a brief drop never
+			// shows until the user leaves and reopens the conversation.
+			void this.#reconcileMessages();
 		});
 		this.#removeWsConnectedListener.catch(console.error);
 
@@ -181,7 +186,7 @@ export class ConversationState {
 					typeof (msg.body as { targetMessageId?: unknown }).targetMessageId ===
 						"string"
 				) {
-					const targetId = (msg.body as { targetMessageId: string })
+					const targetId = (msg.body)
 						.targetMessageId;
 					const targetIdx = this.messages.findIndex(
 						(m) => m.messageId === targetId,
@@ -192,7 +197,7 @@ export class ConversationState {
 							type: "Retract",
 							unsent: true,
 							body: { targetMessageId: targetId },
-						} as OptimisticMessage;
+						};
 					}
 				}
 				this.#syncCache();
@@ -220,7 +225,7 @@ export class ConversationState {
 					...this.messages[idx],
 					type: "Retract",
 					body: { targetMessageId: this.messages[idx].messageId },
-				} as OptimisticMessage;
+				};
 				this.#syncCache();
 			}
 		});
@@ -522,6 +527,10 @@ export class ConversationState {
 		}
 	}
 
+	// Original payloads of in-flight/failed generic sends, keyed by tempId, so a
+	// failed message can be retried with its exact body (see retry()).
+	#pendingSends = new Map<string, MessageType>();
+
 	send(message: MessageType): void {
 		if (!this.profile) return;
 		const tempId = `pending-${crypto.randomUUID()}`;
@@ -537,6 +546,7 @@ export class ConversationState {
 		};
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
+		this.#pendingSends.set(tempId, message);
 		void this.#resolveMessage({ tempId, message });
 	}
 
@@ -679,6 +689,7 @@ export class ConversationState {
 				msg.status = "sent";
 				msg.messageId = messageId;
 			}
+			this.#pendingSends.delete(tempId);
 			this.#syncCache();
 			void this.#conversations.ensureLoaded(this.conversationId);
 		} catch {
@@ -686,7 +697,25 @@ export class ConversationState {
 			if (msg) msg.status = "error";
 			const latestSent = this.messages.find((m) => m.status === "sent");
 			this.#updatePreview(latestSent);
+			toast.error("Message failed to send — tap to retry");
 		}
+	}
+
+	/**
+	 * Re-drive a message that failed to send. Only messages that go through the
+	 * generic send() path are retryable here; photo/album sends use dedicated
+	 * endpoints, so those are left for the user to re-pick.
+	 */
+	retry(messageId: string): void {
+		const msg = this.messages.find((m) => m.messageId === messageId);
+		if (!msg || msg.status !== "error") return;
+		// Only messages sent through the generic send() path are retryable here;
+		// their original payload is kept in #pendingSends. Photo/album sends use
+		// dedicated endpoints, so those aren't tracked and are left to re-pick.
+		const message = this.#pendingSends.get(messageId);
+		if (!message) return;
+		msg.status = "pending";
+		void this.#resolveMessage({ tempId: messageId, message });
 	}
 
 	#syncCache(): void {
