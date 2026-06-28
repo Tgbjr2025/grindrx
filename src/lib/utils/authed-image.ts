@@ -33,31 +33,6 @@ function classifyHost(url: string): "auth" | "direct" | "invalid" {
 	return "direct";
 }
 
-// --- Concurrency limiter -----------------------------------------------------
-// Opening an album or the shared-media gallery asks for many authed images at
-// once. Cap how many resolve at a time so a burst degrades into a progressive
-// load instead of saturating the bridge.
-const MAX_CONCURRENT = 4;
-let active = 0;
-const waiters: Array<() => void> = [];
-
-function acquire(): Promise<void> {
-	if (active < MAX_CONCURRENT) {
-		active++;
-		return Promise.resolve();
-	}
-	return new Promise((resolve) => waiters.push(resolve));
-}
-
-function release(): void {
-	active--;
-	const next = waiters.shift();
-	if (next) {
-		active++;
-		next();
-	}
-}
-
 // --- Object-URL cache --------------------------------------------------------
 // Retain a compact `blob:` object URL per source URL. Map insertion order is the
 // LRU recency order; evicting the oldest revokes its blob so total retained
@@ -143,9 +118,19 @@ export async function fetchAuthedBytes(
 	url: string,
 ): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
 	if (classifyHost(url) !== "auth") return null;
-	await acquire();
+	console.log("[GRX-DIAG] fetch start", url.slice(0, 80));
 	try {
-		const buffer = await invoke<ArrayBuffer>("fetch_authed_bytes", { url });
+		// Hard timeout so a stuck bridge call can never hang album-load forever.
+		const buffer = await Promise.race([
+			invoke<ArrayBuffer>("fetch_authed_bytes", { url }),
+			new Promise<ArrayBuffer>((_, reject) =>
+				setTimeout(
+					() => reject(new Error("fetch_authed_bytes timed out")),
+					12000,
+				),
+			),
+		]);
+		console.log("[GRX-DIAG] fetch ok", url.slice(0, 60), buffer.byteLength);
 		return { buffer, mime: sniffMime(new Uint8Array(buffer)) };
 	} catch (error) {
 		console.error(
@@ -155,8 +140,6 @@ export async function fetchAuthedBytes(
 			error,
 		);
 		return null;
-	} finally {
-		release();
 	}
 }
 
