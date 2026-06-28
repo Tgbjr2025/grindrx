@@ -6,8 +6,8 @@
 
 	import { type AlbumContentResponse, getAlbumContent } from "$lib/api/album";
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
-	import type { AlbumMessage } from "$lib/model/message";
 	import { resolveAuthedImage } from "$lib/utils/authed-image";
+	import type { AlbumMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
 	let { message, isOut = false }: { message: AlbumMessage["body"]; isOut?: boolean } = $props();
@@ -54,9 +54,12 @@
 					...res,
 					content: await Promise.all(
 						res.content.map(async (slide) => {
-							// Resolve the authed CDN url to a data: URL once; the lightbox
-							// (and dimension probing below) can't send the auth header, so a
-							// raw url would render as a black box.
+							// Resolve the authed CDN url to a renderable (object) URL once; the
+							// lightbox (and dimension probing below) can't send the auth header,
+							// so a raw url would render as a black box. resolveAuthedImage is
+							// concurrency-limited + cached/deduped, so opening a multi-photo
+							// album no longer fires every full-res fetch+decode at once (the
+							// spike that pinned native memory and froze the WebView).
 							const resolved = slide.url
 								? ((await resolveAuthedImage(slide.url)) ?? slide.url)
 								: null;

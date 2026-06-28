@@ -1,11 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
-import { invoke } from "@tauri-apps/api/core";
 import { fetchRest } from "$lib/api";
-import { resolveAuthedImage } from "$lib/utils/authed-image";
 import {
-	mediaHashPublicSchema,
 	mediaHashPrivateSchema,
+	mediaHashPublicSchema,
 } from "$lib/model/media";
 import {
 	type Profile,
@@ -13,6 +12,7 @@ import {
 	profileSchema,
 	profileShortSchema,
 } from "$lib/model/profile";
+import { fetchAuthedDataUrl } from "$lib/utils/authed-image";
 
 const profileResponseSchema = z.object({
 	profiles: z.array(profileSchema).length(1),
@@ -293,12 +293,12 @@ export async function prepareSavedPhotoForSend(
 ): Promise<UploadedMedia> {
 	// Pull the full-resolution profile image (largest reliably-available size).
 	const cdnUrl = `https://cdns.grindr.com/images/profile/1024x1024/${mediaHash}`;
-	const dataUrl = await resolveAuthedImage(cdnUrl);
+	const dataUrl = await fetchAuthedDataUrl(cdnUrl);
 	if (!dataUrl || !dataUrl.startsWith("data:")) {
 		throw new Error("Could not fetch the saved photo to re-send it.");
 	}
 
-	// `resolveAuthedImage` returns `data:<mime>;base64,<payload>`.
+	// `fetchAuthedDataUrl` returns `data:<mime>;base64,<payload>`.
 	const commaIdx = dataUrl.indexOf(",");
 	const header = dataUrl.slice(5, commaIdx); // strip leading "data:"
 	const mimeType = header.split(";")[0] || "image/jpeg";
