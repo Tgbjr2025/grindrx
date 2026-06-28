@@ -90,18 +90,13 @@ function remember(srcUrl: string, objectUrl: string): void {
 	}
 }
 
-function dataUrlToBlob(dataUrl: string): Blob {
-	const comma = dataUrl.indexOf(",");
-	if (!dataUrl.startsWith("data:") || comma === -1) {
-		throw new Error("not a data: URL");
-	}
-	const mime = dataUrl.slice(5, comma).split(";")[0] || "application/octet-stream";
-	// Decode base64 → bytes by hand. We deliberately do NOT `fetch(dataUrl)`: the
-	// app CSP `connect-src` does not allow `data:`, so fetch() would be blocked.
-	const binary = atob(dataUrl.slice(comma + 1));
-	const bytes = new Uint8Array(binary.length);
-	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-	return new Blob([bytes], { type: mime });
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+	// Decode the base64 payload OFF the main thread via the resource loader.
+	// The previous hand-rolled `atob` + per-byte loop ran synchronously on the UI
+	// thread for every slide on album open — tens of millions of charCodeAt calls
+	// that froze the WebView. `fetch()` on a data: URL does the decode in the
+	// loader, not in JS. (Requires `data:` in the CSP connect-src.)
+	return await (await fetch(dataUrl)).blob();
 }
 
 /**
@@ -152,7 +147,7 @@ export async function resolveAuthedImage(url: string): Promise<string | null> {
 			const dataUrl = await fetchAuthedDataUrl(url);
 			if (!dataUrl || !dataUrl.startsWith("data:")) return dataUrl;
 			try {
-				const objectUrl = URL.createObjectURL(dataUrlToBlob(dataUrl));
+				const objectUrl = URL.createObjectURL(await dataUrlToBlob(dataUrl));
 				remember(url, objectUrl);
 				return objectUrl;
 			} catch (error) {
