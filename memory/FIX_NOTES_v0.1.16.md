@@ -72,9 +72,29 @@ which `fetchRest` turned into a sign-in redirect, and `RegisterForm` then showed
 - `bun run lint` → clean.
 - `bun run test:unit` → 46/46 pass.
 - `cargo test` (Rust) → run on the OVH Nix host (see build log).
-- Signed APK built via `nix run .#build-android` with `OPEN_GRIND_KEYSTORE_PROPERTIES`;
-  cert SHA-256 verified against KEYS.md (`2805fdd8…c3658c`).
+- Signed APK built via `nix run .#build-android` with `OPEN_GRIND_KEYSTORE_PROPERTIES`
+  (`~/open-grind-key.jks`, alias `grindx`). Output: `com.grindrx.app`, versionName
+  `0.1.16`, versionCode `1044` (auto-incremented from v0.1.15's 1043). APK sha256
+  `25bfda2328c675ce72c05720d793c1ae24fe4690158b51ae4ef77bf8b0680e7d`.
+
+### KEYS.md discrepancy (R1/R2 — flagged)
+The signing cert SHA-256 is **`22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01`**,
+which does NOT match the `2805fdd8…c3658c` documented in `KEYS.md`. That `2805fd…`
+fingerprint is UPSTREAM Open Grind's governance-held key, which this fork does not
+possess. **Verified**: the published v0.1.15 APK (downloaded from the Gitea release)
+carries the SAME `22d6…` cert and the same `com.grindrx.app` package — so `22d6…` is the
+de-facto GrindrX release key used since at least v0.1.15, and using it is REQUIRED for
+v0.1.16 to install as an in-place upgrade. Matching KEYS.md's `2805fd…` would break
+upgrades (and is impossible without the upstream key). KEYS.md is upstream product doc
+(R23, not edited); this note records the real state. If a canonical GrindrX KEYS doc is
+ever wanted, it should record `22d6…`.
+
+## Releases published (v0.1.16)
+- Gitea: https://git.dominusaxis.com/dominus/grindrx/releases/tag/v0.1.16 (release id 19)
+- GitHub: https://github.com/Tgbjr2025/grindrx/releases/tag/v0.1.16 (release id 353510605)
+- Both carry the identical `GrindrX-v0.1.16.apk` (69,226,028 bytes, sha256 `25bfda23…680e7d`).
+- Tag `v0.1.16` → commit `062a6508c25a4f901941a3add550bec345fd09c1` on both remotes.
 
 ## Rollback
-- Tag `pre-v0.1.16` at `0bab49c` before release. To roll back: re-release the v0.1.15 APK
-  and revert the branch merge.
+- Rollback tag `pre-v0.1.16` = `0bab49c` (v0.1.15 merge, the base of this work). To roll
+  back: re-publish the v0.1.15 APK as latest and revert/close the v0.1.16 branch + releases.
