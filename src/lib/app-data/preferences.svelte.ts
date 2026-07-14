@@ -13,20 +13,34 @@ const preferencesSchema = z.object({
 	incognito: z.boolean().default(false),
 });
 
+function defaultPreferences(): z.infer<typeof preferencesSchema> {
+	return {
+		geohash: null,
+		revealMessageRead: false,
+		revealProfileViews: false,
+		incognito: false,
+	};
+}
+
 export async function getPreferences(): Promise<
 	z.infer<typeof preferencesSchema>
 > {
-	if (await existsAppDataFile("preferences.data")) {
-		return await readAppDataFile("preferences.data")
-			.then(decode)
-			.then((data) => preferencesSchema.parse(data));
-	} else {
-		return {
-			geohash: null,
-			revealMessageRead: false,
-			revealProfileViews: false,
-			incognito: false,
-		};
+	if (!(await existsAppDataFile("preferences.data"))) {
+		return defaultPreferences();
+	}
+	// The preferences file is written non-atomically (truncate + write), so a read
+	// that overlaps an in-flight write — or a file left half-written by an app kill
+	// — can decode/parse to garbage. Previously this rejected, and the home route's
+	// `{#await preferences}` had no catch, so a filter/location change (which
+	// re-reads preferences) hard-crashed the app until relaunch. Degrade to
+	// defaults on any read/decode/parse failure instead; the next setPreferences
+	// rewrites a clean file.
+	try {
+		const raw = await readAppDataFile("preferences.data");
+		return preferencesSchema.parse(decode(raw));
+	} catch (err) {
+		console.error("[GrindrX] preferences read failed, using defaults:", err);
+		return defaultPreferences();
 	}
 }
 

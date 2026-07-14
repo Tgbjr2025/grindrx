@@ -160,6 +160,37 @@ impl GrindrClient {
 
         Ok(RawResponse { status, body })
     }
+
+    /// Like `request_raw`, but WITHOUT an Authorization header. For pre-session
+    /// endpoints — account creation, forgot-password — that a logged-out user
+    /// must reach. Routing those through `request_raw` fails at the auth guard
+    /// with "Not logged in" before any network call, which the frontend then
+    /// mis-handled as an auth redirect. This path lets the request hit the
+    /// server and return its real status/body.
+    async fn request_raw_unauthed(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<RawResponse, AppError> {
+        let http = self.http.read().await.clone();
+        let mut request = http.request(method, format!("{BASE_URL}{path}"));
+
+        if let Some(body) = body {
+            let json_body: serde_json::Value = rmp_serde::from_slice(&body)
+                .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
+            request = request
+                .header("Content-Type", "application/json")
+                .json(&json_body);
+        }
+
+        let request = request.build().map_err(|e| AppError::Http(e.to_string()))?;
+        let response = http.execute(request).await?;
+        let status = response.status().as_u16();
+        let body = response.bytes().await?.to_vec();
+
+        Ok(RawResponse { status, body })
+    }
 }
 
 #[derive(Serialize)]
@@ -377,6 +408,44 @@ pub async fn request(
     let raw = state
         .client()?
         .request_raw(method, &payload.path, payload.body)
+        .await?;
+
+    let response_bytes =
+        rmp_serde::encode::to_vec_named(&raw).map_err(|e| AppError::Http(e.to_string()))?;
+
+    Ok(STANDARD.encode(&response_bytes))
+}
+
+/// Unauthenticated sibling of `request` for pre-session endpoints (account
+/// creation, forgot-password). Same path-safety guard and msgpack envelope, but
+/// no Authorization header — a logged-out caller must be able to reach these.
+#[tauri::command]
+pub async fn request_public(
+    state: tauri::State<'_, AppState>,
+    payload: String,
+) -> Result<String, AppError> {
+    let bytes = STANDARD
+        .decode(&payload)
+        .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;
+
+    let payload: RequestPayload = rmp_serde::from_slice(&bytes)
+        .map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
+
+    let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
+        code: 400,
+        message: format!("Invalid method: {}", payload.method),
+    })?;
+
+    if !is_safe_api_path(&payload.path) {
+        return Err(AppError::Http(format!(
+            "Invalid request path: {}",
+            payload.path
+        )));
+    }
+
+    let raw = state
+        .client()?
+        .request_raw_unauthed(method, &payload.path, payload.body)
         .await?;
 
     let response_bytes =

@@ -102,4 +102,26 @@
 			<Grid geohash={nearbyGeohash} {exploreGeohash} />
 		</main>
 	{/if}
+{:catch error}
+	<!--
+		getPreferences() now degrades to defaults rather than rejecting, so this
+		branch should be unreachable — but keep it as a hard backstop so a future
+		rejection can never tear down the whole home route (the old behaviour that
+		crashed the app on a filter/location change until relaunch).
+	-->
+	<main class="m-auto flex flex-col items-center gap-3 p-6 text-center">
+		<p class="text-sm text-muted-foreground">
+			Something went wrong loading your preferences.
+		</p>
+		<button
+			type="button"
+			class="px-3 py-1.5 rounded-full bg-accent/15 border border-accent/30 text-accent text-sm font-medium"
+			onclick={() => (preferences = getPreferences())}
+		>
+			Retry
+		</button>
+		{#if import.meta.env.DEV}
+			<pre class="text-xs text-muted-foreground/70">{String(error)}</pre>
+		{/if}
+	</main>
 {/await}

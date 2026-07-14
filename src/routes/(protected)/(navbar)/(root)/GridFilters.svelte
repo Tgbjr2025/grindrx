@@ -32,11 +32,14 @@
 		open: boolean;
 	} = $props();
 
-	let filtersChanges = $state(defaultFilters);
+	// Deep-clone both the initial seed and each open: a shallow `{ ...filters }`
+	// leaves nested arrays (age/height/…) aliased to the source, so in-place slider
+	// edits would mutate shared state. structuredClone isolates the draft.
+	let filtersChanges = $state(structuredClone(defaultFilters));
 
 	$effect(() => {
 		if (open) {
-			filtersChanges = { ...filters };
+			filtersChanges = structuredClone($state.snapshot(filters));
 		}
 	});
 

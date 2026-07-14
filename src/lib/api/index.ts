@@ -122,6 +122,12 @@ export async function fetchRest(
 	options: {
 		method?: string;
 		body?: unknown;
+		// Route through the UNAUTHENTICATED backend bridge (`request_public`) for
+		// pre-session endpoints — account creation, forgot-password. The default
+		// authed bridge would reject a logged-out caller with "Not logged in"
+		// before the network call, which the catch below turns into a sign-in
+		// redirect — wrong for a user who is deliberately signed out.
+		public?: boolean;
 	} = { method: "GET" },
 ) {
 	try {
@@ -130,7 +136,7 @@ export async function fetchRest(
 			path,
 			body: options.body === undefined ? null : encode(options.body),
 		});
-		const packed = await invoke("request", {
+		const packed = await invoke(options.public ? "request_public" : "request", {
 			// https://github.com/tauri-apps/tauri/issues/10573
 			payload: toBase64(payload),
 		}).then((res) => {
@@ -170,23 +176,26 @@ export async function fetchRest(
 				// cascade/explore grid — a bare code like `CAS-4001`. Parsing it as
 				// the success shape yields a useless "Unexpected token …" instead of
 				// the real failure, so raise a structured error carrying the status.
-				if (this.status < 200 || this.status >= 300) {
-					// Diagnostic for the cascade/explore CAS-* error codes (e.g.
-					// CAS-4001): log status + a short snippet ONLY for the grid
-					// endpoints (filter: `adb logcat | grep GrindrX-API`). Scoped on
-					// purpose — chat/profile error bodies carry message content and
-					// PII, which must not be written to logcat. Remove once CAS-4001
-					// is root-caused.
-					if (/\/(cascade|explore|search)/.test(path)) {
-						console.warn(
-							`[GrindrX-API] HTTP ${this.status} ${options.method || "GET"} ${path} :: ${text.slice(0, 120)}`,
-						);
-					}
+				const isErrorStatus = this.status < 200 || this.status >= 300;
+				if (isErrorStatus) {
 					throw new ApiHttpError(this.status, text, path);
 				}
 				try {
 					return JSON.parse(text);
 				} catch (error) {
+					// The cascade/explore endpoint can answer 200 with a bare code
+					// (e.g. `CAS-4001`) instead of JSON — the free-tier / rate limit
+					// / region-restriction signal. On a 2xx a short, non-JSON body is
+					// therefore a server error code, not a real parse failure: surface
+					// it as a structured ApiHttpError (which decodes the bare code) so
+					// callers show an actionable message instead of "Unexpected token".
+					const trimmed = text.trim();
+					const looksLikeCode =
+						trimmed.length > 0 &&
+						(trimmed.length <= 64 || /^[A-Z]+-\d+$/.test(trimmed));
+					if (looksLikeCode) {
+						throw new ApiHttpError(this.status, text, path);
+					}
 					console.error("Failed to parse JSON response", {
 						path,
 						text,

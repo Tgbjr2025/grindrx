@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { toast } from "svelte-sonner";
 
-	import { asAppError, fetchRest } from "$lib/api";
+	import { ApiHttpError, asAppError, fetchRest } from "$lib/api";
 	import { Button } from "$lib/components/ui/button";
 	import * as Card from "$lib/components/ui/card";
 	import { Input } from "$lib/components/ui/input";
@@ -20,34 +20,44 @@
 		formError = null;
 		try {
 			submitting = true;
+			// Password reset is a pre-session action — go through the public bridge,
+			// not the authed one (which would reject a signed-out user with "Not
+			// logged in" and bounce them to sign-in).
 			const response = await fetchRest("/v1/accounts/password/reset", {
 				method: "POST",
 				body: { email },
+				public: true,
 			});
 			if (response.status >= 200 && response.status < 300) {
 				submittedEmail = email;
 				success = true;
 			} else {
+				// Non-2xx: read the raw body (response.json() now throws on non-2xx).
+				const body = response.text();
+				let msg = "Failed to send reset link. Please try again.";
 				try {
-					const body = response.json();
-					const msg = (body as any)?.message || (body as any)?.error || "Failed to send reset link. Please try again.";
-					formError = msg;
-					toast.error(msg);
+					const parsed = JSON.parse(body) as { message?: string; error?: string };
+					msg = parsed?.message || parsed?.error || msg;
 				} catch {
-					formError = "Failed to send reset link. Please try again.";
-					toast.error("Failed to send reset link. Please try again.");
+					if (body.trim()) msg = `Failed to send reset link (${body.trim().slice(0, 80)}).`;
 				}
+				formError = msg;
+				toast.error(msg);
 			}
 		} catch (error) {
 			console.error(error);
-			const appError = asAppError(error);
-			if (appError) {
-				formError = appError.prettyMessage;
-				toast.error(appError.prettyMessage);
+			let msg = "An unknown error occurred";
+			if (error instanceof ApiHttpError) {
+				msg =
+					error.code != null
+						? `Failed to send reset link (${error.code}).`
+						: "Failed to send reset link. Please try again.";
 			} else {
-				formError = "An unknown error occurred";
-				toast.error("An unknown error occurred");
+				const appError = asAppError(error);
+				if (appError) msg = appError.prettyMessage;
 			}
+			formError = msg;
+			toast.error(msg);
 		} finally {
 			submitting = false;
 		}
