@@ -6,6 +6,7 @@
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import {
 		getProfileUploadedPhotos,
+		prepareAuthedUrlForSend,
 		prepareSavedPhotoForSend,
 		type ProfilePhoto,
 	} from "$lib/api/profile";
@@ -29,7 +30,7 @@
 		}) => Promise<void>;
 	} = $props();
 
-	type Tab = "albums" | "photos";
+	type Tab = "albums" | "private" | "photos";
 	let activeTab = $state<Tab>("albums");
 
 	type AlbumsState =
@@ -44,12 +45,48 @@
 		| { status: "loaded"; photos: ProfilePhoto[] }
 		| { status: "error"; message: string };
 
+	// One sendable private (album) photo: the signed full-size URL plus a thumb
+	// for the grid. contentId is only used as the render key / sending marker.
+	type PrivatePhoto = {
+		contentId: number;
+		url: string;
+		thumbUrl: string;
+	};
+
+	type PrivateState =
+		| { status: "idle" }
+		| { status: "loading" }
+		| { status: "loaded"; photos: PrivatePhoto[] }
+		| { status: "error"; message: string };
+
 	let albumsState = $state<AlbumsState>({ status: "idle" });
 	let photosState = $state<PhotosState>({ status: "idle" });
+	let privateState = $state<PrivateState>({ status: "idle" });
 	let selectedAlbumId = $state<number | null>(null);
 	let expirationType = $state<AlbumExpirationType>("INDEFINITE");
 	let sharing = $state(false);
 	let sendingHash = $state<string | null>(null);
+	let sendingContentId = $state<number | null>(null);
+
+	function privatePhotosFromAlbums(albums: MyAlbum[]): PrivatePhoto[] {
+		return albums.flatMap((album) =>
+			album.content
+				.filter((c) => c.contentType.startsWith("image/"))
+				.flatMap((c) => {
+					// Prefer the full-size signed URL for sending; fall back through
+					// cover/thumb. Skip content still processing (all URLs null).
+					const url = c.url || c.coverUrl || c.thumbUrl;
+					if (!url) return [];
+					return [
+						{
+							contentId: c.contentId,
+							url,
+							thumbUrl: c.thumbUrl || c.coverUrl || url,
+						},
+					];
+				}),
+		);
+	}
 
 	const expirationOptions: { value: AlbumExpirationType; label: string }[] = [
 		{ value: "INDEFINITE", label: "Indefinitely" },
@@ -84,6 +121,23 @@
 				.catch((err: unknown) => {
 					console.error("Failed to load photos", err);
 					photosState = { status: "error", message: "Failed to load photos" };
+				});
+		}
+		if (activeTab === "private" && privateState.status === "idle") {
+			privateState = { status: "loading" };
+			getMyAlbums()
+				.then(({ albums }) => {
+					privateState = {
+						status: "loaded",
+						photos: privatePhotosFromAlbums(albums),
+					};
+				})
+				.catch((err: unknown) => {
+					console.error("Failed to load private photos", err);
+					privateState = {
+						status: "error",
+						message: "Failed to load private photos",
+					};
 				});
 		}
 	});
@@ -129,6 +183,30 @@
 		}
 	}
 
+	async function handleSendPrivatePhoto(photo: PrivatePhoto) {
+		// Album content carries a signed CDN url but no numeric mediaId, which the
+		// chat-send endpoint requires — mint one by re-uploading the bytes through
+		// the chat-media upload endpoint (same pattern as saved profile photos).
+		sendingContentId = photo.contentId;
+		try {
+			const minted = await prepareAuthedUrlForSend(photo.url, "private photo");
+			await onSendPhoto({
+				mediaId: minted.mediaId,
+				mediaHash: minted.mediaHash,
+				url: minted.url,
+				createdAt: null,
+			});
+			toast.success("Photo sent!");
+			open = false;
+		} catch (err) {
+			console.error("Failed to send private photo:", err);
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to send photo${detail}`);
+		} finally {
+			sendingContentId = null;
+		}
+	}
+
 	function coverUrl(album: MyAlbum): string | null {
 		return album.content[0]?.thumbUrl ?? album.content[0]?.coverUrl ?? null;
 	}
@@ -169,11 +247,21 @@
 				type="button"
 				class={[
 					"flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+					activeTab === "private" ? "bg-background shadow-sm" : "text-muted-foreground",
+				]}
+				onclick={() => (activeTab = "private")}
+			>
+				Private
+			</button>
+			<button
+				type="button"
+				class={[
+					"flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
 					activeTab === "photos" ? "bg-background shadow-sm" : "text-muted-foreground",
 				]}
 				onclick={() => (activeTab = "photos")}
 			>
-				My Photos
+				Profile
 			</button>
 		</div>
 
@@ -263,6 +351,51 @@
 							{/if}
 							Share
 						</Button>
+					{/if}
+				{/if}
+
+			{:else if activeTab === "private"}
+				{#if privateState.status === "loading"}
+					<div class="flex justify-center py-8">
+						<Spinner class="size-6" />
+					</div>
+				{:else if privateState.status === "error"}
+					<p class="text-destructive text-sm text-center py-4">
+						{privateState.message}
+					</p>
+				{:else if privateState.status === "loaded"}
+					{#if privateState.photos.length === 0}
+						<div class="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+							<ImagesIcon class="size-10" weight="duotone" />
+							<p class="text-sm">No private photos in your albums</p>
+						</div>
+					{:else}
+						<p class="text-xs text-muted-foreground">
+							Tap a private photo to send it directly in chat.
+						</p>
+						<div class="grid grid-cols-3 gap-1.5">
+							{#each privateState.photos as photo (photo.contentId)}
+								{@const isSending = sendingContentId === photo.contentId}
+								<button
+									type="button"
+									class="relative aspect-square rounded-xl overflow-hidden bg-muted cursor-pointer active:opacity-70 transition-opacity"
+									disabled={isSending}
+									onclick={() => handleSendPrivatePhoto(photo)}
+								>
+									<AuthedImage
+										src={photo.thumbUrl}
+										alt="Private photo"
+										class={["w-full h-full object-cover", isSending && "opacity-40"]}
+										loading="lazy"
+									/>
+									{#if isSending}
+										<div class="absolute inset-0 flex items-center justify-center">
+											<Spinner class="size-5 text-white" />
+										</div>
+									{/if}
+								</button>
+							{/each}
+						</div>
 					{/if}
 				{/if}
 

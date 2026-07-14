@@ -307,9 +307,24 @@ export async function prepareSavedPhotoForSend(
 ): Promise<UploadedMedia> {
 	// Pull the full-resolution profile image (largest reliably-available size).
 	const cdnUrl = `https://cdns.grindr.com/images/profile/1024x1024/${mediaHash}`;
-	const fetched = await fetchAuthedBytes(cdnUrl);
+	return prepareAuthedUrlForSend(cdnUrl, "saved photo");
+}
+
+/**
+ * Mint a chat-usable numeric `mediaId` for a private (album) photo.
+ *
+ * Album content carries a signed CDN `url` but no numeric `mediaId`, and the
+ * chat-send endpoint requires one — same constraint as saved profile photos.
+ * Fetch the signed bytes with auth, then re-upload through
+ * `POST /v5/chat/media/upload` to mint a fresh `{ mediaId, mediaHash, url }`.
+ */
+export async function prepareAuthedUrlForSend(
+	url: string,
+	what = "photo",
+): Promise<UploadedMedia> {
+	const fetched = await fetchAuthedBytes(url);
 	if (!fetched) {
-		throw new Error("Could not fetch the saved photo to re-send it.");
+		throw new Error(`Could not fetch the ${what} to re-send it.`);
 	}
 	const imageBase64 = bytesToBase64(new Uint8Array(fetched.buffer));
 	return uploadImageBytes(imageBase64, fetched.mime);

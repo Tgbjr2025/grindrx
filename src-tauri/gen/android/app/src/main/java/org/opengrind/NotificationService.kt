@@ -31,6 +31,7 @@ class NotificationService : Service() {
 
     companion object {
         const val SERVICE_CHANNEL_ID = "grindx_service"
+        const val MESSAGES_CHANNEL_ID = "grindx_messages"
         const val SERVICE_NOTIFICATION_ID = 1001
 
         const val ACTION_START = "org.opengrind.action.START_FOREGROUND"
@@ -62,6 +63,7 @@ class NotificationService : Service() {
     override fun onCreate() {
         super.onCreate()
         createServiceChannel()
+        createMessagesChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -145,6 +147,25 @@ class NotificationService : Service() {
             ).apply {
                 description = "Keeps GrindrX connected so you receive messages in the background"
                 setShowBadge(false)
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    // The Rust WS loop posts message/tap notifications on this channel from this
+    // service's process, which can be alive (START_STICKY restart) without
+    // MainActivity ever having run — so the channel must be registered here too,
+    // or Android posts to a fallback and the Notification Assistant buckets the
+    // notification under "suggestions", splitting a conversation across categories.
+    private fun createMessagesChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                MESSAGES_CHANNEL_ID,
+                "Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "GrindrX message notifications"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
