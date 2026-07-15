@@ -62,12 +62,14 @@ paper:
 
 data:
   economic_calendar_url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-  news_feeds:
+  news_feeds:                     # all verified reachable from an OVH VPS
     - "https://www.forexlive.com/feed/news"
-    - "https://www.fxstreet.com/rss/news"
-    - "https://feeds.content.dowjones.io/public/rss/mw_topstories"
     - "https://www.investing.com/rss/news_1.rss"
-  reddit_subs: [Forex, forextrading, economy]
+    - "https://www.investing.com/rss/news_95.rss"
+    - "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    - "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    - "https://finance.yahoo.com/news/rssindex"
+  reddit_subs: [Forex, forextrading, economy]  # note: reddit blocks many VPS IPs; degrades gracefully
   cross_markets:                  # Yahoo Finance symbols given to the model as context
     DXY: "DX-Y.NYB"
     Gold: "GC=F"
