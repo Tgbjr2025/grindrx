@@ -1,0 +1,19 @@
+[Unit]
+Description=FXBot autonomous forex trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/fxbot
+EnvironmentFile=/home/ubuntu/fxbot/.env
+ExecStart=/home/ubuntu/fxbot/.venv/bin/python run.py --config config.yaml
+Restart=always
+RestartSec=30
+# journalctl -u fxbot -f  to tail logs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

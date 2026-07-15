@@ -1,0 +1,7 @@
+.env
+config.yaml
+*.sqlite3
+paper_state.json
+.venv/
+__pycache__/
+*.pyc

@@ -1,0 +1,81 @@
+# FXBot configuration.
+# Copy to config.yaml and adjust. Secrets go in .env, never here.
+
+mode: paper            # paper | live   (live requires METAAPI_TOKEN/ACCOUNT_ID and confirm_live: true)
+confirm_live: false    # must be explicitly set true to allow real-money trading
+base_currency: USD
+
+engine:
+  cycle_minutes: 15          # how often the bot re-evaluates the market
+  symbols: [EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD]
+  timeframes: [15m, 1h, 4h]  # candles fed to the model
+  candles_per_timeframe: 120
+  trading_hours_utc: [0, 24] # restrict if desired, e.g. [6, 21]
+  avoid_weekend_open_hours: 2   # no new trades within N hours of Friday close
+  close_all_before_weekend: true
+
+llm:
+  model: claude-sonnet-5
+  effort: high               # low | medium | high | xhigh | max
+  max_tokens: 4096
+  min_confidence: 0.62       # model confidence required to act (0-1)
+  daily_budget_usd: 5.0      # hard cap on LLM spend per day; bot idles when reached
+
+costs:
+  # Everything here feeds the expected-value gate: a trade is only taken when
+  # the model's expected move covers ALL round-trip costs with margin to spare.
+  commission_per_lot_usd: 7.0     # round-trip commission per standard lot (check your trading.com account type)
+  slippage_pips: 0.3              # assumed execution slippage per side
+  min_edge_multiple: 2.0          # expected profit must be >= this multiple of total costs
+  swap_long_pips_per_day:         # overnight swap estimates per symbol (update from broker specs)
+    EURUSD: -0.55
+    GBPUSD: -0.45
+    USDJPY: 0.15
+    AUDUSD: -0.25
+    USDCAD: -0.35
+  swap_short_pips_per_day:
+    EURUSD: 0.15
+    GBPUSD: 0.05
+    USDJPY: -0.75
+    AUDUSD: -0.15
+    USDCAD: -0.05
+  swap_triple_weekday: 3          # Wednesday triple swap (0=Mon)
+
+risk:
+  risk_per_trade_pct: 0.5         # % of equity risked per trade
+  max_concurrent_positions: 3
+  max_positions_per_symbol: 1
+  max_daily_loss_pct: 2.0         # stop opening trades after this daily drawdown
+  max_drawdown_pct: 10.0          # KILL SWITCH: flatten everything and halt
+  max_lot_size: 1.0
+  min_stop_distance_atr: 1.0      # stop-loss at >= 1 ATR
+  news_blackout_minutes: 30       # no new trades +/- N min around high-impact events
+
+paper:
+  starting_balance: 10000.0
+  spread_pips:                    # typical trading.com spreads; used to simulate fills
+    EURUSD: 0.9
+    GBPUSD: 1.2
+    USDJPY: 1.0
+    AUDUSD: 1.1
+    USDCAD: 1.3
+
+data:
+  economic_calendar_url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+  news_feeds:
+    - "https://www.forexlive.com/feed/news"
+    - "https://www.fxstreet.com/rss/news"
+    - "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    - "https://www.investing.com/rss/news_1.rss"
+  reddit_subs: [Forex, forextrading, economy]
+  cross_markets:                  # Yahoo Finance symbols given to the model as context
+    DXY: "DX-Y.NYB"
+    Gold: "GC=F"
+    Oil_WTI: "CL=F"
+    SP500_Futures: "ES=F"
+    US10Y_Yield: "^TNX"
+    VIX: "^VIX"
+    Bitcoin: "BTC-USD"
+
+journal:
+  db_path: fxbot.sqlite3
