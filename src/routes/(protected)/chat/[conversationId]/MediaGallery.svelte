@@ -4,6 +4,7 @@
 	import type PhotoSwipeLightbox from "photoswipe/lightbox";
 
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
+	import { resolveAuthedImage } from "$lib/utils/authed-image";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import * as Empty from "$lib/components/ui/empty";
 	import type { ApiResponseMessage } from "$lib/model/message";
@@ -37,6 +38,28 @@
 	let galleryEl: HTMLDivElement | null = $state(null);
 	let lightbox: PhotoSwipeLightbox | null = null;
 
+	// PhotoSwipe opens the `<a href>` directly with no auth header, so a raw
+	// authenticated CDN url is a 403 black box in fullscreen (thumbnails still
+	// render because AuthedImage re-fetches with the token). Resolve each item's
+	// url to an authed `blob:` url and feed that to the lightbox. resolveAuthedImage
+	// is cached + deduped, so this shares the fetch with the thumbnail.
+	let resolvedUrls = $state<Record<string, string>>({});
+	$effect(() => {
+		if (!open) return;
+		let cancelled = false;
+		for (const item of mediaItems) {
+			if (resolvedUrls[item.url]) continue;
+			void resolveAuthedImage(item.url).then((data) => {
+				if (!cancelled && data) {
+					resolvedUrls = { ...resolvedUrls, [item.url]: data };
+				}
+			});
+		}
+		return () => {
+			cancelled = true;
+		};
+	});
+
 	$effect(() => {
 		if (!open || !galleryEl || mediaItems.length === 0) return;
 
@@ -49,7 +72,12 @@
 				showAnimationDuration: 300,
 				hideAnimationDuration: 300,
 			});
-			lightbox.addFilter("itemData", (itemData) => {
+			lightbox.addFilter("itemData", (itemData, index) => {
+				// Swap the raw href for the resolved authed blob url so fullscreen
+				// shows the photo instead of a 403 black box.
+				const item = mediaItems[index];
+				const resolved = item ? resolvedUrls[item.url] : undefined;
+				if (resolved) itemData.src = resolved;
 				const img = itemData.element?.querySelector("img");
 				if (img?.naturalWidth) {
 					itemData.width = img.naturalWidth;
@@ -88,7 +116,7 @@
 				<div class="grid grid-cols-3 gap-1" bind:this={galleryEl}>
 					{#each mediaItems as item, i (item.url)}
 						<a
-							href={item.url}
+							href={resolvedUrls[item.url] ?? item.url}
 							data-pswp-width={item.width ?? undefined}
 							data-pswp-height={item.height ?? undefined}
 							aria-label="Photo {i + 1}"
