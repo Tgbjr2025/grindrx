@@ -102,6 +102,13 @@ class CLIDecisionEngine:
             "--json-schema", json.dumps(DECISION_SCHEMA),
             "--model", self.cfg.model,
         ]
+        # The CLI must authenticate with its own claude.ai login. A stray
+        # ANTHROPIC_API_KEY (even a placeholder from .env) takes precedence
+        # and breaks the subscription bridge - strip auth vars for the child.
+        child_env = {
+            k: v for k, v in os.environ.items()
+            if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE")
+        }
         last_error: Exception | None = None
         for attempt in range(_SILENT_CRASH_RETRIES + 1):
             proc = await asyncio.create_subprocess_exec(
@@ -109,6 +116,7 @@ class CLIDecisionEngine:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=child_env,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
