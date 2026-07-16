@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ImageIcon, StarIcon, TrashIcon } from "phosphor-svelte";
+	import { ImageIcon, TrashIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
@@ -37,38 +37,25 @@
 		const prev = [...photos];
 		photos = photos.filter((p) => p.mediaHash !== hash);
 		try {
-			await fetchRest(`/v3.1/me/profile/images/${hash}`, { method: "DELETE" });
+			// PRIVACY-CRITICAL: the documented delete is `DELETE /v3/me/profile/images`
+			// with a JSON *body* `{ media_hashes: [...] }` (see
+			// docs/content/grindr-api/users/profiles.md#delete-profile-photos). It
+			// removes the photo from the profile AND deletes the media from the CDN.
+			// The previous path-param form `DELETE /v3.1/me/profile/images/{hash}` is
+			// not a real endpoint — it returned without deleting, so removed photos
+			// reappeared on reload ("delete doesn't stick"). Grindr treats deletes as
+			// idempotent, so re-deleting an already-gone hash is safe.
+			const res = await fetchRest("/v3/me/profile/images", {
+				method: "DELETE",
+				body: { media_hashes: [hash] },
+			});
+			if (res.status < 200 || res.status >= 300) {
+				throw new Error(`HTTP ${res.status}`);
+			}
 			toast.success("Photo deleted.");
 		} catch {
 			photos = prev;
 			toast.error("Failed to delete photo.");
-		} finally {
-			const next = new Set(busy);
-			next.delete(hash);
-			busy = next;
-		}
-	}
-
-	async function setAsPrimary(hash: string) {
-		if (photos[0]?.mediaHash === hash) return;
-		busy = new Set([...busy, hash]);
-		activeHash = null;
-		const prev = [...photos];
-		// Optimistically move to front
-		photos = [
-			photos.find((p) => p.mediaHash === hash)!,
-			...photos.filter((p) => p.mediaHash !== hash),
-		];
-		try {
-			// Grindr uses ordered mediaHashes PUT to reorder profile images
-			await fetchRest("/v3.1/me/profile/images", {
-				method: "PUT",
-				body: { mediaHashes: photos.map((p) => p.mediaHash) },
-			});
-			toast.success("Primary photo updated.");
-		} catch {
-			photos = prev;
-			toast.error("Failed to update primary photo.");
 		} finally {
 			const next = new Set(busy);
 			next.delete(hash);
@@ -107,11 +94,11 @@
 			</Empty.Root>
 		{:else}
 			<p class="text-xs text-muted-foreground px-1">
-				Tap a photo to set it as primary or delete it. The first photo is your profile picture.
+				These are the photos saved to your Grindr account. Tap a photo to delete it — this
+				removes it from your profile and from Grindr's servers.
 			</p>
 			<div class="grid grid-cols-3 gap-1.5">
 				{#each photos as photo, i (photo.mediaHash)}
-					{@const isPrimary = i === 0}
 					{@const isBusy = busy.has(photo.mediaHash)}
 					{@const isActive = activeHash === photo.mediaHash}
 					<div class="relative aspect-square">
@@ -129,12 +116,6 @@
 								draggable="false"
 								loading="lazy"
 							/>
-							{#if isPrimary}
-								<span class="absolute top-1.5 left-1.5 flex items-center gap-0.5 rounded-full bg-black/60 backdrop-blur px-1.5 py-0.5 text-[10px] font-semibold text-yellow-400">
-									<StarIcon weight="fill" class="size-2.5" />
-									Main
-								</span>
-							{/if}
 							{#if isBusy}
 								<div class="absolute inset-0 flex items-center justify-center">
 									<Spinner class="size-5 text-white" />
@@ -144,16 +125,6 @@
 
 						{#if isActive && !isBusy}
 							<div class="absolute bottom-1.5 left-1 right-1 z-50 flex flex-col gap-1 rounded-xl overflow-hidden shadow-xl border border-border bg-popover text-[13px]">
-								{#if !isPrimary}
-									<button
-										type="button"
-										class="flex items-center gap-2 px-3 py-2.5 hover:bg-muted transition-colors font-medium"
-										onclick={() => setAsPrimary(photo.mediaHash)}
-									>
-										<StarIcon weight="fill" class="size-3.5 text-yellow-400 shrink-0" />
-										Set as primary
-									</button>
-								{/if}
 								<button
 									type="button"
 									class="flex items-center gap-2 px-3 py-2.5 hover:bg-muted transition-colors font-medium text-destructive"
