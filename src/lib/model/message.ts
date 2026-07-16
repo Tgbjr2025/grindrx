@@ -326,6 +326,8 @@ export function previewFromMessage(message: ApiResponseMessage | undefined): {
 				albumId: null,
 				imageHash: null,
 			};
+		case "Location":
+			return { type: "Location", text: "📍 Location", albumId: null, imageHash: null };
 		case "Image":
 		case "ExpiringImage":
 		case "Album":

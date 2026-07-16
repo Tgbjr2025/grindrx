@@ -16,6 +16,7 @@
 	import UnsentMessage from "./UnsentMessage.svelte";
 	import UnsupportedMessage from "./UnsupportedMessage.svelte";
 	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
+	import LocationMessage from "./LocationMessage.svelte";
 
 	let {
 		message,
@@ -179,6 +180,8 @@
 			<AlbumReactionMessage message={message.body} />
 		{:else if message.type === "AlbumContentReply"}
 			<AlbumReactionMessage message={message.body} reply={message.body.albumContentReply} />
+		{:else if message.type === "Location"}
+			<LocationMessage message={message.body} />
 		{:else if message.type === "Unsent"}
 			<UnsentMessage />
 		{:else}
