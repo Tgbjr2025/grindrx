@@ -265,6 +265,12 @@ class Engine:
             state.open_positions = []
 
         events = await newsmod.fetch_calendar(self.http, self.cfg.data.economic_calendar_url)
+        if events:
+            self._events_cache = events
+        else:
+            # fetch failed (rate limit etc.) - reuse the last good calendar so
+            # the news blackout keeps working instead of silently vanishing
+            events = getattr(self, "_events_cache", [])
         dossier = await self._build_dossier(state, events)
         self._atr_cache = {
             s: dossier["symbols"][s]["technicals_by_timeframe"]
