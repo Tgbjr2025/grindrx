@@ -21,11 +21,14 @@ class EngineCfg(BaseModel):
 
 
 class LLMCfg(BaseModel):
-    model: str = "claude-sonnet-5"
-    effort: str = "high"
-    max_tokens: int = 4096
+    backend: str = "claude_cli"  # claude_cli (Claude Code CLI, subscription) | api (Anthropic API)
+    model: str = "sonnet"        # CLI alias or full model id (api backend: claude-sonnet-5)
+    effort: str = "high"         # api backend only
+    max_tokens: int = 4096       # api backend only
     min_confidence: float = 0.62
-    daily_budget_usd: float = 5.0
+    daily_budget_usd: float = 5.0        # api backend only
+    cli_path: str = ""                   # claude_cli backend: override binary path
+    cli_timeout_seconds: int = 240       # claude_cli backend: per-call deadline
 
 
 class CostsCfg(BaseModel):
@@ -94,6 +97,8 @@ class Config(BaseModel):
                 raise ValueError("mode=live requires METAAPI_TOKEN and METAAPI_ACCOUNT_ID in .env")
         if self.mode not in ("paper", "live"):
             raise ValueError(f"mode must be 'paper' or 'live', got {self.mode!r}")
+        if self.llm.backend not in ("claude_cli", "api"):
+            raise ValueError(f"llm.backend must be 'claude_cli' or 'api', got {self.llm.backend!r}")
         return self
 
 
@@ -108,8 +113,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     cfg.metaapi_token = os.environ.get("METAAPI_TOKEN", "")
     cfg.metaapi_account_id = os.environ.get("METAAPI_ACCOUNT_ID", "")
     cfg.notify_webhook_url = os.environ.get("NOTIFY_WEBHOOK_URL", "")
-    if not cfg.anthropic_api_key:
-        raise ValueError("ANTHROPIC_API_KEY is required (set it in .env)")
+    if cfg.llm.backend == "api" and not cfg.anthropic_api_key:
+        raise ValueError("llm.backend=api requires ANTHROPIC_API_KEY in .env "
+                         "(or use backend=claude_cli with a logged-in Claude Code CLI)")
     # re-run live checks now that env vars are in
     Config.model_validate(cfg.model_dump())
     return cfg

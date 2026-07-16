@@ -1,8 +1,17 @@
 # FXBot — Autonomous Forex Trading Bot
 
 An autonomous forex trading bot that runs 24/5 on a Linux server (built for an
-OVH VPS), uses **Claude Sonnet (`claude-sonnet-5`)** as its decision engine, and
-trades a **trading.com MetaTrader 5 account** through the MetaApi cloud bridge.
+OVH VPS), uses **Claude Sonnet** as its decision engine, and trades a
+**trading.com MetaTrader 5 account** through the MetaApi cloud bridge.
+
+Two decision-engine backends (`llm.backend` in `config.yaml`):
+
+- **`claude_cli`** (default) — drives the logged-in **Claude Code CLI** on the
+  server (`claude -p --json-schema ...`), so a Claude subscription covers the
+  model calls with **no API credits needed**. Known CLI flakes (silent
+  crashes, timeouts) are retried automatically.
+- **`api`** — the Anthropic API (`claude-sonnet-5`) with structured outputs,
+  effort control, and a hard daily spend cap. Needs `ANTHROPIC_API_KEY`.
 
 Every 15 minutes (configurable) it assembles a full market dossier —
 multi-timeframe technicals, live spreads, the complete round-trip cost of each
@@ -74,7 +83,7 @@ does **not** reset them. To un-halt after reviewing what happened:
 ```bash
 cd /home/ubuntu/fxbot          # or wherever you place this directory
 bash deploy/deploy.sh          # venv, deps, systemd unit
-nano .env                      # ANTHROPIC_API_KEY (+ MetaApi creds for live)
+nano .env                      # only needed for api backend / MetaApi creds for live
 nano config.yaml               # symbols, risk, costs
 .venv/bin/python run.py --once # smoke test: one full cycle in paper mode
 sudo systemctl start fxbot

@@ -15,11 +15,16 @@ engine:
   close_all_before_weekend: true
 
 llm:
-  model: claude-sonnet-5
+  backend: claude_cli        # claude_cli = Claude Code CLI bridge (subscription, no API cost)
+                             # api        = Anthropic API (needs ANTHROPIC_API_KEY + credits)
+  model: sonnet              # claude_cli: CLI alias (sonnet/opus/haiku) or full id
+                             # api: use the full id, e.g. claude-sonnet-5
+  min_confidence: 0.62       # model confidence required to act (0-1)
+  cli_timeout_seconds: 240   # claude_cli backend: per-call deadline (silent crashes retried)
+  # api-backend-only knobs:
   effort: high               # low | medium | high | xhigh | max
   max_tokens: 4096
-  min_confidence: 0.62       # model confidence required to act (0-1)
-  daily_budget_usd: 5.0      # hard cap on LLM spend per day; bot idles when reached
+  daily_budget_usd: 5.0      # hard cap on API spend per day; bot idles when reached
 
 costs:
   # Everything here feeds the expected-value gate: a trade is only taken when

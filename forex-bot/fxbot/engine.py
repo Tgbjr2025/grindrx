@@ -41,7 +41,12 @@ class Engine:
         self.cfg = cfg
         self.http = httpx.AsyncClient(follow_redirects=True)
         self.journal = Journal(cfg.journal.db_path)
-        self.llm = DecisionEngine(cfg.llm, cfg.anthropic_api_key)
+        if cfg.llm.backend == "claude_cli":
+            from .llm_cli import CLIDecisionEngine
+
+            self.llm = CLIDecisionEngine(cfg.llm)
+        else:
+            self.llm = DecisionEngine(cfg.llm, cfg.anthropic_api_key)
         self.broker: Broker
         if cfg.mode == "live":
             from .broker.metaapi_broker import MetaApiBroker
