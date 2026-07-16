@@ -49,6 +49,16 @@ class RiskCfg(BaseModel):
     max_lot_size: float = 1.0
     min_stop_distance_atr: float = 1.0
     news_blackout_minutes: int = 30
+    breakeven_after_r: float = 1.0     # move SL to entry once profit >= N x risk (0 = off)
+    breakeven_buffer_pips: float = 1.0 # lock in this much beyond entry
+
+
+class FileBridgeCfg(BaseModel):
+    host: str = ""
+    user: str = ""
+    files_dir: str = ""
+    order_timeout_seconds: int = 45
+    magic: int = 26070801
 
 
 class PaperCfg(BaseModel):
@@ -69,8 +79,10 @@ class JournalCfg(BaseModel):
 
 class Config(BaseModel):
     mode: str = "paper"
+    broker: str = ""  # live mode: metaapi | file_bridge (default metaapi)
     confirm_live: bool = False
     base_currency: str = "USD"
+    file_bridge: FileBridgeCfg = Field(default_factory=FileBridgeCfg)
     engine: EngineCfg = Field(default_factory=EngineCfg)
     llm: LLMCfg = Field(default_factory=LLMCfg)
     costs: CostsCfg = Field(default_factory=CostsCfg)
@@ -93,8 +105,14 @@ class Config(BaseModel):
                     "mode=live requires confirm_live: true in config.yaml. "
                     "Live trading risks real money - set it deliberately."
                 )
-            if not (self.metaapi_token and self.metaapi_account_id):
-                raise ValueError("mode=live requires METAAPI_TOKEN and METAAPI_ACCOUNT_ID in .env")
+            if self.broker == "file_bridge":
+                if not (self.file_bridge.host and self.file_bridge.user and self.file_bridge.files_dir):
+                    raise ValueError("broker=file_bridge requires file_bridge.host/user/files_dir")
+            elif not (self.metaapi_token and self.metaapi_account_id):
+                raise ValueError("mode=live with the metaapi broker requires "
+                                 "METAAPI_TOKEN and METAAPI_ACCOUNT_ID in .env")
+        if self.broker not in ("", "metaapi", "file_bridge"):
+            raise ValueError(f"broker must be 'metaapi' or 'file_bridge', got {self.broker!r}")
         if self.mode not in ("paper", "live"):
             raise ValueError(f"mode must be 'paper' or 'live', got {self.mode!r}")
         if self.llm.backend not in ("claude_cli", "api"):

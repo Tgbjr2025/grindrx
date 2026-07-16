@@ -48,7 +48,11 @@ class Engine:
         else:
             self.llm = DecisionEngine(cfg.llm, cfg.anthropic_api_key)
         self.broker: Broker
-        if cfg.mode == "live":
+        if cfg.mode == "live" and cfg.broker == "file_bridge":
+            from .broker.file_bridge import FileBridgeBroker
+
+            self.broker = FileBridgeBroker(cfg)
+        elif cfg.mode == "live":
             from .broker.metaapi_broker import MetaApiBroker
 
             self.broker = MetaApiBroker(cfg)
@@ -83,6 +87,61 @@ class Engine:
         log.info("NOTIFY: %s", msg)
         await notify(self.http, self.cfg.notify_webhook_url, msg)
 
+    async def _breakeven_pass(self, state: riskmod.AccountState) -> None:
+        """Once a position is >= N*R in profit, move the stop to entry + buffer.
+
+        Deterministic engine logic (not delegated to the model): converts
+        winners that reverse into scratches instead of losses.
+        """
+        r_mult = self.cfg.risk.breakeven_after_r
+        if r_mult <= 0 or not hasattr(self.broker, "modify_stops"):
+            return
+        for p in state.open_positions:
+            if p.stop_loss <= 0 or p.entry_price <= 0:
+                continue
+            ps = pip_size(p.symbol)
+            risk_pips = abs(p.entry_price - p.stop_loss) / ps
+            if risk_pips <= 0:
+                continue
+            try:
+                q = await self.broker.quote(p.symbol)
+            except Exception:  # noqa: BLE001
+                continue
+            price = q.bid if p.direction == "long" else q.ask
+            profit_pips = ((price - p.entry_price) if p.direction == "long"
+                           else (p.entry_price - price)) / ps
+            buffer = self.cfg.risk.breakeven_buffer_pips * ps
+            be_stop = p.entry_price + buffer if p.direction == "long" else p.entry_price - buffer
+            already_locked = (p.stop_loss >= be_stop) if p.direction == "long" else (p.stop_loss <= be_stop)
+            if profit_pips >= r_mult * risk_pips and not already_locked:
+                if await self.broker.modify_stops(p.id, round(be_stop, 5)):
+                    p.stop_loss = be_stop
+                    await self._notify(
+                        f"🔒 Moved {p.symbol} {p.direction} stop to breakeven "
+                        f"(+{profit_pips:.0f}p >= {r_mult:.1f}R)")
+
+    def _decision_memory(self) -> dict[str, Any]:
+        """Feed the model its own recent history so it learns from outcomes."""
+        closed = self.journal.db.execute(
+            "SELECT ts_close, symbol, direction, lots, pnl FROM trades "
+            "WHERE ts_close IS NOT NULL ORDER BY ts_close DESC LIMIT 10").fetchall()
+        prev = self.journal.db.execute(
+            "SELECT ts, outlook FROM outlooks ORDER BY ts DESC LIMIT 1").fetchone()
+        recent = self.journal.db.execute(
+            "SELECT ts, symbol, action, confidence, gate_result FROM decisions "
+            "WHERE action != 'hold' ORDER BY id DESC LIMIT 8").fetchall()
+        return {
+            "recent_closed_trades": [
+                {"closed": t, "symbol": s, "direction": d, "lots": l, "pnl_usd": p}
+                for t, s, d, l, p in closed
+            ],
+            "previous_outlook": {"ts": prev[0], "text": prev[1]} if prev else None,
+            "recent_non_hold_decisions": [
+                {"ts": t, "symbol": s, "action": a, "confidence": c, "result": g}
+                for t, s, a, c, g in recent
+            ],
+        }
+
     # ---------- dossier ----------
 
     async def _build_dossier(self, state: riskmod.AccountState,
@@ -97,6 +156,16 @@ class Engine:
             newsmod.fetch_headlines(self.http, self.cfg.data.news_feeds),
             sentmod.fetch_reddit_titles(self.http, self.cfg.data.reddit_subs),
         )
+
+        # in bridge mode, replace the 15m technicals with the broker's own candles
+        if hasattr(self.broker, "get_rates_m15") and "15m" in e.timeframes:
+            from .data.market import _indicators  # broker df has the same shape
+
+            for snap in snapshots:
+                df = await self.broker.get_rates_m15(snap.symbol)  # type: ignore[attr-defined]
+                if df is not None and len(df) > 30:
+                    snap.summary["15m"] = _indicators(df, snap.symbol)
+                    snap.summary["15m"]["source"] = "broker_feed"
 
         symbols_block: dict[str, Any] = {}
         self._live_spreads: dict[str, float] = {}
@@ -147,6 +216,7 @@ class Engine:
             "economic_calendar_next_48h": [ev.to_json() for ev in newsmod.upcoming_events(events)],
             "news_headlines": headlines,
             "social_sentiment_raw": social,
+            "your_recent_history": self._decision_memory(),
         }
 
     # ---------- decision execution ----------
@@ -238,6 +308,7 @@ class Engine:
 
         state = await self._account_state()
         self.journal.snapshot_equity(state.balance, state.equity)
+        await self._breakeven_pass(state)
 
         # restart-proof kill switch
         if self.journal.get("halted"):

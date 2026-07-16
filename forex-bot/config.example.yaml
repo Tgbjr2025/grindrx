@@ -1,9 +1,19 @@
 # FXBot configuration.
 # Copy to config.yaml and adjust. Secrets go in .env, never here.
 
-mode: paper            # paper | live   (live requires METAAPI_TOKEN/ACCOUNT_ID and confirm_live: true)
+mode: paper            # paper | live   (live also requires confirm_live: true)
+broker: ""             # live mode only: metaapi | file_bridge (default metaapi)
 confirm_live: false    # must be explicitly set true to allow real-money trading
 base_currency: USD
+
+# broker=file_bridge: trade through the TradingComBridgeEA running in MT5
+# (ea/TradingComBridgeEA.mq5) over Tailscale SSH - no MetaApi subscription.
+file_bridge:
+  host: ""             # tailnet IP of the machine running MT5
+  user: ""             # ssh user on that machine
+  files_dir: ""        # absolute path of the terminal's MQL5/Files folder
+  order_timeout_seconds: 45
+  magic: 26070801
 
 engine:
   cycle_minutes: 15          # how often the bot re-evaluates the market
@@ -55,6 +65,8 @@ risk:
   max_lot_size: 1.0
   min_stop_distance_atr: 1.0      # stop-loss at >= 1 ATR
   news_blackout_minutes: 30       # no new trades +/- N min around high-impact events
+  breakeven_after_r: 1.0          # move SL to entry once profit >= N x initial risk (0 = off)
+  breakeven_buffer_pips: 1.0      # lock in this much beyond entry when doing so
 
 paper:
   starting_balance: 10000.0

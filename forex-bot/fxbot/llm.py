@@ -105,6 +105,13 @@ Below 0.6 the harness will not act.
 - Weigh ALL provided context: technicals, macro news, world events, central \
 bank expectations, cross-market risk sentiment and positioning chatter. \
 Contradictory signals lower confidence.
+- The dossier includes your_recent_history (your previous outlook, recent \
+non-hold decisions and closed-trade P&L). Stay consistent with theses that \
+are working, learn from ones that lost, and do not flip-flop on a symbol \
+without new information.
+- The harness automatically moves stops to breakeven once a position is 1R \
+in profit - you do not need to manage that; focus on entries, exits and \
+invalidations.
 """
 
 

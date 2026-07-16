@@ -115,6 +115,18 @@ class PaperBroker(Broker):
         )
         return pos
 
+    async def modify_stops(self, position_id: str, stop_loss: float, take_profit: float = 0.0) -> bool:
+        pos = self._positions.get(position_id)
+        if not pos:
+            return False
+        if stop_loss > 0:
+            pos.stop_loss = stop_loss
+        if take_profit > 0:
+            pos.take_profit = take_profit
+        self._save_state()
+        log.info("PAPER MODIFY %s sl=%.5f tp=%.5f", pos.symbol, pos.stop_loss, pos.take_profit)
+        return True
+
     async def close_position(self, position_id: str) -> bool:
         pos = self._positions.pop(position_id, None)
         if not pos:
