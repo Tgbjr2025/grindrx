@@ -1,5 +1,7 @@
 <script lang="ts">
+	import Link from "$lib/components/ui/link/Link.svelte";
 	import type { TextMessage } from "$lib/model/message";
+	import { linkifySegments } from "$lib/utils/linkify";
 	import { getMessageContext, getMessageMetaContext } from "./context";
 
 	let { message }: { message: TextMessage["body"] } = $props();
@@ -48,6 +50,13 @@
 			</g>
 		</svg>
 	{/if}
-	<span class="whitespace-pre-wrap">{message.text}</span>
+	<span class="whitespace-pre-wrap [overflow-wrap:anywhere]"
+		>{#each linkifySegments(message.text) as seg}{#if seg.type === "url"}<Link
+					href={seg.value}
+					rel="noreferrer nofollow noopener"
+					class="underline underline-offset-2 break-all"
+					onclick={(e) => e.stopPropagation()}>{seg.value}</Link
+				>{:else}{seg.value}{/if}{/each}</span
+	>
 	{@render adornments?.()}
 </div>
