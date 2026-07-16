@@ -10,6 +10,7 @@ export function getDistanceUnit(): DistanceUnit {
 }
 
 export function setDistanceUnit(unit: DistanceUnit): void {
+	if (typeof localStorage === "undefined") return;
 	localStorage.setItem(STORAGE_KEY, unit);
 }
 

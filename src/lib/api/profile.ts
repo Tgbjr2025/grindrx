@@ -96,9 +96,11 @@ export async function getProfiles(
 			targetProfileIds: profileIds,
 		},
 	}).then((res) => res.jsonParsed(getProfilesResponseSchema).profiles);
-	profiles.forEach((profile) => {
-		profilesCache.set(profile.profileId, { profile: profile as unknown as Profile, updatedAt: Date.now() });
-	});
+	// NOTE: do NOT write these into `profilesCache`. That cache is read by
+	// getProfile() and typed as a full `Profile`; these are SHORT grid profiles
+	// (missing aboutMe/tribes/lookingFor/socials). Caching them here made
+	// getProfile() return a truncated record for ~60s after a grid load, blanking
+	// the profile detail view. The grid consumes the returned array directly.
 	return profiles;
 }
 

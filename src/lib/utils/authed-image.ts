@@ -120,16 +120,22 @@ export async function fetchAuthedBytes(
 	if (classifyHost(url) !== "auth") return null;
 	try {
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
-		const buffer = await Promise.race([
-			invoke<ArrayBuffer>("fetch_authed_bytes", { url }),
-			new Promise<ArrayBuffer>((_, reject) =>
-				setTimeout(
-					() => reject(new Error("fetch_authed_bytes timed out")),
-					12000,
-				),
-			),
-		]);
-		return { buffer, mime: sniffMime(new Uint8Array(buffer)) };
+		// Clear the timer once the fetch settles so it doesn't dangle per call.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const buffer = await Promise.race([
+				invoke<ArrayBuffer>("fetch_authed_bytes", { url }),
+				new Promise<ArrayBuffer>((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error("fetch_authed_bytes timed out")),
+						12000,
+					);
+				}),
+			]);
+			return { buffer, mime: sniffMime(new Uint8Array(buffer)) };
+		} finally {
+			clearTimeout(timer);
+		}
 	} catch (error) {
 		console.error(
 			"[GrindrX] fetch_authed_bytes failed for",
