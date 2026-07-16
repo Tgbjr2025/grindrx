@@ -1,0 +1,15 @@
+[Unit]
+Description=FXBot web dashboard (tailnet-only)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/fxbot
+ExecStart=/home/ubuntu/fxbot/.venv/bin/python dashboard.py
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
