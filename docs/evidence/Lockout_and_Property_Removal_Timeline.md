@@ -5,7 +5,7 @@
 Compiled from SMS records between Thomas Bateman Jr. and David Allen (+1 810-569-7800).
 Message period: August 15, 2025 – July 18, 2026 · 11,105 messages reviewed · Prepared July 21, 2026.
 
-All quotations are verbatim from the message log, including original spelling and profanity. This is a factual compilation of the message record; it is not legal advice. See the accompanying Word document for the full formatted version including the summary of key findings and incident index.
+All quotations are verbatim from the message log, including original spelling and profanity. This is a factual compilation of the message record; it is not legal advice. See the accompanying Word documents for the formatted timeline and the damages claim schedule.
 
 ## Chronological Record
 
@@ -137,13 +137,17 @@ All quotations are verbatim from the message log, including original spelling an
 - **[Oct 1, 2025 7:10 PM] TOM:** “Where's my dad's navy uniform”
   - _Sentimental item missing after the removal._
 
-### October–November 2025 — Quieter period; displacement references
-*Categories: ACCESS*
+### October 2025 — MONTH-LONG EXCLUSION: displaced after the Sep 30 padlock, utility shutoff, and belongings removal; Tom lives in a rented room, then a camper
+*Categories: LOCKOUT / PROPERTY / ACCESS*
 
+- **[Sep 30 – Oct 2025] —:** “(Period summary) Following the September 30 padlocking/boarding of the door, the announced utility shutoff ('the power water. Everything is getting shut off'), and the October 1 discovery of Tom's belongings at the side of the road, the message log goes largely quiet on the residence for the month of October — consistent with Tom being out of the home for the entire month.”
+  - _The displacement is corroborated by the entries below._
+- **[Oct 1, 2025 3:53 AM] TOM:** “Excuse me, I moved nothing out, I went and got a room with my dogs...”
+  - _Tom paying for lodging elsewhere on the first night of the exclusion period._
 - **[Nov 1, 2025 1:06 AM] TOM:** “I've been stuck living in a camper because of you, your a pos”
-  - _Tom attributes his displacement from the home to David._
+  - _One month later: Tom states he has been living in a camper because of David — covering the month of October 2025._
 - **[Nov 20, 2025 5:13 PM] TOM:** “If you don't want me to come back. Here I don't want to wait for me just say so I can get everything packed and out of here.”
-  - _Tom's return treated as conditional on David's say-so._
+  - _Even after returning, Tom's presence is treated as conditional on David's say-so._
 
 ### December 14–16, 2025 — Belongings access on permission only; stuff put by the door
 *Categories: PROPERTY / ACCESS*
