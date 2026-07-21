@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import {
+		AppleLogoIcon,
+		FacebookLogoIcon,
+		GoogleLogoIcon,
+	} from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import z from "zod";
 
@@ -98,19 +103,41 @@
 				</div>
 			</div>
 		</Card.Content>
-		<Card.Footer class="flex-col gap-2">
+		<Card.Footer class="flex-col gap-3">
 			<Button type="submit" class="w-full" disabled={submitting}>Login</Button>
-			<!-- <Button variant="outline" class="w-full">Login with Google</Button> -->
-			<p class="text-muted-foreground mt-2 text-center text-xs">
-				Signed up with Google, Apple, or Facebook?
-				<a
+
+			<!--
+				GrindrX is email+password only — it cannot do real "Sign in with
+				Google/Apple/Facebook" (the social token is bound to Grindr's own
+				OAuth client). Social-signup users must set a password first, so we
+				surface that path as a clear, self-explanatory callout instead of a
+				dead "Login with Google" button.
+			-->
+			<div
+				class="mt-1 flex w-full flex-col gap-2 rounded-2xl border bg-muted/40 p-4 text-left"
+			>
+				<div class="text-foreground flex items-center gap-1.5">
+					<GoogleLogoIcon weight="bold" class="size-5 shrink-0" />
+					<AppleLogoIcon weight="fill" class="size-5 shrink-0" />
+					<FacebookLogoIcon weight="fill" class="size-5 shrink-0" />
+					<span class="ms-1.5 text-sm font-semibold">
+						Used Google, Apple, or Facebook?
+					</span>
+				</div>
+				<p class="text-muted-foreground text-sm">
+					GrindrX signs in with an email and password. Those accounts don't
+					have one yet — set a password first, then come back and sign in here
+					with your email.
+				</p>
+				<Button
 					href="/auth/password-reset"
-					class="text-foreground underline-offset-4 hover:underline"
+					variant="outline"
+					class="mt-1 w-full"
+					disabled={submitting}
 				>
 					Set a password
-				</a>
-				to sign in.
-			</p>
+				</Button>
+			</div>
 		</Card.Footer>
 	</Card.Root>
 </form>
