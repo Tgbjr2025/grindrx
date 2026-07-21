@@ -32,6 +32,12 @@ export const methods = {
 		request: z.undefined(),
 		response: z.undefined(),
 	},
+	forgot_password: {
+		request: z.object({
+			email: z.email(),
+		}),
+		response: z.undefined(),
+	},
 } satisfies Record<string, { request: z.ZodType; response: z.ZodType }>;
 
 export async function callMethod<T extends keyof typeof methods>(

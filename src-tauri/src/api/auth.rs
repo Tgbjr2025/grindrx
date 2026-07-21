@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::state::AppState;
 
-use super::client::GrindrClient;
+use super::client::{GrindrClient, BASE_URL};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Session {
@@ -61,6 +61,12 @@ pub struct RefreshRequest {
 #[serde(rename_all = "camelCase")]
 pub struct LoginResult {
     pub profile_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForgotPasswordRequest {
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +180,40 @@ impl GrindrClient {
         Ok(LoginResult { profile_id })
     }
 
+    /// Trigger Grindr's password-reset email. This is intentionally
+    /// unauthenticated: it's called from the logged-out reset screen, and the
+    /// primary audience is users who created their Grindr account via a social
+    /// provider (Google/Apple/Facebook) and therefore have no password. Setting
+    /// one via this email is what lets them sign in to GrindrX (which is
+    /// email+password only).
+    pub async fn forgot_password(&self, email: &str) -> Result<(), AppError> {
+        let http = self.http.read().await.clone();
+        let body = ForgotPasswordRequest { email: email.to_owned() };
+
+        let response = http
+            .post(format!("{BASE_URL}/v3/users/forgot-password"))
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let json: serde_json::Value = response.json().await.unwrap_or_default();
+            return Err(AppError::Api {
+                code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0) as i32,
+                message: json
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Failed to send reset email")
+                    .to_owned(),
+            });
+        }
+
+        // Body (ForgotPwdEmailResponse) is intentionally ignored — success is
+        // signalled by the 2xx status; Grindr returns a generic result here to
+        // avoid account-existence enumeration.
+        Ok(())
+    }
+
     /// Public refresh — takes `refresh_lock` so callers from the Tauri command
     /// surface can't race the implicit refresh inside `authorization_header()`.
     /// Use `refresh_token_inner()` if the lock is already held.
@@ -278,6 +318,18 @@ pub async fn refresh_token(state: tauri::State<'_, AppState>) -> Result<LoginRes
     let result = state.client()?.refresh_token().await?;
     state.auth_notify.notify_one();
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn forgot_password(
+    state: tauri::State<'_, AppState>,
+    email: String,
+) -> Result<(), AppError> {
+    let email = email.trim();
+    if email.is_empty() {
+        return Err(AppError::Auth("Email is required".to_owned()));
+    }
+    state.client()?.forgot_password(email).await
 }
 
 #[tauri::command]

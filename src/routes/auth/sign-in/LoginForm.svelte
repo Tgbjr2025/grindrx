@@ -101,6 +101,16 @@
 		<Card.Footer class="flex-col gap-2">
 			<Button type="submit" class="w-full" disabled={submitting}>Login</Button>
 			<!-- <Button variant="outline" class="w-full">Login with Google</Button> -->
+			<p class="text-muted-foreground mt-2 text-center text-xs">
+				Signed up with Google, Apple, or Facebook?
+				<a
+					href="/auth/password-reset"
+					class="text-foreground underline-offset-4 hover:underline"
+				>
+					Set a password
+				</a>
+				to sign in.
+			</p>
 		</Card.Footer>
 	</Card.Root>
 </form>
