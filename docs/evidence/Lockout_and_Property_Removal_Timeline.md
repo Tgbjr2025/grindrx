@@ -468,3 +468,9 @@ All quotations are verbatim from the message log, including original spelling an
   - _Followed 9:41 PM: 'I really need to know when you're moving out.'_
 - **[Jul 20–21, 2026] —:** “State of Michigan Notice to Quit to Recover Possession of Property (Form DC 100c), landlord/landlady David Allen to Thomas Bateman Jr., premises 2610 Lyndale Ave, Mount Pleasant MI 48858; 'You must move by' August 30th, 2026 (21st crossed out); signed and dated July 20th/21st, 2026.”
   - _From the photographed notice provided with this log — the first formal notice appearing in the record, served after roughly 10 months of the self-help conduct documented above._
+
+### Addendum — incidents after the July 18, 2026 export cutoff
+*Categories: ACCESS (service interference)*
+
+- **[Jul 21, 2026] —:** “(Reported by Thomas Bateman Jr., July 21, 2026 — occurred after the SMS export was generated.) David unplugged Tom's router / disconnected the internet connection while Tom was running automated trading with real money on the forex exchange, leaving live trades unmanaged and exposing Tom to immediate financial loss.”
+  - _Continues the internet/service-interference pattern already documented in the SMS record (wifi cutoffs and password withholding: Aug–Sep 2025; Feb 17–18, Feb 25, Mar 1–4, Mar 31, Apr 5–6, 2026). Any trading losses from these disconnections should be documented (timestamps, account statements) and added to Schedule C of the damages claim schedule._
