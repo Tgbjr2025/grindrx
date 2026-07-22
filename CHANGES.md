@@ -5,6 +5,62 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.16 — open-issue fixes (2026-07-14)
+
+Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
+
+**Notifications split across categories (#6)**
+- `NotificationService.kt`: register the `grindx_messages` channel (IMPORTANCE_HIGH)
+  in `onCreate()`, not only in `MainActivity`. The Rust WebSocket loop posts message
+  notifications from the sticky foreground service's process, which can be alive after
+  a `START_STICKY` restart without `MainActivity` ever running — so the channel didn't
+  exist at post time and Android's Notification Assistant bucketed those under
+  "suggestions", splitting a conversation across categories.
+
+**Chat photo picker showed public profile pics, not private ones (#5)**
+- `AlbumPicker.svelte`: added a **Private** tab sourced from the user's album content
+  (signed-CDN media via `/v1/albums`); the old public-profile-photos source is kept
+  under a **Profile** tab. Private photos are sent by re-uploading their bytes through
+  the chat-media endpoint to mint a numeric `mediaId` (`prepareAuthedUrlForSend` in
+  `profile.ts`).
+
+**Explore/map `CAS-4001 is not valid JSON` (#3)**
+- `api/index.ts`: the cascade/explore endpoint can answer **HTTP 200 with a bare code**
+  (e.g. `CAS-4001`) instead of JSON. `json()` now routes a short/non-JSON success body
+  into `ApiHttpError` (which decodes the bare code), so the grid shows an actionable
+  message via `toGridError` instead of a raw `SyntaxError`. Removed the temporary
+  `[GrindrX-API]` logcat probe now that this is root-caused.
+
+**App crash on changing filters/settings until restart (#3)**
+- `app-data/preferences.svelte.ts`: `getPreferences()` degrades to defaults on any
+  read/decode/parse failure instead of rejecting. A non-atomic write racing a read (or
+  a half-written file from an app kill) previously threw, and the home route's
+  `{#await preferences}` had no catch — so a filter/location change hard-crashed the app.
+- `(root)/+page.svelte`: added a `{:catch}` backstop on the preferences await.
+- `TopBar.svelte`, `GridFilters.svelte`, `AgeQuickFilter.svelte`, `PositionQuickFilter.svelte`:
+  deep-clone `defaultFilters` (shared module state with nested arrays) before seeding
+  `$state`, so in-place slider edits can't corrupt the defaults and later fail
+  `preferencesSchema.parse`.
+
+**Account creation error toasts (#1)**
+- `rest.rs` / `lib.rs`: added an unauthenticated `request_public` bridge (mirrors
+  `request` but sends no Authorization header). Registration and password-reset are
+  pre-session actions; routing them through the authed bridge failed at the auth guard
+  with "Not logged in" before any network call, which the frontend turned into a
+  sign-in redirect plus a second "unknown error" toast.
+- `RegisterForm.svelte`, `ForgotPasswordForm.svelte`: use the public bridge, read the
+  real error body (`response.json()` now throws on non-2xx), and show a single honest
+  message. NOTE: Grindr's first-party account-creation endpoint is "dynamic, WIP" and
+  not publicly documented; this fixes the client-side error handling and transport, but
+  server-side account creation may still be unavailable — the user now sees the real
+  response instead of a misleading redirect.
+
+**Known limitation (not a code defect):** profiles beyond the free viewing radius (#3,
+part 1) require a Grindr subscription; the server does not return them for a free
+account, so they cannot be made to load client-side.
+
+---
+
 ## v0.1.9 — audit pass (2026-06-12)
 
 Robustness, security-hygiene, and DX fixes from a full line-by-line audit. No

@@ -1,8 +1,15 @@
 # SESSION_STATE — grindrx-work
 
-**Last updated:** 2026-06-23 08:16 UTC — docs reconcile #3: repo has advanced to **v0.1.13** (HEAD `b112cb3`, working tree CLEAN). The reconcile #2 "dirty tree" audit fixes are all committed (`17d47f3`); the `[diag-mediaid]` probe is gone; saved-photo 400, album-share unlock, and the token-leak are fixed. New open issue: CAS-4001 cascade error codes (+ a new temp `[GrindrX-API]` logcat probe at HEAD).
+**Last updated:** 2026-07-14 — **v0.1.16 shipped.** Fixed the five open Gitea issues (#1 account-creation toasts, #3 CAS-4001 explore + filter-change crash, #5 chat picker private photos, #6 notification categorization), bumped 0.1.15→0.1.16, built the signed universal APK on the OVH Nix host, and published releases on BOTH Gitea (`dominus/grindrx`, release id 19) and GitHub (`Tgbjr2025/grindrx`, release id 353510605). CAS-4001 is now root-caused (200-with-bare-code body) and the temp `[GrindrX-API]` probe is REMOVED. Work is on branch `claude/grindrx-total-downloads-o1hodl` (HEAD `c2223f0`); GitHub PR #25 open (draft). FIX_NOTES: `memory/FIX_NOTES_v0.1.16.md`. Rollback tag `pre-v0.1.16` = `0bab49c` on both remotes.
+**Prior update:** 2026-06-23 08:16 UTC — docs reconcile #3 (was at v0.1.13). History below preserved.
 **Session started:** 2026-06-09 06:57 UTC
 **Operator:** Tom
+
+> **v0.1.16 signing note (R1/R2):** cert SHA-256 is `22d6889e…4c01` (the fork's own
+> GrindrX key, `~/open-grind-key.jks` alias `grindx`), NOT the `2805fd…c3658c` in
+> `KEYS.md` (that is upstream Open Grind's governance key, not held here). Verified the
+> published v0.1.15 APK uses the SAME `22d6…` cert, so this is required for in-place
+> upgrade. See FIX_NOTES_v0.1.16 §KEYS.md discrepancy.
 
 ---
 

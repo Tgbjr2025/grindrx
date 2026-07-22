@@ -26,7 +26,7 @@
 		positions: z.infer<typeof filterPositionSchema>;
 		positionEnabled: boolean;
 	} = $state({
-		positions: defaultFilters.positions,
+		positions: [...defaultFilters.positions],
 		positionEnabled: defaultFilters.positionEnabled,
 	});
 
@@ -46,7 +46,7 @@
 					variant="link"
 					class="cursor-pointer"
 					onclick={() => {
-						filtersChanges.positions = defaultFilters.positions;
+						filtersChanges.positions = [...defaultFilters.positions];
 					}}
 				>
 					Reset

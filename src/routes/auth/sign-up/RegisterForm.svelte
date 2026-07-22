@@ -2,7 +2,7 @@
 	import { goto } from "$app/navigation";
 	import { toast } from "svelte-sonner";
 
-	import { asAppError, fetchRest } from "$lib/api";
+	import { ApiHttpError, asAppError, fetchRest } from "$lib/api";
 	import { Button } from "$lib/components/ui/button";
 	import * as Card from "$lib/components/ui/card";
 	import { Input } from "$lib/components/ui/input";
@@ -30,34 +30,47 @@
 		}
 		try {
 			submitting = true;
+			// Registration must NOT go through the authenticated bridge: a signed-out
+			// user has no session, so the authed path rejects with "Not logged in"
+			// before any request is sent, which fetchRest turns into a sign-in
+			// redirect + toast. Use the public bridge so the request actually reaches
+			// the server and we can report its real response.
 			const response = await fetchRest("/v1/accounts", {
 				method: "POST",
 				body: { email, password, displayName },
+				public: true,
 			});
 			if (response.status >= 200 && response.status < 300) {
 				toast.success("Account created! Please sign in.");
 				void goto("/auth/sign-in");
 			} else {
+				// Non-2xx: read the raw body (response.json() now throws on non-2xx).
+				const body = response.text();
+				let msg = "Failed to create account. Please try again.";
 				try {
-					const body = response.json();
-					const msg = (body as any)?.message || (body as any)?.error || "Failed to create account. Please try again.";
-					formError = msg;
-					toast.error(msg);
+					const parsed = JSON.parse(body) as { message?: string; error?: string };
+					msg = parsed?.message || parsed?.error || msg;
 				} catch {
-					formError = "Failed to create account. Please try again.";
-					toast.error("Failed to create account. Please try again.");
+					if (body.trim()) msg = `Failed to create account (${body.trim().slice(0, 80)}).`;
 				}
+				formError = msg;
+				toast.error(msg);
 			}
 		} catch (error) {
 			console.error(error);
-			const appError = asAppError(error);
-			if (appError) {
-				formError = appError.prettyMessage;
-				toast.error(appError.prettyMessage);
+			// Single, honest error path — no double toast.
+			let msg = "An unknown error occurred";
+			if (error instanceof ApiHttpError) {
+				msg =
+					error.code != null
+						? `Failed to create account (${error.code}).`
+						: "Failed to create account. Please try again.";
 			} else {
-				formError = "An unknown error occurred";
-				toast.error("An unknown error occurred");
+				const appError = asAppError(error);
+				if (appError) msg = appError.prettyMessage;
 			}
+			formError = msg;
+			toast.error(msg);
 		} finally {
 			submitting = false;
 		}

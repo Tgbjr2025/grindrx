@@ -32,6 +32,10 @@
 	// Masked preview entries have no profileId.
 	const previewSchema = z
 		.object({
+			// Some "preview" viewers still carry a profileId even on a free account;
+			// when present we can link straight to the profile like the grid does.
+			profileId: z.coerce.number().nullable().optional().catch(null),
+			displayName: z.string().nullable().optional().catch(null),
 			profileImageMediaHash: z.string().nullable().optional().catch(null),
 			seen: z.number().nullable().optional().catch(null),
 			lastViewed: z.number().nullable().optional().catch(null),
@@ -88,9 +92,11 @@
 			),
 			...r.previews.map(
 				(p, i): Row => ({
-					key: `v${i}`,
-					clickable: false,
-					displayName: null,
+					key: p.profileId != null ? `p${p.profileId}` : `v${i}`,
+					// Link the row whenever the server actually gave us a profileId.
+					clickable: p.profileId != null,
+					profileId: p.profileId ?? undefined,
+					displayName: p.displayName ?? null,
 					profileImageMediaHash: p.profileImageMediaHash ?? null,
 					seen: p.seen ?? p.lastViewed ?? null,
 					distance: p.distance ?? null,

@@ -17,8 +17,10 @@
 		onUpdateFilters: () => void;
 	} = $props();
 
+	// Clone the array — `defaultFilters.age` is shared module state; aliasing it
+	// here would let in-place slider edits corrupt the defaults.
 	let filtersChanges: { age: number[]; ageEnabled: boolean } = $state({
-		age: defaultFilters.age,
+		age: [...defaultFilters.age],
 		ageEnabled: defaultFilters.ageEnabled,
 	});
 
@@ -40,7 +42,7 @@
 					variant="link"
 					class="cursor-pointer"
 					onclick={() => {
-						filtersChanges.age = defaultFilters.age;
+						filtersChanges.age = [...defaultFilters.age];
 					}}
 				>
 					Reset

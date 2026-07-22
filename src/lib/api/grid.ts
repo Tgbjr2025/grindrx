@@ -12,7 +12,24 @@ export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
 			new URLSearchParams(
 				urlSearchParamsCodec(searchQuerySchema).encode(query),
 			).toString(),
-	).then((res) => res.jsonParsed(z.object({ profiles: z.array(searchProfileSchema) })));
+	).then((res) =>
+		res.jsonParsed(
+			z.object({
+				// Drop + log a single drifted profile instead of throwing the whole
+				// search (same tolerance as the v3 cascade and getProfiles).
+				profiles: z.array(z.unknown()).transform((raw) =>
+					raw.flatMap((p) => {
+						const r = searchProfileSchema.safeParse(p);
+						if (r.success) return [r.data];
+						console.warn("[GrindrX] dropping unparseable search profile", {
+							issue: r.error.issues[0],
+						});
+						return [];
+					}),
+				),
+			}),
+		),
+	);
 }
 
 /**

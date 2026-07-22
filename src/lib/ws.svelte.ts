@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import z from "zod";
 
-import { apiResponseMessageSchema } from "$lib/model/message";
+import { coerceApiResponseMessage } from "$lib/api/messages";
 
 export const notificationEventSchema = z.object({
 	type: z.string(),
@@ -13,7 +13,10 @@ export const notificationEventSchema = z.object({
 
 export const chatV1MessageSentEventSchema = notificationEventSchema.safeExtend({
 	type: z.literal("chat.v1.message_sent"),
-	payload: apiResponseMessageSchema,
+	// Coerce unknown/new message types to `Unknown` (same as the REST path) so a
+	// single unmodeled message type doesn't drop the live event entirely — it
+	// would otherwise only surface on the next poll reconcile.
+	payload: z.unknown().transform((raw) => coerceApiResponseMessage(raw, 0)),
 });
 
 export const chatV1ConversationDeleteEventSchema =
@@ -49,9 +52,16 @@ export const chatV1MessageRetractedSchema = z.object({
 
 export const chatV1MessageReactionSchema = z.object({
 	messageId: z.string(),
-	reactionType: z.union([z.number().int().nonnegative(), z.string()]).transform((v) =>
-		typeof v === "string" ? parseInt(v, 10) : v,
-	),
+	reactionType: z
+		.union([z.number().int().nonnegative(), z.string()])
+		.transform((v, ctx) => {
+			const n = typeof v === "string" ? parseInt(v, 10) : v;
+			if (Number.isNaN(n)) {
+				ctx.addIssue({ code: "custom", message: "reactionType is not a number" });
+				return z.NEVER;
+			}
+			return n;
+		}),
 	profileId: z.number(),
 });
 

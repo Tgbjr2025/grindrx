@@ -36,7 +36,7 @@ const conversationMessagesSchema = z.object({
  * shape is unexpected. This keeps a single exotic message from making an entire
  * conversation fail to load.
  */
-function coerceApiResponseMessage(raw: unknown, index: number): ApiResponseMessage {
+export function coerceApiResponseMessage(raw: unknown, index: number): ApiResponseMessage {
 	const parsed = apiResponseMessageSchema.safeParse(raw);
 	if (parsed.success) return parsed.data;
 
@@ -181,7 +181,7 @@ export async function deleteMessageForMe({
 			messageId,
 		},
 	}).then((res) => {
-		if (res.status !== 200) {
+		if (res.status >= 400) {
 			console.error("Failed to delete message, status:", res.status);
 			throw new Error("Failed to delete message");
 		}
@@ -202,8 +202,8 @@ export async function unsendMessage({
 			messageId,
 		},
 	}).then((res) => {
-		if (res.status !== 200) {
-			console.log(res.json());
+		if (res.status >= 400) {
+			console.error("Failed to unsend message:", res.status, res.text().slice(0, 200));
 			throw new Error("Failed to unsend message");
 		}
 	});

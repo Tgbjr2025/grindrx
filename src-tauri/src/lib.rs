@@ -52,6 +52,7 @@ pub fn run() {
             api::auth::logout,
             api::auth::auth_state,
             api::rest::request,
+            api::rest::request_public,
             api::rest::upload_image,
             api::rest::fetch_authed_bytes,
             api::rest::fetch_latest_release,

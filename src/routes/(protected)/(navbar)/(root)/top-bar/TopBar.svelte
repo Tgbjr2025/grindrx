@@ -71,12 +71,16 @@
 		position: false,
 	});
 
-	let filters = $state(defaultFilters);
+	// Deep-clone: defaultFilters is a shared module-level object with nested
+	// arrays (age/height/…). Seeding $state with it directly and mutating in place
+	// (slider drags) would corrupt the shared defaults, which then flow into
+	// setPreferences and can later fail preferencesSchema.parse on read.
+	let filters = $state(structuredClone(defaultFilters));
 
 	onMount(() => {
 		getPreferences()
-			.then(({ gridSearchFilters: preferredFilters = defaultFilters }) => {
-				filters = preferredFilters;
+			.then(({ gridSearchFilters: preferredFilters }) => {
+				filters = preferredFilters ?? structuredClone(defaultFilters);
 			})
 			.catch((error) => {
 				console.error(error);
