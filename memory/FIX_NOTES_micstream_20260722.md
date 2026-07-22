@@ -44,6 +44,22 @@ Note: dynaudnorm lookahead adds ~1.5 s latency to the feed — acceptable for a 
 
 Stream verified live: mp3, 48 kHz, stereo, 320 kbps; `/health` ok.
 
+## Addendum (same day) — room-monitor retune
+
+Operator needs **faint sounds to stay audible** — the first pass was too aggressive
+(RNNoise at mix=1.0 eats non-speech transients; dynaudnorm t=0.01 left quiet sounds
+unboosted). Retuned chain (backup: `mic_capture.sh.bak.20260722T*`, second timestamp):
+
+- `arnndn … mix=0.5` — half blend: halves broadband hiss, keeps footsteps/doors/ambience
+- `afftdn=nf=-45:nr=20:tn=1` — steady-hiss removal, preserves impulsive sounds
+- `dynaudnorm=f=250:g=11:m=25:p=0.9:t=0.0015` — up to ~28 dB lift for faint sounds
+- highpass relaxed 80 → 70 Hz
+
+Verified by band analysis of the live stream (quiet room): >6 kHz at **-80 dB**
+(was -40 dB — hiss is gone); remaining floor ~-35 dB is genuine low-frequency room
+ambience (<300 Hz), deliberately audible. Do not "fix" that floor back to silence —
+it is the point of the monitor.
+
 ## Rollback
 
 ```
