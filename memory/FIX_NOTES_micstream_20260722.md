@@ -60,6 +60,29 @@ Verified by band analysis of the live stream (quiet room): >6 kHz at **-80 dB**
 ambience (<300 Hz), deliberately audible. Do not "fix" that floor back to silence —
 it is the point of the monitor.
 
+## Addendum 2 (2026-07-23) — recorder + library/player on the OVH box
+
+Operator asked for recording + a media player/library. Built standalone under
+`/home/ubuntu/micarchive/` on the OVH box (deliberately NOT wired into mediakit —
+its Opus/evidence-chain path stays untouched and dormant):
+
+- `recorder.sh` — ffmpeg tees the live feed (tunnel `127.0.0.1:18767/stream`) into
+  half-hour clock-aligned segments `archive/YYYY-MM-DDTHH-MM-SS.mp3`, re-encoded
+  320k stereo → 64k mono (~700 MB/day). systemd `micarchive-recorder.service`,
+  Restart=always (feed drop ⇒ new segment, no gap beyond the outage).
+- `library_server.py` — stdlib-only web UI/API on **http://100.74.76.76:8768/library**
+  (bound to the tailnet IP only; the box's public IP does NOT serve it). Endpoints:
+  `/library` (player UI, date-grouped, REC badge, download), `/api/recordings`,
+  `/rec/<name>` (Range/seek support), `/live` (proxy of the live feed), `/health`.
+  systemd `micarchive-library.service`.
+- `cleanup.sh` + `micarchive-cleanup.timer` — daily, deletes segments older than
+  14 days (~10 GB steady state; disk had 64 GB free at install).
+
+Verified live: first segment decodes (ffprobe 64 kbps, duration matches wall clock),
+Range requests return 206, `/live` proxies the stream, `/health` reports
+`recording_now=yes`. Ops: `systemctl {status,restart} micarchive-recorder
+micarchive-library`; retention via `RETENTION_DAYS` env in cleanup.
+
 ## Rollback
 
 ```
