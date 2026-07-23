@@ -66,7 +66,14 @@ Chain tightened: highpass 70→90 Hz, arnndn mix 0.5→0.7, afftdn nr 20→28; d
 unchanged. Measured live: constant ambience bed eliminated (floor -inf, RMS ≈ -72 dB,
 was ≈ -47 dB); faint transients still register ~23 dB above residual (peak -49 dB over
 a 20 s window). If the operator later reports faint sounds too quiet, first knob back
-is mix 0.7→0.6. Also learned the hard way: Apple-silicon Macs hardware-disconnect the
+is mix 0.7→0.6.
+
+**1c — operator did report faint sounds too quiet.** Final settled chain:
+`highpass=f=75, arnndn mix=0.55, afftdn nf=-45:nr=22:tn=1,
+dynaudnorm f=250:g=11:m=35:p=0.9:t=0.0008, alimiter 0.891`.
+Measured: ambience bed audible at ≈-36 dB (intentional), >6 kHz ≈-74 dB (no hiss),
+faint-event lift up to ~31 dB, LF body kept for footsteps/doors. This is the
+operator-approved sensitivity/noise trade-off — don't tighten it again without asking. Also learned the hard way: Apple-silicon Macs hardware-disconnect the
 internal mic when the lid closes — a zeroed stream with healthy processes means LID
 CLOSED, not a dead pipeline.
 
