@@ -60,6 +60,16 @@ Verified by band analysis of the live stream (quiet room): >6 kHz at **-80 dB**
 ambience (<300 Hz), deliberately audible. Do not "fix" that floor back to silence —
 it is the point of the monitor.
 
+## Addendum 1b (2026-07-23) — second cleanup pass (operator: "clean up the noise some more")
+
+Chain tightened: highpass 70→90 Hz, arnndn mix 0.5→0.7, afftdn nr 20→28; dynaudnorm
+unchanged. Measured live: constant ambience bed eliminated (floor -inf, RMS ≈ -72 dB,
+was ≈ -47 dB); faint transients still register ~23 dB above residual (peak -49 dB over
+a 20 s window). If the operator later reports faint sounds too quiet, first knob back
+is mix 0.7→0.6. Also learned the hard way: Apple-silicon Macs hardware-disconnect the
+internal mic when the lid closes — a zeroed stream with healthy processes means LID
+CLOSED, not a dead pipeline.
+
 ## Addendum 2 (2026-07-23) — recorder + library/player on the OVH box
 
 Operator asked for recording + a media player/library. Built standalone under
