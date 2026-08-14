@@ -17,6 +17,10 @@
 	import UnsupportedMessage from "./UnsupportedMessage.svelte";
 	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
 	import LocationMessage from "./LocationMessage.svelte";
+	import AudioMessage from "./AudioMessage.svelte";
+	import GaymojiMessage from "./GaymojiMessage.svelte";
+	import GiphyMessage from "./GiphyMessage.svelte";
+	import VideoMessage from "./VideoMessage.svelte";
 
 	let {
 		message,
@@ -182,6 +186,14 @@
 			<AlbumReactionMessage message={message.body} reply={message.body.albumContentReply} />
 		{:else if message.type === "Location"}
 			<LocationMessage message={message.body} />
+		{:else if message.type === "Audio"}
+			<AudioMessage message={message.body} />
+		{:else if message.type === "Giphy"}
+			<GiphyMessage message={message.body} />
+		{:else if message.type === "Video" || message.type === "PrivateVideo"}
+			<VideoMessage message={message.body} />
+		{:else if message.type === "Gaymoji"}
+			<GaymojiMessage message={message.body} />
 		{:else if message.type === "Unsent"}
 			<UnsentMessage />
 		{:else}

@@ -137,9 +137,13 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
     };
 
     app.emit("ws:connected", ()).ok();
-    // Connection established — reset the outer-loop backoff so the next
-    // disconnect (post-stable session) doesn't sleep the accumulated max.
-    *backoff = Duration::from_secs(1);
+    // FIX (ws-backoff-reset-on-handshake): do NOT reset backoff here. A
+    // successful handshake is not evidence the connection is healthy — a
+    // server that accepts then immediately closes (app-layer auth rejection,
+    // load-shedding) would defeat exponential backoff if every handshake
+    // reset it to 1s. Backoff is instead reset once the connection proves
+    // itself alive, on the first frame actually received from the server
+    // (see run_message_loop below).
 
     let (mut write, mut read) = ws_stream.split();
 
@@ -163,7 +167,7 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
         Err(_) => String::new(),
     };
 
-    run_message_loop(&mut write, &mut read, cmd_rx, &our_profile_id, app).await
+    run_message_loop(&mut write, &mut read, cmd_rx, &our_profile_id, app, backoff).await
     // `guard` (and thus the receiver) is dropped here, releasing the lock.
 }
 
@@ -173,6 +177,7 @@ async fn run_message_loop(
     cmd_rx: &mut tokio::sync::mpsc::Receiver<WsCommand>,
     our_profile_id: &str,
     app: &AppHandle,
+    backoff: &mut Duration,
 ) -> WsOutcome {
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     heartbeat.tick().await; // consume the immediate first tick
@@ -181,10 +186,19 @@ async fn run_message_loop(
     // When true, the next heartbeat tick without a Pong means the connection is dead.
     let mut waiting_for_pong = false;
 
+    // ws-not-torn-down-on-logout: dropped whenever `logout`/`login` fires it,
+    // forcing this loop to give up the socket instead of continuing to
+    // deliver a stale (or now-wrong-account) session's events.
+    let ws_reset = app.state::<AppState>().ws_reset.clone();
+
     loop {
         tokio::select! {
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
+                    // ws-backoff-reset-on-handshake: a real frame from the
+                    // server (not just a completed handshake) is what proves
+                    // the connection is stable — reset here, not on connect.
+                    *backoff = Duration::from_secs(1);
                     if let Ok(val) = serde_json::from_str::<Value>(&text) {
                         if let Some(event_type) = val["type"].as_str() {
                             let safe_type = event_type.replace('.', "_");
@@ -219,16 +233,24 @@ async fn run_message_loop(
                     }
                 }
                 Some(Ok(Message::Ping(data))) => {
+                    // The server pinging us is real bidirectional traffic too.
+                    *backoff = Duration::from_secs(1);
                     if let Err(e) = write.send(Message::Pong(data)).await {
                         return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                     }
                 }
                 Some(Ok(Message::Pong(_))) => {
+                    // A Pong answering our own heartbeat Ping is the "first
+                    // successful heartbeat round-trip" stability signal.
+                    *backoff = Duration::from_secs(1);
                     // FIX 1: clear the flag — pong arrived in the normal message loop.
                     waiting_for_pong = false;
                 }
                 Some(Ok(Message::Close(_))) | None => {
-                    // FIX 2: server close → reconnect, not exit
+                    // FIX 2: server close → reconnect, not exit. Deliberately
+                    // NOT a backoff-reset point — a Close (possibly the very
+                    // first frame, i.e. accept-then-close) is the disconnect
+                    // itself, not evidence of a stable connection.
                     return WsOutcome::Disconnected(AppError::Http(
                         "WS connection closed by server".to_owned(),
                     ));
@@ -236,7 +258,10 @@ async fn run_message_loop(
                 Some(Err(e)) => {
                     return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                 }
-                Some(Ok(_)) => {}
+                Some(Ok(_)) => {
+                    // Any other frame kind (e.g. Binary) still proves liveness.
+                    *backoff = Duration::from_secs(1);
+                }
             },
 
             cmd = cmd_rx.recv() => match cmd {
@@ -284,6 +309,17 @@ async fn run_message_loop(
                     return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                 }
                 waiting_for_pong = true;
+            }
+
+            // ws-not-torn-down-on-logout: `logout` (or `login`, for an
+            // account switch) fired `ws_reset` — drop this socket now rather
+            // than keep emitting the outgoing session's events. The outer
+            // loop (run_ws_loop) treats AppError::Auth as "wait for the next
+            // login", which is exactly what we want here.
+            _ = ws_reset.notified() => {
+                return WsOutcome::Disconnected(AppError::Auth(
+                    "Session ended".to_owned(),
+                ));
             }
         }
     }

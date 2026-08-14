@@ -5,6 +5,47 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.24 — audit fix batch (2026-08-14)
+
+Driven by a full 9-dimension code audit (48 findings). See `memory/FIX_NOTES_v0.1.24.md` for the
+complete record. Highlights:
+
+**Photos (known issue)** — Fixed the private/album "tap to send" crash (signed CloudFront bytes are
+now fetched via a new no-auth `fetch_media_bytes` Rust command with a signed-CDN host allowlist), and
+added a persistent `mediaHash → mediaId` cache so a saved/album photo re-sends without re-downloading
+and re-uploading every time.
+
+**Explore other areas (known issue)** — Root-caused `CAS-4001`: `exploreGeoHash` is built and sent
+correctly; the error is a server-side Grindr XTRA/region gate, not a client bug. The grid now shows an
+honest premium/region message instead of a misleading "try again", and a regression test pins the
+query serialization.
+
+**Bugs** — Rewrote broken profile taps (`/v2/taps/add` + correct tap IDs + status check); surfaced the
+real server error on password-change/delete; added status checks so favorite/hide/unhide can't fail
+silently; split recipient-read vs local-read cursor so read receipts are correct; fixed a concurrent-
+send duplicate race; stopped drifted-but-successful sends being marked failed (was double-sending on
+retry); stopped the reconcile poll rebuilding the whole message list; stopped a corrupt preferences
+read from clobbering saved settings.
+
+**Security (Rust)** — Shared HTTP client now refuses redirects (closing a bearer-token leak on the
+`request`/`upload_image` paths); WebSocket is torn down on logout/account-switch; request payloads are
+size-capped.
+
+**Unimplemented features** — Incoming voice notes, GIFs, videos and gaymoji now render (were
+"Unsupported message type"); "Reveal profile views" is wired to the server prefs endpoint; the
+mislabeled "Reveal message read" copy corrected.
+
+**Reactivity / a11y / config** — Fixed 3 Svelte `state_referenced_locally` bugs; delete-popover
+keyboard/ARIA; imperial height as feet+inches; tightened CSP `connect-src`; dropped unused `WAKE_LOCK`.
+
+**Tests** — 112 unit tests (was 52) incl. regression tests for both known issues; new
+`shared_client_does_not_follow_redirects` Rust test.
+
+Deferred (see FIX_NOTES): auth-endpoint divergence (needs live verification), voice-message *sending*,
+PIN lock, notification-settings subpage, native notification deep-link.
+
+---
+
 ## v0.1.16 — open-issue fixes (2026-07-14)
 
 Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.

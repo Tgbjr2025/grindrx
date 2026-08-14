@@ -34,52 +34,42 @@ export type ChatV1ConversationDeleteEventPayload = z.infer<
 	typeof chatV1ConversationDeleteEventSchema
 >;
 
-// FIX 10 / FIX 16 — typed event schemas and name constants for retract, reactions, read receipts, typing
+// FIX 10 / FIX 16 — typed event schemas and name constants. `chat.v1.typing.start`
+// / `chat.v1.typing.stop` are the real (WIP, per
+// docs/content/grindr-api/websocket/notification-event.md) server events, each
+// delivered through the standard notification envelope. There is NO
+// `chat.v1.message_reaction`, `chat.v1.message_retracted`, or `chat.v1.read`
+// event on the real server — reactions/retracts arrive inline via
+// chat.v1.message_sent, and the recipient's read position comes from the REST
+// message-list response (see conversation-state.svelte.ts), so those
+// speculative event names + schemas were removed rather than kept as dead code.
 export const WS_EVENT = {
 	MESSAGE_SENT: "chat.v1.message_sent",
 	CONVERSATION_DELETE: "chat.v1.conversation.delete",
-	MESSAGE_RETRACTED: "chat.v1.message_retracted",
-	MESSAGE_REACTION: "chat.v1.message_reaction",
-	READ: "chat.v1.read",
-	TYPING: "chat.v1.typing",
+	TYPING_START: "chat.v1.typing.start",
+	TYPING_STOP: "chat.v1.typing.stop",
 } as const;
 
 export type WsEventName = (typeof WS_EVENT)[keyof typeof WS_EVENT];
 
-export const chatV1MessageRetractedSchema = z.object({
-	targetMessageId: z.string(),
-});
-
-export const chatV1MessageReactionSchema = z.object({
-	messageId: z.string(),
-	reactionType: z
-		.union([z.number().int().nonnegative(), z.string()])
-		.transform((v, ctx) => {
-			const n = typeof v === "string" ? parseInt(v, 10) : v;
-			if (Number.isNaN(n)) {
-				ctx.addIssue({ code: "custom", message: "reactionType is not a number" });
-				return z.NEVER;
-			}
-			return n;
-		}),
-	profileId: z.number(),
-});
-
-export const chatV1ReadSchema = z.object({
-	conversationId: z.string(),
-	lastReadTimestamp: z.number(),
-});
-
-export const chatV1TypingSchema = z.object({
+const typingPayloadSchema = z.object({
 	conversationId: z.string(),
 	profileId: z.number(),
-	isTyping: z.boolean(),
 });
 
-export type ChatV1MessageRetracted = z.infer<typeof chatV1MessageRetractedSchema>;
-export type ChatV1MessageReaction = z.infer<typeof chatV1MessageReactionSchema>;
-export type ChatV1Read = z.infer<typeof chatV1ReadSchema>;
-export type ChatV1Typing = z.infer<typeof chatV1TypingSchema>;
+export const chatV1TypingStartEventSchema = notificationEventSchema.safeExtend({
+	type: z.literal("chat.v1.typing.start"),
+	payload: typingPayloadSchema,
+});
+
+export const chatV1TypingStopEventSchema = notificationEventSchema.safeExtend({
+	type: z.literal("chat.v1.typing.stop"),
+	payload: typingPayloadSchema,
+});
+
+export type ChatV1Typing = z.infer<typeof typingPayloadSchema> & {
+	isTyping: boolean;
+};
 
 export type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -155,20 +145,25 @@ class WsState {
 		});
 	}
 
-	onRetracted(handler: (payload: ChatV1MessageRetracted) => void): Promise<() => void> {
-		return this.on(WS_EVENT.MESSAGE_RETRACTED, chatV1MessageRetractedSchema, handler);
-	}
-
-	onReaction(handler: (payload: ChatV1MessageReaction) => void): Promise<() => void> {
-		return this.on(WS_EVENT.MESSAGE_REACTION, chatV1MessageReactionSchema, handler);
-	}
-
-	onRead(handler: (payload: ChatV1Read) => void): Promise<() => void> {
-		return this.on(WS_EVENT.READ, chatV1ReadSchema, handler);
-	}
-
+	// FIX 4: typing indicator. The real server events are `chat.v1.typing.start`
+	// / `chat.v1.typing.stop` (WIP), delivered through the standard
+	// notification envelope — not a single flat `chat.v1.typing` event with an
+	// `isTyping` field. Subscribe to both and normalize into one callback.
 	onTyping(handler: (payload: ChatV1Typing) => void): Promise<() => void> {
-		return this.on(WS_EVENT.TYPING, chatV1TypingSchema, handler);
+		const start = this.on(
+			WS_EVENT.TYPING_START,
+			chatV1TypingStartEventSchema,
+			(event) => handler({ ...event.payload, isTyping: true }),
+		);
+		const stop = this.on(
+			WS_EVENT.TYPING_STOP,
+			chatV1TypingStopEventSchema,
+			(event) => handler({ ...event.payload, isTyping: false }),
+		);
+		return Promise.all([start, stop]).then(([unlistenStart, unlistenStop]) => () => {
+			unlistenStart();
+			unlistenStop();
+		});
 	}
 }
 

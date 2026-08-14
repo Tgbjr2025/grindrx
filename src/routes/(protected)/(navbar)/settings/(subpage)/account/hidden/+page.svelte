@@ -6,6 +6,7 @@
 	import { onMount } from "svelte";
 
 	import { fetchRest } from "$lib/api";
+	import { assertOk } from "$lib/api/taps";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
@@ -46,7 +47,8 @@
 	async function unhide(profileId: number) {
 		unhiding = new Set([...unhiding, profileId]);
 		try {
-			await fetchRest(`/v1/hides/${profileId}`, { method: "DELETE" });
+			const response = await fetchRest(`/v1/hides/${profileId}`, { method: "DELETE" });
+			assertOk(response);
 			hiddenProfiles = hiddenProfiles.filter((p) => p.profileId !== profileId);
 		} catch (err) {
 			console.error("Failed to unhide user", err);

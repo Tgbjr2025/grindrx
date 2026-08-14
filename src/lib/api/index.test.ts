@@ -1,7 +1,24 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import z from "zod";
 
-import { ApiHttpError, asAppError, parseApiResponse } from "$lib/api";
+vi.mock("@tauri-apps/api/core", () => ({
+	invoke: vi.fn(),
+}));
+
+import { encode } from "@msgpack/msgpack";
+import { invoke } from "@tauri-apps/api/core";
+
+import {
+	ApiHttpError,
+	asAppError,
+	classifyResponseBody,
+	fetchRest,
+	parseApiResponse,
+} from "$lib/api";
+import { requestBlockedAlertState } from "$lib/api/request-blocked/request-blocked-state.svelte";
+import { toBase64 } from "$lib/base64";
+
+const mockedInvoke = vi.mocked(invoke);
 
 describe("ApiHttpError", () => {
 	it("captures a bare text error code like CAS-4001", () => {
@@ -97,5 +114,115 @@ describe("parseApiResponse", () => {
 		expect(logged).toContain('"method":"GET"');
 
 		consoleError.mockRestore();
+	});
+});
+
+describe("classifyResponseBody", () => {
+	it("classifies a 2xx bare code as error-code (e.g. the cascade/explore CAS-4001 signal)", () => {
+		expect(classifyResponseBody(200, "CAS-4001")).toBe("error-code");
+	});
+
+	it("classifies valid 2xx JSON as json", () => {
+		expect(classifyResponseBody(200, JSON.stringify({ ok: true }))).toBe(
+			"json",
+		);
+	});
+
+	it("classifies a non-2xx status as error-code even with a JSON envelope", () => {
+		expect(
+			classifyResponseBody(
+				429,
+				JSON.stringify({ code: 429, message: "Rate limited" }),
+			),
+		).toBe("error-code");
+	});
+
+	it("classifies a 403 Cloudflare block page as cloudflare-block", () => {
+		const html =
+			"<html><head><title>Attention Required! | Cloudflare</title></head>" +
+			"<body>Sorry, you have been blocked</body></html>";
+		expect(classifyResponseBody(403, html)).toBe("cloudflare-block");
+	});
+
+	it("classifies a genuinely unparseable, non-code-shaped 2xx body as parse-error", () => {
+		const html = "<html>" + "x".repeat(200) + "</html>";
+		expect(classifyResponseBody(200, html)).toBe("parse-error");
+	});
+
+	it("a 403 that isn't the Cloudflare block page is classified as error-code, not cloudflare-block", () => {
+		expect(classifyResponseBody(403, "urn:gr:err:forbidden")).toBe(
+			"error-code",
+		);
+	});
+});
+
+// REGRESSION (Tom issue #2): these exercise the actual decision points behind
+// the explore grid's CAS-4001 handling and the Cloudflare block alert through
+// the real fetchRest()/json() path, not just classifyResponseBody in isolation.
+describe("fetchRest().json() error detection", () => {
+	function mockInvokeResponse(status: number, bodyText: string): string {
+		const packed = encode({
+			status,
+			body: new TextEncoder().encode(bodyText),
+		});
+		return toBase64(packed);
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		requestBlockedAlertState.open = false;
+		requestBlockedAlertState.disable = false;
+	});
+
+	it("throws ApiHttpError with code CAS-4001 for a 200 response carrying the bare code", async () => {
+		mockedInvoke.mockResolvedValueOnce(mockInvokeResponse(200, "CAS-4001"));
+
+		const res = await fetchRest("/v3/cascade");
+
+		let caught: unknown;
+		try {
+			res.json();
+		} catch (err) {
+			caught = err;
+		}
+
+		expect(caught).toBeInstanceOf(ApiHttpError);
+		expect((caught as ApiHttpError).code).toBe("CAS-4001");
+	});
+
+	it("sets requestBlockedAlertState.open on a Cloudflare block page instead of a JSON parse error", async () => {
+		const html =
+			"<html><head><title>Attention Required! | Cloudflare</title></head>" +
+			"<body>Sorry, you have been blocked</body></html>";
+		mockedInvoke.mockResolvedValueOnce(mockInvokeResponse(403, html));
+
+		const res = await fetchRest("/v3/cascade");
+
+		expect(requestBlockedAlertState.open).toBe(false);
+		expect(() => res.json()).toThrow("Request blocked");
+		expect(requestBlockedAlertState.open).toBe(true);
+	});
+
+	it("does not open the blocked-request alert when it has been disabled", async () => {
+		requestBlockedAlertState.disable = true;
+		const html =
+			"<html><head><title>Attention Required! | Cloudflare</title></head>" +
+			"<body>Sorry, you have been blocked</body></html>";
+		mockedInvoke.mockResolvedValueOnce(mockInvokeResponse(403, html));
+
+		const res = await fetchRest("/v3/cascade");
+
+		expect(() => res.json()).toThrow("Request blocked");
+		expect(requestBlockedAlertState.open).toBe(false);
+	});
+
+	it("returns parsed JSON for a normal 200 response", async () => {
+		mockedInvoke.mockResolvedValueOnce(
+			mockInvokeResponse(200, JSON.stringify({ profileId: 42 })),
+		);
+
+		const res = await fetchRest("/v4/me/profile");
+
+		expect(res.json()).toEqual({ profileId: 42 });
 	});
 });

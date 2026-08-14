@@ -6,6 +6,7 @@
 	import { onMount } from "svelte";
 
 	import { fetchRest } from "$lib/api";
+	import { assertOk } from "$lib/api/taps";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
@@ -47,7 +48,8 @@
 	async function unfavorite(profileId: number) {
 		unfavoriting = new Set([...unfavoriting, profileId]);
 		try {
-			await fetchRest(`/v1/favorites/${profileId}`, { method: "DELETE" });
+			const response = await fetchRest(`/v1/favorites/${profileId}`, { method: "DELETE" });
+			assertOk(response);
 			favoriteProfiles = favoriteProfiles.filter((p) => p.profileId !== profileId);
 		} catch (err) {
 			console.error("Failed to unfavorite user", err);

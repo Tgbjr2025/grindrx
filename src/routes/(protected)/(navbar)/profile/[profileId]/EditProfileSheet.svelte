@@ -10,6 +10,7 @@
 	import Label from "$lib/components/ui/label/label.svelte";
 	import * as Sheet from "$lib/components/ui/sheet";
 	import Textarea from "$lib/components/ui/textarea/textarea.svelte";
+	import type { DistanceUnit } from "$lib/utils/distance";
 	import {
 		acceptNSFWPics as acceptNsfwPicsLabels,
 		type AcceptNSFWPicsId,
@@ -80,15 +81,42 @@
 	const gendersList = getGenders();
 	const pronounsList = fetchPronouns();
 
+	// Imperial height is edited as two inputs (feet + inches) rather than a
+	// single raw total-inches number — the profile itself always *displays*
+	// height as ft'in" (formatHeight), so a lone "70" input with no unit
+	// context was a usability mismatch. heightToInput/heightFromInput (from
+	// $lib/utils/measurements) still own the cm<->inches conversion; this file
+	// only splits/combines the resulting total inches into feet + inches.
+	const INCHES_PER_FOOT = 12;
+
+	function feetInchesFromCm(
+		cm: number | null,
+		unit: DistanceUnit,
+	): { feet: string; inches: string } {
+		if (cm === null) return { feet: "", inches: "" };
+		const totalInches = heightToInput(cm, unit);
+		return {
+			feet: String(Math.floor(totalInches / INCHES_PER_FOOT)),
+			inches: String(totalInches % INCHES_PER_FOOT),
+		};
+	}
+
 	// Form state — initialised each time the sheet opens
 	let displayName = $state<string>(profileData.displayName ?? "");
 	let aboutMe = $state<string>(profileData.aboutMe ?? "");
 	let sexualPosition = $state<SexualPositionId | "">(profileData.sexualPosition ?? "");
 	let bodyType = $state<BodyTypeId | "">(profileData.bodyType ?? "");
+	// isImperialHeight is $derived (not read once into a $state initializer) so
+	// the feet/inches vs. cm branch below stays in sync with the live unit.
+	let isImperialHeight = $derived(heightUnitLabel(getDistanceUnit()) === "in");
 	let height = $state<string>(
 		profileData.height !== null
 			? String(heightToInput(profileData.height, getDistanceUnit()))
 			: "",
+	);
+	let heightFeet = $state<string>(feetInchesFromCm(profileData.height, getDistanceUnit()).feet);
+	let heightInches = $state<string>(
+		feetInchesFromCm(profileData.height, getDistanceUnit()).inches,
 	);
 	let weight = $state<string>(
 		profileData.weight !== null
@@ -126,6 +154,9 @@
 				profileData.height !== null
 					? String(heightToInput(profileData.height, getDistanceUnit()))
 					: "";
+			const feetInches = feetInchesFromCm(profileData.height, getDistanceUnit());
+			heightFeet = feetInches.feet;
+			heightInches = feetInches.inches;
 			weight =
 				profileData.weight !== null
 					? String(weightToInput(profileData.weight, getDistanceUnit()))
@@ -217,6 +248,23 @@
 		selectedPronouns = next;
 	}
 
+	// Combine the two imperial inputs (or read the single metric one) back into
+	// stored centimeters. A feet-only or inches-only entry is treated as the
+	// other half being 0 (e.g. "5" ft with inches left blank == 5'0"); both
+	// blank clears the height, matching the previous single-input behavior.
+	function resolveHeightCm(): number | null {
+		if (isImperialHeight) {
+			const feetStr = heightFeet.trim();
+			const inchesStr = heightInches.trim();
+			if (feetStr === "" && inchesStr === "") return null;
+			const totalInches =
+				(feetStr !== "" ? Number(feetStr) : 0) * INCHES_PER_FOOT +
+				(inchesStr !== "" ? Number(inchesStr) : 0);
+			return heightFromInput(totalInches, getDistanceUnit());
+		}
+		return height !== "" ? heightFromInput(Number(height), getDistanceUnit()) : null;
+	}
+
 	async function handleSave() {
 		saving = true;
 		try {
@@ -225,8 +273,7 @@
 				aboutMe: aboutMe.trim() !== "" ? aboutMe.trim() : null,
 				sexualPosition: sexualPosition !== "" ? sexualPosition : null,
 				bodyType: bodyType !== "" ? bodyType : null,
-				height:
-					height !== "" ? heightFromInput(Number(height), getDistanceUnit()) : null,
+				height: resolveHeightCm(),
 				weight:
 					weight !== "" ? weightFromInput(Number(weight), getDistanceUnit()) : null,
 				ethnicity: ethnicity !== "" ? ethnicity : null,
@@ -400,15 +447,48 @@
 			</div>
 
 			<!-- Height -->
-			<div class="flex flex-col gap-1.5">
-				<Label for="edit-height">Height ({heightUnitLabel(getDistanceUnit())})</Label>
-				<Input
-					id="edit-height"
-					type="number"
-					placeholder={heightUnitLabel(getDistanceUnit()) === "in" ? "e.g. 70" : "e.g. 178"}
-					bind:value={height}
-				/>
-			</div>
+			{#if isImperialHeight}
+				<div class="flex flex-col gap-2">
+					<span class="text-sm font-medium leading-none">Height</span>
+					<div class="flex gap-2">
+						<div class="flex-1 flex flex-col gap-1.5">
+							<Label for="edit-height-feet" class="text-muted-foreground text-xs font-normal">
+								Feet
+							</Label>
+							<Input
+								id="edit-height-feet"
+								type="number"
+								min="0"
+								placeholder="e.g. 5"
+								bind:value={heightFeet}
+							/>
+						</div>
+						<div class="flex-1 flex flex-col gap-1.5">
+							<Label for="edit-height-inches" class="text-muted-foreground text-xs font-normal">
+								Inches
+							</Label>
+							<Input
+								id="edit-height-inches"
+								type="number"
+								min="0"
+								max="11"
+								placeholder="e.g. 10"
+								bind:value={heightInches}
+							/>
+						</div>
+					</div>
+				</div>
+			{:else}
+				<div class="flex flex-col gap-1.5">
+					<Label for="edit-height">Height (cm)</Label>
+					<Input
+						id="edit-height"
+						type="number"
+						placeholder="e.g. 178"
+						bind:value={height}
+					/>
+				</div>
+			{/if}
 
 			<!-- Weight -->
 			<div class="flex flex-col gap-1.5">

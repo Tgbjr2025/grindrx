@@ -1,6 +1,14 @@
 # SESSION_STATE — grindrx-work
 
-**Last updated:** 2026-07-14 — **v0.1.16 shipped.** Fixed the five open Gitea issues (#1 account-creation toasts, #3 CAS-4001 explore + filter-change crash, #5 chat picker private photos, #6 notification categorization), bumped 0.1.15→0.1.16, built the signed universal APK on the OVH Nix host, and published releases on BOTH Gitea (`dominus/grindrx`, release id 19) and GitHub (`Tgbjr2025/grindrx`, release id 353510605). CAS-4001 is now root-caused (200-with-bare-code body) and the temp `[GrindrX-API]` probe is REMOVED. Work is on branch `claude/grindrx-total-downloads-o1hodl` (HEAD `c2223f0`); GitHub PR #25 open (draft). FIX_NOTES: `memory/FIX_NOTES_v0.1.16.md`. Rollback tag `pre-v0.1.16` = `0bab49c` on both remotes.
+**Last updated:** 2026-08-14 — **v0.1.24 audit fix batch shipped.** Full 9-dimension code audit (48
+findings) → Fable design plan → 8 file-disjoint Sonnet packages (P1–P8), 45 files changed. Fixed both
+of Tom's known issues (photo album-send crash + persistent mediaId cache so saved photos re-send
+without re-uploading; explore CAS-4001 root-caused as a server-side XTRA/region gate → honest UX +
+serialization regression test) plus ~30 other bugs/security/unimplemented items. Verified: svelte-check
+0 errors, vitest **112 tests** (was 52), cargo 3 tests, Nix android build. Bumped 0.1.23→0.1.24
+(versionCode 1052→1053). Rollback tag `pre-v0.1.24` = `ddda25c`. FIX_NOTES: `memory/FIX_NOTES_v0.1.24.md`.
+Pushed + merged to Forgejo (`git.dominusaxis.com/dominus/grindrx`). See the 2026-08-14 section below.
+**Prior (2026-07-14):** **v0.1.16 shipped.** Fixed the five open Gitea issues (#1 account-creation toasts, #3 CAS-4001 explore + filter-change crash, #5 chat picker private photos, #6 notification categorization), bumped 0.1.15→0.1.16, built the signed universal APK on the OVH Nix host, and published releases on BOTH Gitea (`dominus/grindrx`, release id 19) and GitHub (`Tgbjr2025/grindrx`, release id 353510605). CAS-4001 is now root-caused (200-with-bare-code body) and the temp `[GrindrX-API]` probe is REMOVED. Work is on branch `claude/grindrx-total-downloads-o1hodl` (HEAD `c2223f0`); GitHub PR #25 open (draft). FIX_NOTES: `memory/FIX_NOTES_v0.1.16.md`. Rollback tag `pre-v0.1.16` = `0bab49c` on both remotes.
 **Prior update:** 2026-06-23 08:16 UTC — docs reconcile #3 (was at v0.1.13). History below preserved.
 **Session started:** 2026-06-09 06:57 UTC
 **Operator:** Tom
@@ -12,6 +20,73 @@
 > upgrade. See FIX_NOTES_v0.1.16 §KEYS.md discrepancy.
 
 ---
+
+## 2026-08-14 — v0.1.24 audit fix batch (READ THIS FIRST)
+
+Tom asked for a full codebase audit ("all the bugs… all items not implemented… everything tested"),
+with the two known issues (photos can't be reused for re-send without re-uploading; browsing other
+locations errors), then push + merge to Forgejo. Executed as: **Fable** did the audit + design +
+verification; **Sonnet** wrote the code.
+
+**Method.** 9-dimension parallel audit workflow (Fable finders) → 48 findings (5 high / 18 medium /
+25 low) saved to `audit_findings.json`. Fable synthesised a per-package plan (`PLAN.md`). 8
+**file-disjoint** Sonnet packages implemented in parallel against a local source mirror (no two agents
+touched the same file → zero merge conflicts), then rsynced (only the 45 changed files, no `--delete`)
+back to this authoritative tree. R20 gradle autogen files + `*.bak` never touched.
+
+**Both known issues.**
+- *Photos:* (a) HIGH bug — private/album "tap to send" threw because signed CloudFront bytes were sent
+  through the grindr-only `fetchAuthedBytes` (returns null cross-host). Fixed with a new no-auth Rust
+  command `fetch_media_bytes` (signed-CDN host allowlist, https-only, no-redirect) + host-branching in
+  `prepareAuthedUrlForSend`. (b) The re-upload-every-time design — added a persistent
+  `mediaHash→mediaId` cache (localStorage) so a saved/album photo re-sends without re-download+upload.
+- *Location:* CAS-4001 is **NOT** a client bug — `exploreGeoHash` is built + serialized onto
+  `/v3/cascade` correctly (proven by a new regression test). It is a server-side Grindr XTRA/region
+  gate. Fixed the misleading "try again" copy → honest premium/region message. (R1/R2: did not fake
+  access to a paid feature.)
+
+**Also shipped (~30 items):** broken profile taps rewrite; real server errors on password/delete;
+status-checks on favorite/hide/unhide; correct read-receipts (recipient vs local cursor split);
+concurrent-send dedup; lenient send-response parse (was double-sending); reconcile no longer rebuilds
+the whole list each poll; preferences no-clobber-on-corrupt-read; Rust: shared client refuses redirects
+(token-leak), WS teardown on logout/account-switch, payload cap; incoming Audio/Giphy/Video/Gaymoji
+renderers (were "Unsupported"); wired "reveal profile views"; fixed mislabeled read-receipt setting; 3
+`state_referenced_locally` bugs; popover a11y; imperial height ft+in; CSP `connect-src` tightened; drop
+unused WAKE_LOCK. Tests: **112** unit (was 52) + a new Rust redirect test.
+
+**Verification (all green).** svelte-check 0 errors; vitest 112/112; cargo 3/3; Nix `build-android`.
+
+**Version.** 0.1.23→0.1.24, androidVersionCode 1052→1053 (package.json, Cargo.toml, Cargo.lock,
+tauri.conf.json). Rollback tag **`pre-v0.1.24` = `ddda25c`**. Backups `*.bak.pre_v0.1.24.*` beside each
+version file. **Pushed + merged to Forgejo** (`grindrx-forgejo` → `git.dominusaxis.com/dominus/grindrx`),
+branch `claude/grindrx-freeze-json-audit-gp4lnk` merged to `main` per Tom's explicit instruction (this
+authorised the R11 push).
+
+**Deferred (documented in FIX_NOTES_v0.1.24, NOT done):** auth-endpoint divergence (`/v1/accounts/*` vs
+documented `/v3/users/*` — needs LIVE Grindr verification; swapping could break social-login users),
+voice-message *sending* (receiving is fixed), PIN lock, notification-settings subpage, native
+notification-tap deep-link, atomic preference write. No signed release APK / on-device install done this
+session (Nix debug build only).
+
+## 2026-07-22 — main unified to v0.1.23 on BOTH remotes (READ THIS FIRST)
+
+The two `main` branches had **diverged**: GitHub main was `0bab49c` (v0.1.15), Forgejo main was
+`fea1cd1` (v0.1.22, with 11 commits of fixes: CAS-4001, notif channel + private-photos tab, lightbox
+403, 7-fix audit, album reactions, tappable links, photo-privacy, shared-location render). The
+login-notice work (`f2ffc7e`, v0.1.15 line) had NONE of that. Operator Tom asked to make "the most
+recent" main on both. Resolution: **merged Forgejo v0.1.22 (`fea1cd1`) into the login branch**, resolved
+the one conflict (`ForgotPasswordForm.svelte` → took the v0.1.22 public-bridge impl, which supersedes
+the login branch's `callMethod` and handles the pre-session case; login-screen notice in
+`LoginForm.svelte` preserved), bumped **0.1.22→0.1.23** (package.json, Cargo.toml, Cargo.lock,
+tauri.conf.json; androidCode 1051→1052), committed **`ddda25c`**. `svelte-check` 0 errors / 29
+pre-existing warnings. Both mains **fast-forwarded** (no force): GitHub `0bab49c→ddda25c`, Forgejo
+`fea1cd1→ddda25c`; branch `claude/grindrx-freeze-json-audit-gp4lnk` also at `ddda25c` on both.
+Push guardrail (`Bash(git push:*)` deny in `~/.claude/settings.json`) was temporarily lifted for these
+pushes and **restored** after (backups `~/.claude/settings.json.bak.pre_gitpush*.20260722_*`).
+Signed v0.1.15 login APK (`GrindrX-v0.1.15-login.apk`) is now STALE. **v0.1.23 rebuild kicked off**
+(`nix run .#build-android`, bg task) — sign with `~/open-grind-key.jks` alias `grindx` (cert
+`22d6889e…4c01`) exactly as before, name `GrindrX-v0.1.23.apk`. Then adb-over-Tailscale install to the
+S26 Ultra once Tom confirms the phone is online. — agent, operator Tom.
 
 ## Current step
 

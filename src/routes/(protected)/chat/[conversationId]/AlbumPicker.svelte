@@ -6,6 +6,7 @@
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import {
 		getProfileUploadedPhotos,
+		invalidateCachedMediaId,
 		prepareAuthedUrlForSend,
 		prepareSavedPhotoForSend,
 		type ProfilePhoto,
@@ -27,6 +28,14 @@
 			mediaHash: string;
 			url: string;
 			createdAt: number | null;
+			/**
+			 * The original PUBLIC mediaHash (40-char) for a re-sent saved profile
+			 * photo — distinct from `mediaHash` above, which is the SIGNED 64-char
+			 * hash minted by the chat-media upload. Lets the optimistic bubble use
+			 * the cheap 320x320 public thumbnail instead of decoding the full-res
+			 * signed URL. Omitted for private-album photos (no public hash exists).
+			 */
+			sourceMediaHash?: string;
 		}) => Promise<void>;
 	} = $props();
 
@@ -158,20 +167,38 @@
 		}
 	}
 
+	// A minted mediaId can be invalidated server-side after it's cached (e.g.
+	// stale after a long picker session) — the chat-send endpoint then 400s.
+	// Detect that so the cache entry can be evicted and the NEXT send re-mints
+	// instead of retrying the same stale id forever (see prepareAuthedUrlForSend
+	// / prepareSavedPhotoForSend's mediaId cache in $lib/api/profile).
+	function looksLikeInvalidatedMediaId(err: unknown): boolean {
+		return err instanceof Error && /^HTTP 400\b/.test(err.message);
+	}
+
 	async function handleSendPhoto(photo: ProfilePhoto) {
 		// A saved photo only carries a public mediaHash — Grindr's profile
 		// endpoints no longer expose a numeric mediaId, which the chat-send
 		// endpoint requires. Mint a fresh chat-usable mediaId by re-uploading the
-		// saved photo's bytes through the chat-media upload endpoint.
+		// saved photo's bytes through the chat-media upload endpoint (cached by
+		// mediaHash, so a repeat send of the same photo reuses the minted id).
 		sendingHash = photo.mediaHash;
 		try {
 			const minted = await prepareSavedPhotoForSend(photo.mediaHash);
-			await onSendPhoto({
-				mediaId: minted.mediaId,
-				mediaHash: minted.mediaHash,
-				url: minted.url,
-				createdAt: photo.createdAt ?? null,
-			});
+			try {
+				await onSendPhoto({
+					mediaId: minted.mediaId,
+					mediaHash: minted.mediaHash,
+					url: minted.url,
+					createdAt: photo.createdAt ?? null,
+					sourceMediaHash: photo.mediaHash,
+				});
+			} catch (err) {
+				if (looksLikeInvalidatedMediaId(err)) {
+					invalidateCachedMediaId(photo.mediaHash);
+				}
+				throw err;
+			}
 			toast.success("Photo sent!");
 			open = false;
 		} catch (err) {
@@ -187,15 +214,24 @@
 		// Album content carries a signed CDN url but no numeric mediaId, which the
 		// chat-send endpoint requires — mint one by re-uploading the bytes through
 		// the chat-media upload endpoint (same pattern as saved profile photos).
+		// Cached by contentId, so a repeat send of the same photo reuses the id.
+		const cacheKey = String(photo.contentId);
 		sendingContentId = photo.contentId;
 		try {
-			const minted = await prepareAuthedUrlForSend(photo.url, "private photo");
-			await onSendPhoto({
-				mediaId: minted.mediaId,
-				mediaHash: minted.mediaHash,
-				url: minted.url,
-				createdAt: null,
-			});
+			const minted = await prepareAuthedUrlForSend(photo.url, "private photo", cacheKey);
+			try {
+				await onSendPhoto({
+					mediaId: minted.mediaId,
+					mediaHash: minted.mediaHash,
+					url: minted.url,
+					createdAt: null,
+				});
+			} catch (err) {
+				if (looksLikeInvalidatedMediaId(err)) {
+					invalidateCachedMediaId(cacheKey);
+				}
+				throw err;
+			}
 			toast.success("Photo sent!");
 			open = false;
 		} catch (err) {

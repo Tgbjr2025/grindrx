@@ -33,7 +33,16 @@ export class ConversationState {
 	loading = $state(true);
 	loadingMore = $state(false);
 	error: Error | null = $state(null);
+	// Our own read cursor — the timestamp up to which WE have read the other
+	// party's messages. Persisted locally (chat:read:{id}) and used only by
+	// reportRead's dedup guard. Do NOT use this to render the "Read"/"Sent"
+	// label under our own outgoing messages — see recipientReadTimestamp.
 	lastReadTimestamp: number | null = $state(null);
+	// The RECIPIENT's read position, authoritative from the server (GET
+	// .../message -> lastReadTimestamp). Drives the "Read"/"Sent" label in
+	// MessagesList. There is no live chat.v1.read WS event on the real
+	// server, so this only advances via the initial load / poll reconcile.
+	recipientReadTimestamp: number | null = $state(null);
 	isTypingProfileId: number | null = $state(null);
 
 	get wsStatus() {
@@ -57,10 +66,7 @@ export class ConversationState {
 	#removeWsConnectedListener: Promise<() => void> | null = null;
 	#removeWsDisconnectedListener: Promise<() => void> | null = null;
 	#unlistenWs: Promise<() => void> | null = null;
-	#unlistenWsRetract: Promise<() => void> | null = null;
 	#unlistenWsTyping: Promise<() => void> | null = null;
-	#unlistenWsRead: Promise<() => void> | null = null;
-	#unlistenWsReaction: Promise<() => void> | null = null;
 
 	constructor({
 		conversationId,
@@ -213,97 +219,28 @@ export class ConversationState {
 			},
 		);
 
-		// FIX 1+2: retract event — use notificationEventSchema envelope (consistent with message_sent),
-		// and show tombstone instead of splicing so live-retract matches reload behaviour.
-		this.#unlistenWsRetract = ws.onRetracted((payload) => {
+		// FIX 4: typing indicator. The real server events are chat.v1.typing.start
+		// / chat.v1.typing.stop delivered via the standard notification envelope
+		// (see ws.svelte.ts onTyping) — not a single flat chat.v1.typing event.
+		// Reactions and retracts are intentionally NOT subscribed here:
+		// chat.v1.message_reaction / chat.v1.message_retracted / chat.v1.read are
+		// not real events on the live server (see ws.svelte.ts WS_EVENT comment) —
+		// reactions/retracts arrive inline via chat.v1.message_sent above, and the
+		// recipient's read position comes from the REST message list
+		// (recipientReadTimestamp, set in #initialLoad / #reconcileMessages).
+		this.#unlistenWsTyping = ws.onTyping((event) => {
 			if (this.#destroyed) return;
-			const idx = this.messages.findIndex(
-				(m) => m.messageId === payload.targetMessageId,
-			);
-			if (idx >= 0) {
-				this.messages[idx] = {
-					...this.messages[idx],
-					type: "Retract",
-					body: { targetMessageId: this.messages[idx].messageId },
-				};
-				this.#syncCache();
+			if (event.conversationId !== this.conversationId) return;
+			if (event.profileId === this.ourProfileId) return;
+			if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
+			this.isTypingProfileId = event.isTyping ? event.profileId : null;
+			if (event.isTyping) {
+				this.#typingTimer = setTimeout(() => {
+					if (!this.#destroyed) this.isTypingProfileId = null;
+					this.#typingTimer = null;
+				}, 3000);
 			}
 		});
-
-		// FIX 4: typing indicator
-		this.#unlistenWsTyping = ws.on(
-			"chat.v1.typing",
-			z.object({
-				conversationId: z.string(),
-				profileId: z.number(),
-				isTyping: z.boolean(),
-			}),
-			(event) => {
-				if (this.#destroyed) return;
-				if (event.conversationId !== this.conversationId) return;
-				if (event.profileId === this.ourProfileId) return;
-				if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
-				this.isTypingProfileId = event.isTyping ? event.profileId : null;
-				if (event.isTyping) {
-					this.#typingTimer = setTimeout(() => {
-						if (!this.#destroyed) this.isTypingProfileId = null;
-						this.#typingTimer = null;
-					}, 3000);
-				}
-			},
-		);
-
-		// FIX 5: read receipt
-		this.#unlistenWsRead = ws.on(
-			"chat.v1.read",
-			z.object({
-				conversationId: z.string(),
-				lastReadTimestamp: z.number(),
-			}),
-			(event) => {
-				if (this.#destroyed) return;
-				if (event.conversationId !== this.conversationId) return;
-				if (
-					this.lastReadTimestamp === null ||
-					event.lastReadTimestamp > this.lastReadTimestamp
-				) {
-					this.lastReadTimestamp = event.lastReadTimestamp;
-					localStorage.setItem(
-						`chat:read:${this.conversationId}`,
-						String(event.lastReadTimestamp),
-					);
-				}
-			},
-		);
-
-		// FIX 6: reaction
-		this.#unlistenWsReaction = ws.on(
-			"chat.v1.message_reaction",
-			z.object({
-				messageId: z.string(),
-				reactionType: z.union([z.number().int().nonnegative(), z.string()]).transform((v) =>
-					typeof v === "string" ? parseInt(v, 10) : v,
-				),
-				profileId: z.number(),
-			}),
-			(event) => {
-				if (this.#destroyed) return;
-				const msg = this.messages.find((m) => m.messageId === event.messageId);
-				if (!msg) return;
-				const existing = msg.reactions.findIndex(
-					(r) => r.profileId === event.profileId,
-				);
-				if (existing >= 0) {
-					msg.reactions[existing] = {
-						profileId: event.profileId,
-						reactionType: event.reactionType,
-					};
-				} else {
-					msg.reactions.push({ profileId: event.profileId, reactionType: event.reactionType });
-				}
-				this.#syncCache();
-			},
-		);
 	}
 
 	#destroyed = false;
@@ -312,10 +249,7 @@ export class ConversationState {
 		this.#destroyed = true;
 		this.#conversations.clearActive(this.conversationId);
 		this.#unlistenWs?.then((unlisten) => unlisten()).catch(console.error);
-		this.#unlistenWsRetract?.then((unlisten) => unlisten()).catch(console.error);
 		this.#unlistenWsTyping?.then((unlisten) => unlisten()).catch(console.error);
-		this.#unlistenWsRead?.then((unlisten) => unlisten()).catch(console.error);
-		this.#unlistenWsReaction?.then((unlisten) => unlisten()).catch(console.error);
 		this.#removeReconcileListener();
 		if (this.#readTimer !== null) clearTimeout(this.#readTimer);
 		if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
@@ -355,101 +289,24 @@ export class ConversationState {
 			});
 			if (this.#destroyed) return;
 
-			const serverById = new Map(
-				result.messages.map((m) => [m.messageId, m] as const),
+			// Authoritative recipient-side read position — see recipientReadTimestamp.
+			this.recipientReadTimestamp = Math.max(
+				this.recipientReadTimestamp ?? 0,
+				result.lastReadTimestamp ?? 0,
 			);
-			const oldestServerTs =
-				result.messages.length > 0
-					? result.messages[result.messages.length - 1].timestamp
-					: Number.POSITIVE_INFINITY;
 
-			const recentCutoff = Date.now() - 60_000;
-			const next: OptimisticMessage[] = [];
-			const seenLocalIds = new Set<string>();
-			// Still-pending optimistic messages we authored. Used below to adopt the
-			// server copy onto the pending entry instead of rendering a duplicate when
-			// the reconcile poll observes our just-sent message before the send()
-			// response has rewritten its temp id.
-			const pendingMine: OptimisticMessage[] = [];
-			let dropped = 0;
-			let updated = 0;
-			for (const local of this.messages) {
-				if (local.status !== "sent") {
-					// FIX 9: preserve still-pending messages so an in-flight send isn't
-					// dropped mid-poll.
-					if (local.status === "pending") {
-						if (local.senderId === this.ourProfileId) pendingMine.push(local);
-						next.push(local);
-					} else {
-						// BUG 2: do NOT retain failed (status "error") messages. A failed
-						// optimistic Image bubble that survives every 10s reconcile gets
-						// re-spread into a new object by processMessages, which re-fires
-						// ImageMessage's $effect and re-fetches+re-decodes a multi-MB data
-						// URL on the WebView main thread -> UI lock. Dropping the failed
-						// entry on the next reconcile (the "Failed to send" toast already
-						// notified the user) breaks that loop. Pending/sent are unaffected.
-						// Count it as dropped so the array below is actually rebuilt even
-						// when there are no fresh server messages.
-						dropped++;
-					}
-					continue;
-				}
-				seenLocalIds.add(local.messageId);
-				// If the server now reports a copy of this sent message, adopt it so a
-				// remote unsend (type flips to "Unsent", body cleared) propagates into
-				// the live view. This must NOT bypass the recentlySent/error-drop logic
-				// for messages the server hasn't echoed yet.
-				const serverVersion = serverById.get(local.messageId);
-				if (serverVersion) {
-					next.push({ ...serverVersion, status: "sent" });
-					updated++;
-					continue;
-				}
-				// FIX 9: preserve recently-sent messages even if not yet in server page
-				const recentlySent = local.timestamp >= recentCutoff;
-				if (recentlySent || local.timestamp < oldestServerTs) {
-					next.push(local);
-				} else {
-					dropped++;
-				}
-			}
+			const { messages, changed, fresh } = reconcile(
+				this.messages,
+				result.messages,
+				{ now: Date.now(), ourProfileId: this.ourProfileId },
+			);
 
-			const fresh: OptimisticMessage[] = [];
-			for (const sv of result.messages) {
-				if (seenLocalIds.has(sv.messageId)) continue;
-				// Dedup against a still-pending optimistic message we authored: if the
-				// server now reports a message of the same type with a near-identical
-				// timestamp, it IS our pending message (temp id not yet rewritten).
-				// Adopt the server id/data onto the pending entry in place so the user
-				// never sees the message twice. Each pending is matched at most once.
-				if (sv.senderId === this.ourProfileId) {
-					const mineIdx = pendingMine.findIndex(
-						(p) =>
-							p.type === sv.type &&
-							Math.abs(p.timestamp - sv.timestamp) < 60_000,
-					);
-					if (mineIdx >= 0) {
-						const pending = pendingMine[mineIdx];
-						pendingMine.splice(mineIdx, 1);
-						pending.messageId = sv.messageId;
-						pending.timestamp = sv.timestamp;
-						pending.reactions = sv.reactions;
-						pending.unsent = sv.unsent;
-						pending.status = "sent";
-						continue;
-					}
-				}
-				const msg: OptimisticMessage = { ...sv, status: "sent" as const };
-				next.push(msg);
-				fresh.push(msg);
-			}
-
-			if (fresh.length === 0 && dropped === 0 && updated === 0) {
+			if (!changed) {
 				this.#syncCache();
 				return;
 			}
 
-			this.messages = removeDuplicateMessages(next);
+			this.messages = messages;
 			this.#updatePreview(this.messages.at(0));
 			this.#syncCache();
 
@@ -495,6 +352,11 @@ export class ConversationState {
 			);
 			this.profile = result.profile;
 			this.pageKey = result.pageKey;
+			// Authoritative recipient-side read position — see recipientReadTimestamp.
+			this.recipientReadTimestamp = Math.max(
+				this.recipientReadTimestamp ?? 0,
+				result.lastReadTimestamp ?? 0,
+			);
 			this.#updatePreview(this.messages.at(0));
 			this.#conversations.markRead(this.conversationId);
 			this.#syncCache();
@@ -589,6 +451,11 @@ export class ConversationState {
 				msg.status = "sent";
 				msg.messageId = messageId;
 			}
+			// A WS echo (chat.v1.message_sent) can arrive before this HTTP
+			// response and, with 2+ concurrent pending sends, create a second
+			// entry with the same real messageId — collapse it immediately
+			// rather than waiting for the next poll reconcile.
+			this.messages = removeDuplicateMessages(this.messages);
 			this.#syncCache();
 			const latestMsg = this.messages[0] ?? this.messages.at(-1);
 			if (latestMsg) this.#updatePreview(latestMsg);
@@ -659,6 +526,11 @@ export class ConversationState {
 				msg.status = "sent";
 				msg.messageId = messageId;
 			}
+			// A WS echo (chat.v1.message_sent) can arrive before this HTTP
+			// response and, with 2+ concurrent pending sends, create a second
+			// entry with the same real messageId — collapse it immediately
+			// rather than waiting for the next poll reconcile.
+			this.messages = removeDuplicateMessages(this.messages);
 			this.#syncCache();
 			const latestMsg = this.messages[0] ?? this.messages.at(-1);
 			if (latestMsg) this.#updatePreview(latestMsg);
@@ -689,6 +561,11 @@ export class ConversationState {
 				msg.status = "sent";
 				msg.messageId = messageId;
 			}
+			// A WS echo (chat.v1.message_sent) can arrive before this HTTP
+			// response and, with 2+ concurrent pending sends, create a second
+			// entry with the same real messageId — collapse it immediately
+			// rather than waiting for the next poll reconcile.
+			this.messages = removeDuplicateMessages(this.messages);
 			this.#pendingSends.delete(tempId);
 			this.#syncCache();
 			void this.#conversations.ensureLoaded(this.conversationId);
@@ -860,7 +737,177 @@ export class ConversationState {
 	}
 }
 
-function removeDuplicateMessages(
+export interface ReconcileResult {
+	messages: OptimisticMessage[];
+	/** Mirrors the previous no-op guard: false means nothing actually changed,
+	 * so the caller can skip reassigning its message array on an idle poll. */
+	changed: boolean;
+	/** Newly-added messages this reconcile introduced from the server page
+	 * (used to drive read-receipt reporting). */
+	fresh: OptimisticMessage[];
+}
+
+/**
+ * Pure merge of the locally-held optimistic message list with a freshly
+ * fetched server page. Extracted out of the class so the dedup / adopt /
+ * drop-on-error / retract-tombstone invariants are unit-testable without a
+ * Tauri/WS runtime — see conversation-state.reconcile.test.ts.
+ */
+export function reconcile(
+	local: OptimisticMessage[],
+	server: ApiResponseMessage[],
+	opts: { now: number; ourProfileId: number },
+): ReconcileResult {
+	const { now, ourProfileId } = opts;
+	const serverById = new Map(
+		server.map((m) => [m.messageId, m] as const),
+	);
+	const oldestServerTs =
+		server.length > 0
+			? server[server.length - 1].timestamp
+			: Number.POSITIVE_INFINITY;
+
+	const recentCutoff = now - 60_000;
+	const next: OptimisticMessage[] = [];
+	const seenLocalIds = new Set<string>();
+	// Still-pending optimistic messages we authored. Used below to adopt the
+	// server copy onto the pending entry instead of rendering a duplicate when
+	// the reconcile poll observes our just-sent message before the send()
+	// response has rewritten its temp id.
+	const pendingMine: OptimisticMessage[] = [];
+	let dropped = 0;
+	let updated = 0;
+	for (const msg of local) {
+		if (msg.status !== "sent") {
+			// FIX 9: preserve still-pending messages so an in-flight send isn't
+			// dropped mid-poll.
+			if (msg.status === "pending") {
+				if (msg.senderId === ourProfileId) pendingMine.push(msg);
+				next.push(msg);
+			} else {
+				// BUG 2: do NOT retain failed (status "error") messages. A failed
+				// optimistic Image bubble that survives every 10s reconcile gets
+				// re-spread into a new object by processMessages, which re-fires
+				// ImageMessage's $effect and re-fetches+re-decodes a multi-MB data
+				// URL on the WebView main thread -> UI lock. Dropping the failed
+				// entry on the next reconcile (the "Failed to send" toast already
+				// notified the user) breaks that loop. Pending/sent are unaffected.
+				// Count it as dropped so the array below is actually rebuilt even
+				// when there are no fresh server messages.
+				dropped++;
+			}
+			continue;
+		}
+		seenLocalIds.add(msg.messageId);
+		// If the server now reports a copy of this sent message, adopt it so a
+		// remote unsend (type flips to "Unsent", body cleared) or a reaction
+		// propagates into the live view — but only when it actually differs
+		// (cheap structural signature compare). Replacing-and-counting every
+		// echoed message defeated the "nothing changed" early-return below and
+		// forced a full array rebuild on virtually every poll.
+		const serverVersion = serverById.get(msg.messageId);
+		if (serverVersion) {
+			if (messageSignature(msg) !== messageSignature(serverVersion)) {
+				next.push({ ...serverVersion, status: "sent" });
+				updated++;
+			} else {
+				next.push(msg);
+			}
+			continue;
+		}
+		// FIX 9: preserve recently-sent messages even if not yet in server page
+		const recentlySent = msg.timestamp >= recentCutoff;
+		if (recentlySent || msg.timestamp < oldestServerTs) {
+			next.push(msg);
+		} else {
+			dropped++;
+		}
+	}
+
+	const fresh: OptimisticMessage[] = [];
+	for (const sv of server) {
+		if (seenLocalIds.has(sv.messageId)) continue;
+		// Dedup against a still-pending optimistic message we authored: if the
+		// server now reports a message of the same type with a near-identical
+		// timestamp, it IS our pending message (temp id not yet rewritten).
+		// Adopt the server id/data onto the pending entry in place so the user
+		// never sees the message twice. Each pending is matched at most once.
+		if (sv.senderId === ourProfileId) {
+			const mineIdx = pendingMine.findIndex(
+				(p) =>
+					p.type === sv.type &&
+					Math.abs(p.timestamp - sv.timestamp) < 60_000,
+			);
+			if (mineIdx >= 0) {
+				const pending = pendingMine[mineIdx];
+				pendingMine.splice(mineIdx, 1);
+				pending.messageId = sv.messageId;
+				pending.timestamp = sv.timestamp;
+				pending.reactions = sv.reactions;
+				pending.unsent = sv.unsent;
+				pending.status = "sent";
+				continue;
+			}
+		}
+		const msg: OptimisticMessage = { ...sv, status: "sent" as const };
+		next.push(msg);
+		fresh.push(msg);
+	}
+
+	// A Retract message references the message it deletes via
+	// body.targetMessageId. Flip the target to a tombstone in place so a
+	// retract observed only through the poll (rather than the live WS echo,
+	// which does this same flip inline in the message_sent handler) matches
+	// what a reload renders.
+	for (const msg of fresh) {
+		if (
+			msg.type === "Retract" &&
+			msg.body &&
+			typeof msg.body === "object" &&
+			"targetMessageId" in msg.body &&
+			typeof (msg.body as { targetMessageId?: unknown }).targetMessageId ===
+				"string"
+		) {
+			const targetId = msg.body.targetMessageId;
+			const targetIdx = next.findIndex((m) => m.messageId === targetId);
+			if (targetIdx >= 0) {
+				next[targetIdx] = {
+					...next[targetIdx],
+					type: "Retract",
+					unsent: true,
+					body: { targetMessageId: targetId },
+				};
+			}
+		}
+	}
+
+	const changed = fresh.length > 0 || dropped > 0 || updated > 0;
+	return {
+		messages: changed ? removeDuplicateMessages(next) : local,
+		changed,
+		fresh,
+	};
+}
+
+/**
+ * Cheap structural signature used to detect whether a server-echoed message
+ * actually differs from the local copy (type / unsent / reactions / body).
+ * Avoids treating every echo as a change — see `reconcile` above.
+ */
+function messageSignature(m: {
+	type: string;
+	unsent: boolean;
+	body: unknown;
+	reactions: { profileId: number; reactionType: number }[];
+}): string {
+	const reactions = m.reactions
+		.map((r) => `${r.profileId}:${r.reactionType}`)
+		.sort()
+		.join(",");
+	return `${m.type}|${m.unsent}|${reactions}|${JSON.stringify(m.body)}`;
+}
+
+export function removeDuplicateMessages(
 	messages: OptimisticMessage[],
 ): OptimisticMessage[] {
 	const ids = new Set<string>();

@@ -12,7 +12,11 @@ import {
 	profileSchema,
 	profileShortSchema,
 } from "$lib/model/profile";
-import { fetchAuthedBytes } from "$lib/utils/authed-image";
+import {
+	fetchAuthedBytes,
+	fetchMediaBytes,
+	isAuthedHost,
+} from "$lib/utils/authed-image";
 
 const profileResponseSchema = z.object({
 	profiles: z.array(profileSchema).length(1),
@@ -181,6 +185,56 @@ const uploadResponseSchema = z.object({
 
 export type UploadedMedia = z.infer<typeof uploadResponseSchema>;
 
+// --- Minted-mediaId cache ----------------------------------------------------
+// Sending a saved profile photo or a private album photo mints a chat-usable
+// numeric `mediaId` by re-uploading the image bytes (see
+// `prepareSavedPhotoForSend`/`prepareAuthedUrlForSend` below). That mint result
+// is reusable — Grindr doesn't invalidate a minted mediaId on a timer, only the
+// SIGNED URL expires (~15 min) — so re-sending the same photo N times shouldn't
+// re-download + re-upload N times. Cache the mint keyed by a stable source key
+// (the public mediaHash for saved photos, the album contentId for private
+// photos) and persist it to localStorage — the value is not secret, just a
+// numeric id + a signed URL — so it survives app restarts, matching the pattern
+// used by `explore-location.svelte.ts`.
+const MEDIAID_CACHE_KEY = "grindrx-mediaid-cache";
+
+function loadMediaIdCache(): Map<string, UploadedMedia> {
+	if (typeof localStorage === "undefined") return new Map();
+	try {
+		const raw = localStorage.getItem(MEDIAID_CACHE_KEY);
+		if (!raw) return new Map();
+		const parsed = z.record(z.string(), uploadResponseSchema).safeParse(JSON.parse(raw));
+		if (!parsed.success) return new Map();
+		return new Map(Object.entries(parsed.data));
+	} catch {
+		return new Map();
+	}
+}
+
+const mediaIdCache = loadMediaIdCache();
+
+function persistMediaIdCache(): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.setItem(
+			MEDIAID_CACHE_KEY,
+			JSON.stringify(Object.fromEntries(mediaIdCache)),
+		);
+	} catch (err) {
+		console.error("[GrindrX] Failed to persist media id cache:", err);
+	}
+}
+
+/**
+ * Drop a cached minted mediaId for `key` (the public mediaHash for a saved
+ * photo, or the album contentId for a private photo). Call this when the
+ * chat-send endpoint rejects a mediaId as invalidated (HTTP 400) so the next
+ * send re-mints instead of retrying the same stale id forever.
+ */
+export function invalidateCachedMediaId(key: string): void {
+	if (mediaIdCache.delete(key)) persistMediaIdCache();
+}
+
 /**
  * Convert a byte array to a base64 string without stalling the main thread.
  *
@@ -190,7 +244,7 @@ export type UploadedMedia = z.infer<typeof uploadResponseSchema>;
  * `String.fromCharCode(...chunk)` (spread is bounded by `CHUNK` so we never blow
  * the argument-count limit) and concatenate a handful of chunk strings.
  */
-function bytesToBase64(bytes: Uint8Array): string {
+export function bytesToBase64(bytes: Uint8Array): string {
 	const CHUNK = 0x8000; // 32 KiB per fromCharCode call
 	let binary = "";
 	for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -303,31 +357,55 @@ export async function uploadProfileImage(file: File): Promise<UploadedMedia> {
  * fresh `{ mediaId, mediaHash, url }`. See docs:
  * grindr-api/media/public-cdn-files (profile images) and
  * grindr-api/users/profiles#upload-media.
+ *
+ * Cached by the public `mediaHash` (see "Minted-mediaId cache" above) — a
+ * second send of the same saved photo reuses the previously minted id instead
+ * of re-fetching + re-uploading.
  */
 export async function prepareSavedPhotoForSend(
 	mediaHash: string,
 ): Promise<UploadedMedia> {
 	// Pull the full-resolution profile image (largest reliably-available size).
 	const cdnUrl = `https://cdns.grindr.com/images/profile/1024x1024/${mediaHash}`;
-	return prepareAuthedUrlForSend(cdnUrl, "saved photo");
+	return prepareAuthedUrlForSend(cdnUrl, "saved photo", mediaHash);
 }
 
 /**
- * Mint a chat-usable numeric `mediaId` for a private (album) photo.
+ * Mint a chat-usable numeric `mediaId` for a private (album) photo, or any
+ * other authenticated/signed CDN URL that needs re-uploading to send in chat.
  *
  * Album content carries a signed CDN `url` but no numeric `mediaId`, and the
  * chat-send endpoint requires one — same constraint as saved profile photos.
- * Fetch the signed bytes with auth, then re-upload through
- * `POST /v5/chat/media/upload` to mint a fresh `{ mediaId, mediaHash, url }`.
+ * The URL may be either grindr-hosted (bearer-token gated, e.g.
+ * `cdns.grindr.com`) or a signed direct/CDN host (e.g. CloudFront album
+ * media) — those don't accept (and don't need) a bearer token, since the
+ * signature in the query string is the auth. Branch on the host and fetch
+ * with the right helper, then re-upload through `POST /v5/chat/media/upload`
+ * to mint a fresh `{ mediaId, mediaHash, url }`.
+ *
+ * Pass `cacheKey` (e.g. the source mediaHash or album `contentId`) to reuse a
+ * previously minted id instead of re-fetching + re-uploading on every send.
  */
 export async function prepareAuthedUrlForSend(
 	url: string,
 	what = "photo",
+	cacheKey?: string,
 ): Promise<UploadedMedia> {
-	const fetched = await fetchAuthedBytes(url);
+	if (cacheKey !== undefined) {
+		const cached = mediaIdCache.get(cacheKey);
+		if (cached) return cached;
+	}
+	const fetched = isAuthedHost(url)
+		? await fetchAuthedBytes(url)
+		: await fetchMediaBytes(url);
 	if (!fetched) {
 		throw new Error(`Could not fetch the ${what} to re-send it.`);
 	}
 	const imageBase64 = bytesToBase64(new Uint8Array(fetched.buffer));
-	return uploadImageBytes(imageBase64, fetched.mime);
+	const minted = await uploadImageBytes(imageBase64, fetched.mime);
+	if (cacheKey !== undefined) {
+		mediaIdCache.set(cacheKey, minted);
+		persistMediaIdCache();
+	}
+	return minted;
 }
