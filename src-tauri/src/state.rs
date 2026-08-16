@@ -11,6 +11,12 @@ pub struct AppState {
     pub ws_tx: mpsc::Sender<WsCommand>,
     pub ws_rx: tokio::sync::Mutex<Option<mpsc::Receiver<WsCommand>>>,
     pub auth_notify: Arc<Notify>,
+    /// Fired by `logout` (and `login`, to cover an account switch without an
+    /// explicit logout) to force any live WS connection to drop immediately
+    /// instead of continuing to deliver the previous account's realtime
+    /// events/notifications until the socket naturally expires. See
+    /// `api::ws::run_message_loop`'s `ws_reset` select! arm.
+    pub ws_reset: Arc<Notify>,
     /// true when the WebView is visible/active; false when app is backgrounded
     pub is_foreground: AtomicBool,
 }

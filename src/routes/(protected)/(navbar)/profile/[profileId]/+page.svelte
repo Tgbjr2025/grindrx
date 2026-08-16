@@ -7,6 +7,7 @@
 	import { fetchRest } from "$lib/api";
 	import { blockProfile } from "$lib/api/block";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
+	import { assertOk, sendTapWithType, TAP_TYPES, type TapType } from "$lib/api/taps";
 	import { getAdjacentProfileId } from "$lib/stores/grid-order.svelte";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
@@ -72,15 +73,17 @@
 
 	let tapPickerOpen = $state(false);
 
-	const TAP_EMOJIS: Record<number, string> = { 1: "👋", 2: "😊", 3: "🔥", 4: "😈" };
+	// Documented Tap IDs (grindr-api/interest/taps#tap-id).
+	const TAP_EMOJIS: Record<TapType, string> = {
+		[TAP_TYPES.FRIENDLY]: "👋",
+		[TAP_TYPES.HOT]: "🔥",
+		[TAP_TYPES.LOOKING]: "😈",
+	};
 
-	async function sendTap(type: number) {
+	async function sendTap(type: TapType) {
 		tapPickerOpen = false;
 		try {
-			await fetchRest(`/v2/taps/${profileId}`, {
-				method: "POST",
-				body: JSON.stringify({ tapType: type }),
-			});
+			await sendTapWithType(profileId, type);
 			toast.success(`Tap sent! ${TAP_EMOJIS[type]}`);
 		} catch {
 			toast.error("Failed to send tap. Please try again.");
@@ -93,9 +96,10 @@
 		const next = !current;
 		favoriteOverride = next;
 		try {
-			await fetchRest(`/v1/favorites/${profileId}`, {
+			const response = await fetchRest(`/v1/favorites/${profileId}`, {
 				method: next ? "POST" : "DELETE",
 			});
+			assertOk(response);
 		} catch (err) {
 			favoriteOverride = current;
 			console.error("Failed to update favorite", err);
@@ -260,7 +264,7 @@
 						</Button>
 						{#if tapPickerOpen}
 							<div class="absolute bottom-full mb-2 right-0 flex gap-1 bg-popover border border-border rounded-xl shadow-lg p-1.5 z-50">
-								{#each [1, 2, 3, 4] as type}
+								{#each [TAP_TYPES.FRIENDLY, TAP_TYPES.HOT, TAP_TYPES.LOOKING] as type}
 									<button
 										class="text-2xl leading-none p-2 rounded-lg hover:bg-accent transition-colors cursor-pointer"
 										onclick={() => sendTap(type).catch((e) => console.error(e))}

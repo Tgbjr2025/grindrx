@@ -10,6 +10,15 @@ import {
 // in this module (message timestamp parsing lives in $lib/model/message).
 import type { Conversation } from "$lib/model/conversation";
 
+// The send endpoints (sendMessage/sendProfilePhotoMessage) only need
+// `messageId` back — the optimistic bubble already has the full local copy.
+// Parsing the response with the full strict discriminated-union message
+// schema made a schema-drifted-but-successful (2xx) send throw and get
+// marked "failed" in the UI, and tapping retry then double-sent it. This
+// lenient shape mirrors the read path's tolerance (coerceApiResponseMessage)
+// instead of requiring the exact modeled message shape.
+const sendMessageResponseSchema = z.object({ messageId: z.string() });
+
 const conversationMessagesSchema = z.object({
 	lastReadTimestamp: z.number().nonnegative().nullable().catch(null),
 	// Parse each message individually below so one unrecognized/malformed message
@@ -104,7 +113,7 @@ export async function sendMessage({
 			},
 			body: message.body,
 		},
-	}).then((res) => res.jsonParsed(apiResponseMessageSchema));
+	}).then((res) => res.jsonParsed(sendMessageResponseSchema));
 }
 
 export async function sendProfilePhotoMessage({
@@ -143,7 +152,7 @@ export async function sendProfilePhotoMessage({
 	if (res.status >= 400) {
 		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
 	}
-	return res.jsonParsed(apiResponseMessageSchema);
+	return res.jsonParsed(sendMessageResponseSchema);
 }
 
 export async function reactToMessage({

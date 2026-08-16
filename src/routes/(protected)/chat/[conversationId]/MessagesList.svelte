@@ -128,7 +128,7 @@
 				dayStart={message.dayStart}
 				status={message.status}
 				isRead={isOut && message.messageId === messages[0]?.messageId
-					? conversationState.lastReadTimestamp !== null && message.timestamp <= conversationState.lastReadTimestamp
+					? conversationState.recipientReadTimestamp !== null && message.timestamp <= conversationState.recipientReadTimestamp
 					: null}
 				onVisible={!isOut
 					? () => conversationState.reportRead(message)

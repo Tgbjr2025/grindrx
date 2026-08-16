@@ -123,6 +123,64 @@ export class ApiHttpError extends Error {
 	}
 }
 
+/**
+ * Decides what a REST response body actually IS before anything tries to
+ * `JSON.parse` it. Pulled out of `fetchRest`'s `json()` closure (and exported)
+ * so the CAS-4001 / Cloudflare-block decision points behind the explore grid
+ * (Tom issue #2) and `requestBlockedAlertState` are independently testable —
+ * previously they only had indirect coverage through `ApiHttpError`.
+ *
+ * - "cloudflare-block": a 403 carrying Cloudflare's "you have been blocked"
+ *   interstitial HTML, not a real API response.
+ * - "error-code": a non-2xx status, OR a 2xx body that isn't valid JSON but is
+ *   short/shaped like a bare server code (e.g. the cascade/explore grid's
+ *   `CAS-4001`). Callers should raise `ApiHttpError`.
+ * - "json": a 2xx body that parses as JSON.
+ * - "parse-error": a 2xx body that is neither valid JSON nor code-shaped — a
+ *   genuine, unexpected parse failure worth logging.
+ */
+export type ResponseBodyClassification =
+	| "cloudflare-block"
+	| "error-code"
+	| "json"
+	| "parse-error";
+
+export function classifyResponseBody(
+	status: number,
+	text: string,
+): ResponseBodyClassification {
+	if (
+		status === 403 &&
+		text.includes("<title>Attention Required! | Cloudflare</title>") &&
+		text.includes("Sorry, you have been blocked")
+	) {
+		return "cloudflare-block";
+	}
+	// A non-2xx body is an ERROR payload, not the success schema. It may be
+	// Grindr's JSON envelope ({ code, message }) or — for the cascade/explore
+	// grid — a bare code like `CAS-4001`. Parsing it as the success shape
+	// yields a useless "Unexpected token …" instead of the real failure, so
+	// callers raise a structured error carrying the status instead.
+	const isErrorStatus = status < 200 || status >= 300;
+	if (isErrorStatus) {
+		return "error-code";
+	}
+	try {
+		JSON.parse(text);
+		return "json";
+	} catch {
+		// The cascade/explore endpoint can answer 200 with a bare code (e.g.
+		// `CAS-4001`) instead of JSON — the free-tier / rate limit / region-
+		// restriction signal. On a 2xx a short, non-JSON body is therefore a
+		// server error code, not a real parse failure.
+		const trimmed = text.trim();
+		const looksLikeCode =
+			trimmed.length > 0 &&
+			(trimmed.length <= 64 || /^[A-Z]+-\d+$/.test(trimmed));
+		return looksLikeCode ? "error-code" : "parse-error";
+	}
+}
+
 export async function fetchRest(
 	path: string,
 	options: {
@@ -167,47 +225,29 @@ export async function fetchRest(
 			},
 			json() {
 				const text = this.text();
-				if (
-					this.status === 403 &&
-					text.includes("<title>Attention Required! | Cloudflare</title>") &&
-					text.includes("Sorry, you have been blocked")
-				) {
+				const classification = classifyResponseBody(this.status, text);
+				if (classification === "cloudflare-block") {
 					if (!requestBlockedAlertState.disable) {
 						requestBlockedAlertState.open = true;
 					}
 					throw new Error("Request blocked");
 				}
-				// A non-2xx body is an ERROR payload, not the success schema. It may
-				// be Grindr's JSON envelope ({ code, message }) or — for the
-				// cascade/explore grid — a bare code like `CAS-4001`. Parsing it as
-				// the success shape yields a useless "Unexpected token …" instead of
-				// the real failure, so raise a structured error carrying the status.
-				const isErrorStatus = this.status < 200 || this.status >= 300;
-				if (isErrorStatus) {
+				if (classification === "error-code") {
+					// Structured error carrying the status + decoded code (Grindr's
+					// JSON envelope or a bare code like `CAS-4001`) instead of a
+					// useless "Unexpected token …" parse error.
 					throw new ApiHttpError(this.status, text, path);
 				}
-				try {
-					return JSON.parse(text);
-				} catch (error) {
-					// The cascade/explore endpoint can answer 200 with a bare code
-					// (e.g. `CAS-4001`) instead of JSON — the free-tier / rate limit
-					// / region-restriction signal. On a 2xx a short, non-JSON body is
-					// therefore a server error code, not a real parse failure: surface
-					// it as a structured ApiHttpError (which decodes the bare code) so
-					// callers show an actionable message instead of "Unexpected token".
-					const trimmed = text.trim();
-					const looksLikeCode =
-						trimmed.length > 0 &&
-						(trimmed.length <= 64 || /^[A-Z]+-\d+$/.test(trimmed));
-					if (looksLikeCode) {
-						throw new ApiHttpError(this.status, text, path);
-					}
+				if (classification === "parse-error") {
 					console.error("Failed to parse JSON response", {
 						path,
 						text,
 					});
-					throw error;
 				}
+				// "json" parses cleanly; "parse-error" re-runs JSON.parse to surface
+				// the real SyntaxError (matching prior behavior) after the
+				// diagnostic log above.
+				return JSON.parse(text);
 			},
 			jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
 				const data = this.json();

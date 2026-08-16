@@ -18,7 +18,13 @@
 	// authenticated CDN image would be a black box in fullscreen. Resolve the
 	// URL to an authed `data:` URL once and use it for both the inline thumbnail
 	// and the lightbox so the bytes are fetched a single time.
-	let displayUrl = $state(message.url);
+	//
+	// Seeded `undefined` rather than `message.url` — reading a reactive prop
+	// inside a $state initializer only captures its first value (svelte-check's
+	// state_referenced_locally warning) and isn't itself reactive to `message`.
+	// The effect below is the sole owner of this value; `effectiveUrl` falls back
+	// to `message.url` until the effect has run.
+	let displayUrl = $state<string | undefined>(undefined);
 	// BUG 2: the reconcile poll re-runs processMessages every 10s, which spreads
 	// each message into a NEW object. That changes `message`'s identity (and thus
 	// `message.body`/`message.url` as reactive reads) even when the underlying URL
@@ -40,6 +46,10 @@
 			cancelled = true;
 		};
 	});
+
+	// message.url is always defined; this only covers the brief window before
+	// the effect above has run for the first time.
+	let effectiveUrl = $derived(displayUrl ?? message.url);
 
 	$effect(() => {
 		const gallery = media.el;
@@ -113,14 +123,14 @@
 	bind:this={media.el}
 >
 	<a
-		href={displayUrl}
+		href={effectiveUrl}
 		data-pswp-width={message.width ?? undefined}
 		data-pswp-height={message.height ?? undefined}
 		aria-label="Open image"
 		class="block item"
 	>
 		<AuthedImage
-			src={displayUrl}
+			src={effectiveUrl}
 			alt=""
 			class={[
 				"w-full rounded-lg bg-card-foreground/10 object-cover",

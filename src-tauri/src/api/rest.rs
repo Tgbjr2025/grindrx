@@ -32,6 +32,27 @@ fn is_allowed_grindr_host(host: &str) -> bool {
     labels[n - 2] == "grindr" && matches!(labels[n - 1], "com" | "mobi")
 }
 
+/// Returns true iff the host's eTLD+1 is `cloudfront.net`. Signed album media
+/// is served from CloudFront (see docs/content/grindr-api/media/signed-cdn-files.md).
+fn is_cloudfront_host(host: &str) -> bool {
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.iter().any(|l| l.is_empty()) {
+        return false;
+    }
+    let n = labels.len();
+    if n < 2 {
+        return false;
+    }
+    labels[n - 2] == "cloudfront" && labels[n - 1] == "net"
+}
+
+/// Signed-CDN host allowlist for `fetch_media_bytes`: Grindr's own eTLD+1
+/// (covers `cdns.grindr.com`) plus CloudFront, the documented host for signed
+/// direct/album media that requires no bearer token.
+fn is_allowed_media_host(host: &str) -> bool {
+    is_allowed_grindr_host(host) || is_cloudfront_host(host)
+}
+
 /// Validate a relative API path passed in from the WebView before concatenating
 /// it onto `BASE_URL`. A compromised WebView could otherwise smuggle a full URL
 /// or path-traversal sequence and pivot the credentialed client at any endpoint.
@@ -56,6 +77,17 @@ pub struct RawResponse {
     #[serde(with = "serde_bytes")]
     pub body: Vec<u8>,
 }
+
+/// Reject the base64-encoded IPC envelope above this size before any decode
+/// work, and cap the decoded msgpack body the same way. Without a bound, a
+/// compromised WebView could submit an arbitrarily large — or arbitrarily
+/// deeply nested — payload through the generic `request`/`request_public`
+/// bridge and drive unbounded allocation/recursion decoding it into
+/// `serde_json::Value` (`rmp_serde` enforces no recursion limit of its own).
+/// `upload_image` already caps real photo uploads at 30 MB; this bridge only
+/// ever carries small JSON-ish command bodies, so 8 MB is generous headroom
+/// while still bounding the attack.
+const MAX_REQUEST_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 
 impl GrindrClient {
     pub(super) async fn request_json<TReq, TResp>(
@@ -110,6 +142,9 @@ impl GrindrClient {
             .header("L-Grindr-Roles", grindr_roles_header_value());
 
         if let Some(body) = body {
+            if body.len() > MAX_REQUEST_PAYLOAD_BYTES {
+                return Err(AppError::Http("Request body too large".to_owned()));
+            }
             let json_body: serde_json::Value = rmp_serde::from_slice(&body)
                 .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
             request = request
@@ -177,6 +212,9 @@ impl GrindrClient {
         let mut request = http.request(method, format!("{BASE_URL}{path}"));
 
         if let Some(body) = body {
+            if body.len() > MAX_REQUEST_PAYLOAD_BYTES {
+                return Err(AppError::Http("Request body too large".to_owned()));
+            }
             let json_body: serde_json::Value = rmp_serde::from_slice(&body)
                 .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
             request = request
@@ -249,6 +287,41 @@ pub async fn upload_image(
     Ok(UploadImageResult { status, body })
 }
 
+// FIX 3: stream the body with a running counter so chunked responses with no
+// Content-Length are also capped. `response.bytes()` would buffer everything
+// before we could check the size. Shared by `fetch_authed_bytes` and
+// `fetch_media_bytes`.
+const MAX_FETCH_BYTES: usize = 10 * 1024 * 1024;
+
+async fn stream_capped_body(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, AppError> {
+    let mut body: Vec<u8> = Vec::with_capacity(8192);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| AppError::Http(e.to_string()))?;
+        if body.len() + chunk.len() > max_bytes {
+            return Err(AppError::Http("Response too large".to_owned()));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Build a dedicated one-shot client that refuses redirects, for the
+/// `fetch_authed_bytes`/`fetch_media_bytes` byte-fetch paths. Unlike the
+/// shared client (see `client.rs::build_http_client`), this one carries no
+/// default headers — the caller attaches whatever's appropriate per-request.
+fn build_direct_fetch_client() -> Result<reqwest::Client, AppError> {
+    reqwest::Client::builder()
+        .redirect(Policy::none())
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Http(format!("Failed to build fetch client: {e}")))
+}
+
 #[tauri::command]
 pub async fn fetch_authed_bytes(
     state: tauri::State<'_, AppState>,
@@ -284,25 +357,16 @@ pub async fn fetch_authed_bytes(
         }
     }
 
-    // FIX 13: build a dedicated client that refuses redirects. The host/scheme
-    // allowlist above only validates the initial URL; a 30x redirect to an
-    // off-allowlist host (or to http://) would otherwise re-send the
-    // Authorization header to an unvetted destination. reqwest does NOT strip
-    // Authorization across cross-origin redirects, so we must not follow any.
-    let base = state.client()?.http.read().await.clone();
-    let http = match reqwest::Client::builder()
-        .redirect(Policy::none())
-        // Match the shared client's timeouts so this path doesn't hang
-        // indefinitely on a half-open CDN connection.
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(c) => c,
-        // Fall back to the shared client if the dedicated builder fails for any
-        // reason; behavior is unchanged from before this fix in that case.
-        Err(_) => base,
-    };
+    // FIX 13 / redirect-refusal-incomplete: build a dedicated client that
+    // refuses redirects. The host/scheme allowlist above only validates the
+    // initial URL; a 30x redirect to an off-allowlist host (or to http://)
+    // would otherwise re-send the Authorization header to an unvetted
+    // destination — reqwest does NOT strip Authorization across cross-origin
+    // redirects, so we must not follow any. If the dedicated builder fails,
+    // refuse the fetch rather than silently falling back to the shared
+    // (redirect-following) client — that fallback was the gap that let a
+    // bearer-token-over-redirect leak through in the first place.
+    let http = build_direct_fetch_client()?;
 
     let response = http
         .get(&url)
@@ -317,19 +381,7 @@ pub async fn fetch_authed_bytes(
         )));
     }
 
-    // FIX 3: stream the body with a running counter so chunked responses with
-    // no Content-Length are also capped. `response.bytes()` would buffer
-    // everything before we could check the size.
-    const MAX_BYTES: usize = 10 * 1024 * 1024;
-    let mut body: Vec<u8> = Vec::with_capacity(8192);
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| AppError::Http(e.to_string()))?;
-        if body.len() + chunk.len() > MAX_BYTES {
-            return Err(AppError::Http("Response too large".to_owned()));
-        }
-        body.extend_from_slice(&chunk);
-    }
+    let body = stream_capped_body(response, MAX_FETCH_BYTES).await?;
 
     // Return the RAW bytes over the IPC bridge as an ArrayBuffer, not a base64
     // `data:` URL. Base64 inflates the payload ~33% and — far worse on Android —
@@ -337,6 +389,54 @@ pub async fn fetch_authed_bytes(
     // per image, which froze the UI when an album opened several at once. The
     // frontend wraps these bytes in a Blob (content-type sniffed from the magic
     // bytes) and a `blob:` object URL.
+    Ok(tauri::ipc::Response::new(body))
+}
+
+/// Fetch bytes for a signed-CDN media URL — CloudFront album media,
+/// `cdns.grindr.com` public thumbnails — with NO Authorization header.
+///
+/// These URLs carry their own signature/expiry in the query string and are
+/// not gated by the Grindr session bearer token; attaching one would be
+/// pointless and (worse) an unnecessary place for the token to leak. This is
+/// the path `prepareAuthedUrlForSend` uses for private-album photos:
+/// `fetchAuthedBytes` only fetches grindr-hosted URLs and returns null for
+/// CloudFront, which previously made "tap to send" on a private album photo
+/// throw "Could not fetch the private photo to re-send it."
+///
+/// Same https-only + no-redirect + streamed-size-cap hardening as
+/// `fetch_authed_bytes`, restricted to an explicit signed-CDN host allowlist
+/// (`*.cloudfront.net`, plus anything already allowed for authed fetch) as
+/// defense-in-depth against a compromised WebView using this command for SSRF.
+#[tauri::command]
+pub async fn fetch_media_bytes(url: String) -> Result<tauri::ipc::Response, AppError> {
+    let parsed =
+        reqwest::Url::parse(&url).map_err(|_| AppError::Http("Invalid URL".to_owned()))?;
+    if parsed.scheme() != "https" {
+        return Err(AppError::Http(
+            "Only https URLs are allowed for media fetches".to_owned(),
+        ));
+    }
+    let host = parsed.host_str().unwrap_or("");
+    if !is_allowed_media_host(host) {
+        return Err(AppError::Http(format!(
+            "URL host '{}' is not an allowed media domain",
+            host
+        )));
+    }
+
+    let http = build_direct_fetch_client()?;
+
+    let response = http.get(&url).send().await?;
+
+    if !response.status().is_success() {
+        return Err(AppError::Http(format!(
+            "Media fetch failed with status {}",
+            response.status()
+        )));
+    }
+
+    let body = stream_capped_body(response, MAX_FETCH_BYTES).await?;
+
     Ok(tauri::ipc::Response::new(body))
 }
 
@@ -384,6 +484,9 @@ pub async fn request(
     state: tauri::State<'_, AppState>,
     payload: String,
 ) -> Result<String, AppError> {
+    if payload.len() > MAX_REQUEST_PAYLOAD_BYTES {
+        return Err(AppError::Http("Request payload too large".to_owned()));
+    }
     let bytes = STANDARD
         .decode(&payload)
         .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;
@@ -424,6 +527,9 @@ pub async fn request_public(
     state: tauri::State<'_, AppState>,
     payload: String,
 ) -> Result<String, AppError> {
+    if payload.len() > MAX_REQUEST_PAYLOAD_BYTES {
+        return Err(AppError::Http("Request payload too large".to_owned()));
+    }
     let bytes = STANDARD
         .decode(&payload)
         .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;

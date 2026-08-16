@@ -19,6 +19,12 @@ class GridState {
 	loadingMore = $state(false);
 	loading = $state(false);
 	error = $state<Error | null>(null);
+	// True when `error` is a persistent "Explore other areas" entitlement/region
+	// gate (e.g. CAS-4001) rather than a transient load failure. exploreGeoHash
+	// IS sent correctly (see #fetchProfiles) — this only affects how the
+	// resulting server error is framed. A caller can use this to offer "reset
+	// to my location" instead of a plain retry (Tom issue #2).
+	errorIsExploreGate = $state(false);
 
 	get errorMessage(): string | null {
 		return this.error?.message ?? null;
@@ -68,6 +74,7 @@ class GridState {
 		this.loadingMore = false;
 		this.loading = true;
 		this.error = null;
+		this.errorIsExploreGate = false;
 		this.currentQuery = null;
 		this.#loadingBatches.clear();
 	}
@@ -230,9 +237,24 @@ class GridState {
 		} catch (err) {
 			console.error(err);
 			this.error = toGridError(err, exploreGeohash);
+			this.errorIsExploreGate =
+				exploreGeohash != null &&
+				err instanceof ApiHttpError &&
+				isExploreGateCode(err.code);
 			this.loading = false;
 		}
 	}
+}
+
+// Server codes that gate "Explore other areas" behind a paid Grindr
+// XTRA/Unlimited tier or a region restriction. These are PERSISTENT for the
+// account/session — retrying (or picking a different remote spot) will keep
+// failing the same way, unlike a transient network/server error. See finding
+// cas-4001-server-side-gate-not-client-bug: exploreGeoHash IS sent correctly
+// on every request (#fetchProfiles below), so this is never a query-building
+// bug — only the framing of the resulting error changes here.
+function isExploreGateCode(code: string | number | null): boolean {
+	return code === "CAS-4001";
 }
 
 // Turn a fetch failure into a message worth showing in the grid. A server HTTP
@@ -241,6 +263,13 @@ class GridState {
 function toGridError(err: unknown, exploreGeohash: string | null): Error {
 	if (err instanceof ApiHttpError) {
 		const code = err.code != null ? ` (${err.code})` : "";
+		if (exploreGeohash && isExploreGateCode(err.code)) {
+			// A known entitlement/region gate, not a "this spot is temporarily
+			// down" failure — don't invite a futile retry loop on the same area.
+			return new Error(
+				`Browsing other areas needs Grindr XTRA/Unlimited, or isn't available in your region${code}. Reset to your location to keep browsing nearby.`,
+			);
+		}
 		if (exploreGeohash) {
 			return new Error(
 				`This area couldn't be loaded${code}. It may be unavailable right now — try another spot or reset to your location.`,

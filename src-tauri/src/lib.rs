@@ -18,6 +18,7 @@ pub fn run() {
 
     let (ws_tx, ws_rx) = mpsc::channel(64);
     let auth_notify = Arc::new(Notify::new());
+    let ws_reset = Arc::new(Notify::new());
 
     let mut builder = tauri::Builder::default();
 
@@ -43,6 +44,7 @@ pub fn run() {
             ws_tx,
             ws_rx: tokio::sync::Mutex::new(Some(ws_rx)),
             auth_notify,
+            ws_reset,
             is_foreground: AtomicBool::new(true),
         })
         .invoke_handler(tauri::generate_handler![
@@ -55,6 +57,7 @@ pub fn run() {
             api::rest::request_public,
             api::rest::upload_image,
             api::rest::fetch_authed_bytes,
+            api::rest::fetch_media_bytes,
             api::rest::fetch_latest_release,
             set_foreground,
             api::ws::ws_connect,

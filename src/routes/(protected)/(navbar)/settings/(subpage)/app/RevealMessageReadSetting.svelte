@@ -21,7 +21,7 @@
 
 <SwitchField
 	title="Reveal message read status"
-	description="Coming soon — message read receipt suppression requires a future update. This preference is saved but not yet applied."
+	description="When off (default), GrindrX never sends read receipts, so senders can't tell you've seen their messages. Turn on to send read receipts."
 	bind:checked={
 		() => value,
 		(v: boolean) => {

@@ -33,6 +33,18 @@ function classifyHost(url: string): "auth" | "direct" | "invalid" {
 	return "direct";
 }
 
+/**
+ * True when `url` is a grindr-hosted URL that requires the bearer token
+ * (`fetchAuthedBytes`), as opposed to a signed direct/CDN URL (e.g.
+ * CloudFront album media) that is self-authenticating via its query-string
+ * signature and should go through `fetchMediaBytes` instead. Exported so
+ * callers that need re-uploadable bytes (e.g. `prepareAuthedUrlForSend`) can
+ * pick the right fetcher.
+ */
+export function isAuthedHost(url: string): boolean {
+	return classifyHost(url) === "auth";
+}
+
 // --- Object-URL cache --------------------------------------------------------
 // Retain a compact `blob:` object URL per source URL. Map insertion order is the
 // LRU recency order; evicting the oldest revokes its blob so total retained
@@ -139,6 +151,50 @@ export async function fetchAuthedBytes(
 	} catch (error) {
 		console.error(
 			"[GrindrX] fetch_authed_bytes failed for",
+			url.slice(0, 120),
+			"-",
+			error,
+		);
+		return null;
+	}
+}
+
+/**
+ * Low-level: fetch bytes for a signed/direct CDN URL (e.g. a CloudFront album
+ * photo) WITHOUT the Grindr bearer token. Signed CDN URLs are
+ * self-authenticating via their query-string signature, so attaching
+ * Authorization would be both unnecessary and a needless token exposure to a
+ * third-party host — `fetch_authed_bytes` refuses these hosts outright (see
+ * `classifyHost`/`isAuthedHost`). The Rust `fetch_media_bytes` command
+ * allowlists the signed-CDN hosts (CloudFront + cdns.grindr.com) to prevent
+ * SSRF. Used by the album re-upload path, which needs raw bytes (not a blob
+ * handle) to hand to the chat-media upload. Returns null on failure — mirrors
+ * `fetchAuthedBytes`.
+ */
+export async function fetchMediaBytes(
+	url: string,
+): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
+	try {
+		// Hard timeout so a stuck bridge call can never hang album-load forever.
+		// Clear the timer once the fetch settles so it doesn't dangle per call.
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const buffer = await Promise.race([
+				invoke<ArrayBuffer>("fetch_media_bytes", { url }),
+				new Promise<ArrayBuffer>((_, reject) => {
+					timer = setTimeout(
+						() => reject(new Error("fetch_media_bytes timed out")),
+						12000,
+					);
+				}),
+			]);
+			return { buffer, mime: sniffMime(new Uint8Array(buffer)) };
+		} finally {
+			clearTimeout(timer);
+		}
+	} catch (error) {
+		console.error(
+			"[GrindrX] fetch_media_bytes failed for",
 			url.slice(0, 120),
 			"-",
 			error,

@@ -12,6 +12,27 @@ use super::headers::{build_default_headers, build_user_agent, DeviceInfo, Device
 
 pub const BASE_URL: &str = "https://grindr.mobi";
 
+/// Shared reqwest client construction, used both at startup and by
+/// `rotate_api_params` (device-info rotation rebuilds the client with a fresh
+/// User-Agent/headers).
+///
+/// Redirects are refused: this is the client `request_raw` and `upload_image`
+/// attach the bearer `Authorization` header on, and reqwest's default policy
+/// (follow up to 10 redirects) does not reliably strip that header across a
+/// same-host https→http scheme downgrade. A 30x response from any grindr.mobi
+/// endpoint — or an active MITM — could otherwise re-send the session token
+/// to an unvetted/cleartext destination. The API bridge never legitimately
+/// needs to follow a redirect; a 3xx now just surfaces as a non-2xx
+/// `RawResponse` to the frontend.
+fn build_http_client(headers: HeaderMap) -> Result<Client, reqwest::Error> {
+    Client::builder()
+        .default_headers(headers)
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
 pub struct GrindrClient {
     pub(super) http: RwLock<Client>,
     pub(super) default_headers: RwLock<HeaderMap>,
@@ -48,11 +69,7 @@ impl GrindrClient {
         let headers = build_default_headers(&device, &user_agent);
 
         // FIX 10: add request and connect timeouts so hung API calls don't freeze the app
-        let http = Client::builder()
-            .default_headers(headers.clone())
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
-            .build()?;
+        let http = build_http_client(headers.clone())?;
 
         #[cfg(all(target_os = "macos", not(feature = "keychain")))]
         let session = None;
@@ -113,11 +130,7 @@ pub async fn rotate_api_params(
     }
     let user_agent = build_user_agent(&device, "Free");
     let headers = build_default_headers(&device, &user_agent);
-    let http = Client::builder()
-        .default_headers(headers.clone())
-        .timeout(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(10))
-        .build()?;
+    let http = build_http_client(headers.clone())?;
 
     *client.http.write().await = http;
     *client.default_headers.write().await = headers.clone();
@@ -135,4 +148,51 @@ pub async fn rotate_api_params(
         user_agent: new_ua,
         l_device_info: new_device_info,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Regression test for the redirect-refusal hardening: the shared client
+    /// (the one `request_raw`/`upload_image` attach the bearer Authorization
+    /// header on) must never follow a redirect. A follow would re-send the
+    /// session token to whatever host/scheme the 3xx `Location` points at.
+    #[tokio::test]
+    async fn shared_client_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local test listener");
+        let addr = listener.local_addr().expect("local addr");
+
+        // Bare-bones single-shot HTTP/1.1 server: accept one connection,
+        // respond 302 pointing at an address nothing is listening on, then
+        // close. If the client followed the redirect it would fail to
+        // connect there instead of returning this 302 to the caller.
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/unreachable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let http = build_http_client(HeaderMap::new()).expect("build test client");
+
+        let response = http
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect("request should succeed locally (redirect must not be followed)");
+
+        assert_eq!(
+            response.status().as_u16(),
+            302,
+            "client must return the 302 as-is instead of following Location"
+        );
+
+        server.join().expect("test server thread panicked");
+    }
 }

@@ -24,12 +24,14 @@
 				await callMethod("logout");
 				window.location.href = "/auth/sign-in";
 			} else {
+				// Non-2xx: read the raw body (res.json() now throws on non-2xx).
+				const body = res.text();
 				let message = "Failed to delete account.";
 				try {
-					const body = res.json() as { message?: string };
-					message = body?.message ?? message;
+					const parsed = JSON.parse(body) as { message?: string; error?: string };
+					message = parsed?.message || parsed?.error || message;
 				} catch {
-					// ignore parse errors
+					if (body.trim()) message = `Failed to delete account (${body.trim().slice(0, 80)}).`;
 				}
 				toast.error(message);
 			}

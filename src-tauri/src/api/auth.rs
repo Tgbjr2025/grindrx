@@ -309,6 +309,10 @@ pub async fn login(
     password: String,
 ) -> Result<LoginResult, AppError> {
     let result = state.client()?.login(&email, &password).await?;
+    // Force any still-live WS connection (e.g. an account switch that never
+    // called `logout`) to drop so it reconnects under the new session
+    // instead of continuing to deliver the previous account's events.
+    state.ws_reset.notify_waiters();
     state.auth_notify.notify_one();
     Ok(result)
 }
@@ -338,6 +342,11 @@ pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
         client.session.write().await.take();
     }
     AuthStorage::delete_session();
+    // Drop any live WS connection immediately — without this the previous
+    // account's realtime events/notifications keep flowing until the socket
+    // naturally expires (Grindr session JWTs live up to 30 min). See
+    // `api::ws::run_message_loop`'s `ws_reset` select! arm.
+    state.ws_reset.notify_waiters();
     Ok(())
 }
 

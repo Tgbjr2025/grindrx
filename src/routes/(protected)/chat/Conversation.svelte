@@ -33,14 +33,46 @@
 	);
 
 	let showDeleteMenu = $state(false);
+	let deleteButtonEl: HTMLButtonElement | null = $state(null);
+	let previouslyFocusedEl: HTMLElement | null = null;
 
-	function openContextMenu(event: MouseEvent | PointerEvent) {
-		event.preventDefault();
+	function openDeleteMenu() {
+		previouslyFocusedEl =
+			document.activeElement instanceof HTMLElement ? document.activeElement : null;
 		showDeleteMenu = true;
 	}
 
-	async function handleDelete() {
+	function closeDeleteMenu() {
 		showDeleteMenu = false;
+		previouslyFocusedEl?.focus();
+		previouslyFocusedEl = null;
+	}
+
+	// Keyboard/screen-reader users have no "click outside" to dismiss the popover
+	// with — Escape is the accessible equivalent. Bound on the role="menu"
+	// container so it catches the key bubbling up from the focused menu item.
+	function onMenuKeydown(event: KeyboardEvent) {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			closeDeleteMenu();
+		}
+	}
+
+	// Move focus into the menu whenever it opens so keyboard/screen-reader users
+	// land on the actionable item instead of the menu appearing silently.
+	$effect(() => {
+		if (showDeleteMenu) {
+			deleteButtonEl?.focus();
+		}
+	});
+
+	function openContextMenu(event: MouseEvent | PointerEvent) {
+		event.preventDefault();
+		openDeleteMenu();
+	}
+
+	async function handleDelete() {
+		closeDeleteMenu();
 		const confirmed = confirm(
 			`Delete this conversation with ${conversation.data.name ?? "this person"}? This cannot be undone.`,
 		);
@@ -69,7 +101,7 @@
 		if (event.button !== 0) return;
 		longPressTimer = setTimeout(() => {
 			longPressTimer = null;
-			showDeleteMenu = true;
+			openDeleteMenu();
 		}, 600);
 	}
 
@@ -207,13 +239,18 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div
 			class="fixed inset-0 z-40"
-			onclick={() => (showDeleteMenu = false)}
+			onclick={closeDeleteMenu}
 		></div>
 		<div
 			class="absolute right-2 top-2 z-50 min-w-36 rounded-xl border border-border bg-popover shadow-lg overflow-hidden"
+			role="menu"
+			aria-label="Conversation actions"
+			onkeydown={onMenuKeydown}
 		>
 			<button
 				type="button"
+				role="menuitem"
+				bind:this={deleteButtonEl}
 				onclick={handleDelete}
 				class="flex w-full items-center gap-2 px-3 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors"
 			>
