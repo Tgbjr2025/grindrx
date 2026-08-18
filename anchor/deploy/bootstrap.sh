@@ -35,7 +35,9 @@ ask()  { printf '\n\033[1;33m>>> %s\033[0m\n' "$*"; }
 say "Step 1/7 — Get the code"
 apt-get update -qq && apt-get install -y -qq git curl jq >/dev/null
 if [[ -d "$CLONE_DIR/.git" ]]; then
-    git -C "$CLONE_DIR" pull --ff-only || true
+    # Force-sync to the latest main so bug fixes always land on a re-run.
+    git -C "$CLONE_DIR" fetch --depth 1 origin main
+    git -C "$CLONE_DIR" reset --hard origin/main
 else
     git clone --depth 1 "$REPO_URL" "$CLONE_DIR"
 fi
