@@ -149,32 +149,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "Step 7/7 — Sign in the brain, and Google (the two steps only you can do)"
-if command -v claude >/dev/null && [[ ! -e "$DATA_DIR/.claude/.credentials.json" && ! -e "$DATA_DIR/.claude.json" ]]; then
-    ask "CLAUDE LOGIN. I'll open the Claude sign-in. A link/code appears — sign
-    in with YOUR Claude account, then type /exit. (This lets Anchor think,
-    using your subscription — no API key.)"
-    read -r -p "   Press ENTER to start..." _ </dev/tty || true
-    sudo -u anchor HOME="$DATA_DIR" claude </dev/tty || warn "Claude login didn't finish — run later: sudo -u anchor HOME=$DATA_DIR claude"
-elif command -v claude >/dev/null; then
-    ok "Claude already logged in"
-fi
+# NOTE: interactive full-screen logins (Claude, Google) are NOT launched from
+# inside this piped script — that wedges the terminal. They're installed as
+# tiny standalone commands the user runs in a normal shell afterward.
+say "Step 7/7 — Final wiring (the two sign-ins come after, as simple commands)"
 
+# One-word helper to sign the brain into the user's Claude account.
+cat > /usr/local/bin/anchor-login <<'EOS'
+#!/usr/bin/env bash
+# Sign Anchor's brain into your Claude account. Run in a normal terminal.
+# A sign-in link appears — open it, approve, and if it drops you into a chat
+# screen afterward, type /exit.
+exec sudo -u anchor HOME=/var/lib/anchor claude
+EOS
+chmod +x /usr/local/bin/anchor-login
+
+# One-word helper to connect Google Calendar/Contacts (needs the secret JSON).
+cat > /usr/local/bin/anchor-google <<'EOS'
+#!/usr/bin/env bash
+if [[ ! -f /var/lib/anchor/google_client_secret.json ]]; then
+    echo "First put your Google OAuth 'Desktop app' JSON at:"
+    echo "    /var/lib/anchor/google_client_secret.json"
+    echo "then run 'anchor-google' again."
+    exit 1
+fi
+exec sudo -u anchor HOME=/var/lib/anchor /opt/anchor/venv/bin/python -m anchor_server.google_auth
+EOS
+chmod +x /usr/local/bin/anchor-google
+
+CLAUDE_TODO=1
+[[ -e "$DATA_DIR/.claude/.credentials.json" || -e "$DATA_DIR/.claude.json" ]] && { CLAUDE_TODO=0; ok "Claude already logged in"; }
+[[ "$CLAUDE_TODO" -eq 1 ]] && warn "Claude sign-in still needed — run 'anchor-login' after this (shown below)."
+
+# Google stays in SAFE MODE until connected (captures/transcribe/app all work;
+# calendar writes are held). Connect later with 'anchor-google'.
 if [[ ! -f "$DATA_DIR/google_token.json" ]]; then
-    if [[ -f "$DATA_DIR/google_client_secret.json" ]]; then
-        ask "GOOGLE APPROVAL. A Google URL will print. Open it on any phone/PC,
-        sign in, approve (click past the 'unverified app' warning — it's your
-        own app). This lets Anchor write to your Calendar and Contacts."
-        read -r -p "   Press ENTER to start..." _ </dev/tty || true
-        sudo -u anchor HOME="$DATA_DIR" /opt/anchor/venv/bin/python -m anchor_server.google_auth </dev/tty \
-            || warn "Google authorize didn't finish — you can redo it later"
-    else
-        set_env ANCHOR_DRY_RUN 1
-        ask "Google isn't connected yet, so Anchor runs in SAFE MODE (captures +
-        transcribes + the app all work; calendar writes are held). To connect
-        Google later: put your OAuth 'Desktop app' JSON at
-        $DATA_DIR/google_client_secret.json  then re-run this script."
-    fi
+    set_env ANCHOR_DRY_RUN 1
+    warn "Google not connected — running in SAFE MODE. Connect later with 'anchor-google'."
+else
+    set_env ANCHOR_DRY_RUN 0
 fi
 chown root:anchor "$ENV_FILE" 2>/dev/null; chmod 640 "$ENV_FILE" 2>/dev/null
 systemctl restart anchor-api anchor-worker 2>/dev/null || true
@@ -198,6 +211,9 @@ Push topic (subscribe in the ntfy app):
 
 Backup recovery key (needed to restore backups — guard this!):
     $AGE_PRIV
+
+Sign in the brain (run once in this terminal):   anchor-login
+Connect Google later (optional):                 anchor-google
 
 Server files:  /etc/anchor/anchor.env   (all settings/secrets)
 Backups:       /var/backups/anchor/     (nightly, encrypted)
@@ -223,6 +239,12 @@ cat <<EOF
 
 Anchor is running. Your phone just got the app link + token (and backup key).
 Save those (a screenshot is fine).
+
+>>> DO THIS NOW — sign the brain into your Claude account. Type:
+        anchor-login
+    Open the link it shows, sign in with YOUR Claude account, and if it drops
+    you into a chat screen, type /exit. (Safe here — it's a normal command,
+    not the frozen screen from before.)
 
 NEXT, on your Samsung phone (about 20 min):
   1. Install from F-Droid: Termux, Termux:API, Termux:Boot, Termux:Widget
