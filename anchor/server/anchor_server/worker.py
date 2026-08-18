@@ -155,10 +155,30 @@ def housekeeping() -> None:
     db.heartbeat("worker", json.dumps(queue.depth()))
 
 
+def check_llm_backend() -> None:
+    """Rule 8: a missing/broken agent backend is announced at startup, not
+    discovered three backoff retries into the first real job."""
+    if config.LLM_BACKEND != "claude_cli":
+        return
+    import shutil
+
+    if shutil.which(config.CLAUDE_CLI_BIN) is None:
+        notify.push(
+            "Anchor: agent backend unavailable",
+            f"The Claude CLI ({config.CLAUDE_CLI_BIN!r}) is not installed on the "
+            "server. Artifacts will queue but the brain cannot run. Install the "
+            "CLI and log in as the anchor user, or set ANCHOR_LLM_BACKEND=api.",
+            priority="urgent",
+            tags="rotating_light",
+        )
+        db.audit("worker", "backend.missing", detail={"bin": config.CLAUDE_CLI_BIN})
+
+
 def main() -> None:
     config.ensure_dirs()
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
+    check_llm_backend()
     reclaimed = queue.reclaim_stale()
     if reclaimed:
         print(f"[anchor-worker] reclaimed {reclaimed} interrupted job(s)")

@@ -344,6 +344,7 @@ def health():
         "failed_jobs": [dict(r) for r in failed_jobs],
         "recent_errors": [dict(r) for r in recent_errors],
         "dry_run": config.DRY_RUN,
+        "llm_backend": config.LLM_BACKEND,
     }
 
 

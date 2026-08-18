@@ -115,7 +115,26 @@ def parse_tool_calls(text: str) -> tuple[str, list[dict[str, Any]]]:
 
 
 def run_cli(prompt: str, system: str, model: str) -> str:
-    """One `claude -p` invocation; returns the result text."""
+    """One `claude -p` invocation with a bounded transient-failure retry.
+
+    Retry policy fits the rest of the codebase: the job queue already re-runs
+    a whole agent turn on failure (with backoff, then fail-loud), so this
+    layer only smooths over blips — one retry on timeout/non-zero exit, and
+    none on FileNotFoundError (a missing binary won't fix itself).
+    """
+    last_exc: ClaudeCLIError | None = None
+    for attempt in range(2):
+        try:
+            return _run_cli_once(prompt, system, model)
+        except ClaudeCLIError as exc:
+            if "not found" in str(exc):
+                raise
+            last_exc = exc
+    assert last_exc is not None
+    raise last_exc
+
+
+def _run_cli_once(prompt: str, system: str, model: str) -> str:
     cmd = [
         config.CLAUDE_CLI_BIN,
         "-p",

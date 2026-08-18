@@ -166,3 +166,41 @@ def test_full_artifact_turn_through_cli_bridge(tmp_path, monkeypatch):
     # System prompt carried the tool schemas both times.
     assert "[AVAILABLE TOOLS]" in prompts[0][1]
     assert prompts[0][2] == config.AGENT_MODEL
+
+
+def test_run_cli_retries_transient_then_succeeds(monkeypatch):
+    attempts = []
+
+    def flaky(prompt, system, model):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ClaudeCLIError("Claude CLI exited 1: transient")
+        return "recovered"
+
+    monkeypatch.setattr(claude_cli, "_run_cli_once", flaky)
+    assert claude_cli.run_cli("p", "s", "m") == "recovered"
+    assert len(attempts) == 2
+
+
+def test_run_cli_no_retry_on_missing_binary(monkeypatch):
+    attempts = []
+
+    def missing(prompt, system, model):
+        attempts.append(1)
+        raise ClaudeCLIError("Claude CLI not found at 'claude'.")
+
+    monkeypatch.setattr(claude_cli, "_run_cli_once", missing)
+    with pytest.raises(ClaudeCLIError, match="not found"):
+        claude_cli.run_cli("p", "s", "m")
+    assert len(attempts) == 1
+
+
+def test_worker_startup_alerts_on_missing_cli(monkeypatch):
+    import shutil as _shutil
+
+    from anchor_server import worker
+
+    monkeypatch.setattr(_shutil, "which", lambda _: None)
+    worker.check_llm_backend()
+    pushes = db.q("SELECT * FROM outbox WHERE channel='ntfy'")
+    assert any("backend unavailable" in p["payload"] for p in pushes)
