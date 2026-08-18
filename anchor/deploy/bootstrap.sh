@@ -100,17 +100,19 @@ command -v age-keygen >/dev/null || apt-get install -y -qq age >/dev/null 2>&1 |
 AGE_PUB="$(get_env ANCHOR_BACKUP_AGE_RECIPIENT)"
 AGE_PRIV=""
 if [[ -z "$AGE_PUB" ]] && command -v age-keygen >/dev/null; then
-    KEYFILE="$(mktemp)"
-    if age-keygen -o "$KEYFILE" 2>/dev/null; then
-        AGE_PUB="$(grep 'public key:' "$KEYFILE" | awk '{print $NF}')"
-        AGE_PRIV="$(grep -v '^#' "$KEYFILE" | head -1)"
+    # age-keygen -o REFUSES to write over an existing file, so write straight
+    # to the (removed-first) destination rather than an mktemp file.
+    KEYDST="$DATA_DIR/backup-private-key.txt"
+    rm -f "$KEYDST"
+    if age-keygen -o "$KEYDST" 2>/dev/null; then
+        chmod 600 "$KEYDST" 2>/dev/null; chown root:root "$KEYDST" 2>/dev/null
+        AGE_PUB="$(grep 'public key:' "$KEYDST" | awk '{print $NF}')"
+        AGE_PRIV="$(grep -v '^#' "$KEYDST" | head -1)"
         set_env ANCHOR_BACKUP_AGE_RECIPIENT "$AGE_PUB"
-        install -m 600 "$KEYFILE" "$DATA_DIR/backup-private-key.txt" 2>/dev/null || true
         ok "backup key generated"
     else
         warn "age-keygen failed — backups off for now"
     fi
-    rm -f "$KEYFILE"
 elif [[ -n "$AGE_PUB" ]]; then
     AGE_PRIV="$(grep -v '^#' "$DATA_DIR/backup-private-key.txt" 2>/dev/null | head -1 || echo '(saved earlier)')"
     ok "backup key already set"
