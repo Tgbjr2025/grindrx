@@ -31,11 +31,16 @@ case "$PYVER" in
 esac
 
 # Claude CLI — the default agent backend (subscription auth, no API key).
+# Installed system-wide via npm so the service user finds it on PATH. Needs
+# Node 18+ (bootstrap.sh installs Node 22 before this runs).
 if ! command -v claude &>/dev/null; then
-    curl -fsSL https://claude.ai/install.sh | bash -s -- --target /usr/local/bin \
-        || npm install -g @anthropic-ai/claude-code \
-        || echo ">>> Could not install the Claude CLI automatically; install it" \
-                "manually or set ANCHOR_LLM_BACKEND=api in /etc/anchor/anchor.env."
+    if command -v npm &>/dev/null; then
+        npm install -g @anthropic-ai/claude-code >/dev/null 2>&1 \
+            || echo ">>> Claude CLI install via npm failed; set ANCHOR_LLM_BACKEND=api in $ENV_FILE."
+    else
+        echo ">>> Node/npm not found — install Node 18+ then: npm install -g @anthropic-ai/claude-code"
+        echo "    (or set ANCHOR_LLM_BACKEND=api and ANTHROPIC_API_KEY in $ENV_FILE)."
+    fi
 fi
 
 # 3. Python venv + install
