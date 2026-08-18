@@ -18,8 +18,17 @@ chown -R anchor:anchor "$DATA_DIR" "$BACKUP_DIR"
 chmod 700 "$DATA_DIR" "$DATA_DIR"/vault "$BACKUP_DIR"
 
 # 2. System packages
+# Use the distro's Python 3 (3.11 on 22.04, 3.12 on 24.04 — both satisfy the
+# project's ">=3.11" requirement). Prefer a specific 3.11/3.12 if present.
 apt-get update -qq
-apt-get install -y -qq python3.11-venv python3.11-dev ffmpeg age curl >/dev/null
+apt-get install -y -qq python3-venv python3-dev ffmpeg age curl jq >/dev/null
+PYTHON_BIN="$(command -v python3.12 || command -v python3.11 || command -v python3)"
+PYVER="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+echo "   using $PYTHON_BIN (Python $PYVER)"
+case "$PYVER" in
+    3.11|3.12|3.13) : ;;
+    *) echo ">>> Warning: Python $PYVER is untested; 3.11 or 3.12 recommended." ;;
+esac
 
 # Claude CLI — the default agent backend (subscription auth, no API key).
 if ! command -v claude &>/dev/null; then
@@ -30,7 +39,7 @@ if ! command -v claude &>/dev/null; then
 fi
 
 # 3. Python venv + install
-python3.11 -m venv "$INSTALL_DIR/venv"
+"$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/venv/bin/pip" install -q "$REPO_DIR/server"
 cp "$REPO_DIR/deploy/backup.sh" "$INSTALL_DIR/backup.sh"
