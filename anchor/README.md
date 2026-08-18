@@ -18,6 +18,7 @@ anchor/
 │   │   ├── ingest.py      sha256-idempotent artifact intake, Samsung filename parsing
 │   │   ├── transcribe.py  faster-whisper
 │   │   ├── agent/         the brain: manual tool-use loop + code-enforced trust rules
+│   │   │   └── claude_cli.py  Claude CLI bridge (default backend; Phoenix tool_call protocol)
 │   │   ├── gcal.py        Google Calendar (forced T-2h/T-45m reminders)
 │   │   ├── people.py      phone contact write-back (Anchor group only)
 │   │   ├── notify.py      ntfy push
@@ -60,10 +61,19 @@ anchor/
 **Server (Ubuntu):**
 ```bash
 sudo bash anchor/deploy/setup_server.sh
-sudo nano /etc/anchor/anchor.env          # ANTHROPIC_API_KEY, ntfy topic, age key
+sudo nano /etc/anchor/anchor.env          # ntfy topic, age backup key
+sudo -u anchor HOME=/var/lib/anchor claude   # one-time Claude CLI login (agent backend)
 sudo -u anchor /opt/anchor/venv/bin/python -m anchor_server.google_auth   # one-time
 sudo systemctl restart anchor-api anchor-worker
 ```
+
+**Agent backend:** by default the brain runs through the local `claude` CLI
+(`ANCHOR_LLM_BACKEND=claude_cli`) using subscription auth — no API key. It
+speaks the Phoenix bridge's prompt-level `tool_call` protocol
+(`agent/claude_cli.py`), so all Anchor tools work unchanged; the CLI's own
+tools are disabled so Anchor's audited tool layer stays the only actuator.
+Set `ANCHOR_LLM_BACKEND=api` + `ANTHROPIC_API_KEY` to use the Anthropic API
+instead.
 Put the API behind your HTTPS reverse proxy (it listens on 127.0.0.1:8300).
 
 **GUI:** `cd anchor/gui && npm install && npm run build` — the API serves

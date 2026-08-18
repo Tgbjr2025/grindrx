@@ -77,6 +77,15 @@ AGENT_MODEL = _env("ANCHOR_AGENT_MODEL", "claude-sonnet-4-6")
 AGENT_MAX_TOKENS = int(_env("ANCHOR_AGENT_MAX_TOKENS", "8000"))
 AGENT_MAX_ITERATIONS = int(_env("ANCHOR_AGENT_MAX_ITERATIONS", "30"))
 
+# Backend for agent turns:
+#   claude_cli — shell out to the local `claude` CLI (subscription auth, no
+#                API key; the Phoenix-style tool_call bridge). Default.
+#   api        — Anthropic SDK with ANTHROPIC_API_KEY.
+LLM_BACKEND = _env("ANCHOR_LLM_BACKEND", "claude_cli")
+CLAUDE_CLI_BIN = _env("ANCHOR_CLAUDE_CLI_BIN", "claude")
+CLAUDE_CLI_TIMEOUT = int(_env("ANCHOR_CLAUDE_CLI_TIMEOUT", "600"))
+CLAUDE_CLI_EXTRA_ARGS = (_env("ANCHOR_CLAUDE_CLI_EXTRA_ARGS", "") or "").split() or []
+
 # --- Transcription ----------------------------------------------------------
 WHISPER_MODEL = _env("ANCHOR_WHISPER_MODEL", "small")
 WHISPER_DEVICE = _env("ANCHOR_WHISPER_DEVICE", "auto")

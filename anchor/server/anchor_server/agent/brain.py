@@ -18,11 +18,22 @@ _client = None
 
 
 def _get_client():
+    """Agent backend: the Claude CLI bridge by default, Anthropic API opt-in.
+    Both expose `client.messages.create(...)` with the same response shape."""
     global _client
     if _client is None:
-        import anthropic
+        if config.LLM_BACKEND == "claude_cli":
+            from .claude_cli import ClaudeCLIClient
 
-        _client = anthropic.Anthropic(api_key=config.anthropic_api_key())
+            _client = ClaudeCLIClient()
+        elif config.LLM_BACKEND == "api":
+            import anthropic
+
+            _client = anthropic.Anthropic(api_key=config.anthropic_api_key())
+        else:
+            raise config.ConfigError(
+                f"ANCHOR_LLM_BACKEND must be 'claude_cli' or 'api', got {config.LLM_BACKEND!r}"
+            )
     return _client
 
 

@@ -21,6 +21,14 @@ chmod 700 "$DATA_DIR" "$DATA_DIR"/vault "$BACKUP_DIR"
 apt-get update -qq
 apt-get install -y -qq python3.11-venv python3.11-dev ffmpeg age curl >/dev/null
 
+# Claude CLI — the default agent backend (subscription auth, no API key).
+if ! command -v claude &>/dev/null; then
+    curl -fsSL https://claude.ai/install.sh | bash -s -- --target /usr/local/bin \
+        || npm install -g @anthropic-ai/claude-code \
+        || echo ">>> Could not install the Claude CLI automatically; install it" \
+                "manually or set ANCHOR_LLM_BACKEND=api in /etc/anchor/anchor.env."
+fi
+
 # 3. Python venv + install
 python3.11 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade pip
@@ -34,7 +42,18 @@ if [[ ! -f "$ENV_FILE" ]]; then
     # Generate the phone<->server bearer token now so setup is one pass.
     sed -i "s/^ANCHOR_API_TOKEN=.*/ANCHOR_API_TOKEN=$(openssl rand -hex 32)/" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
-    echo ">>> EDIT $ENV_FILE: set ANTHROPIC_API_KEY, ANCHOR_NTFY_TOPIC, Google credentials."
+    echo ">>> EDIT $ENV_FILE: set ANCHOR_NTFY_TOPIC, backup key, Google credentials."
+fi
+
+# Agent backend login (Claude CLI, subscription auth — the default backend).
+if [[ ! -e "$DATA_DIR/.claude/.credentials.json" && ! -e "$DATA_DIR/.claude.json" ]]; then
+    cat <<'EOF'
+>>> Claude CLI is not logged in for the service user yet. Run:
+      sudo -u anchor HOME=/var/lib/anchor claude
+    and complete the login once (or use `claude setup-token`). Anchor's agent
+    runs through this CLI — no ANTHROPIC_API_KEY needed. To use the API
+    instead, set ANCHOR_LLM_BACKEND=api and ANTHROPIC_API_KEY in the env file.
+EOF
 fi
 chown root:anchor "$ENV_FILE"; chmod 640 "$ENV_FILE"
 
