@@ -13,7 +13,12 @@ from .gcal import SCOPES
 def main() -> None:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
-    flow = InstalledAppFlow.from_client_secrets_file(config.GOOGLE_CLIENT_SECRETS, SCOPES)
+    scopes = list(SCOPES)
+    if config.GMAIL_ENABLED:
+        from .gmail_ingest import GMAIL_SCOPE
+
+        scopes.append(GMAIL_SCOPE)
+    flow = InstalledAppFlow.from_client_secrets_file(config.GOOGLE_CLIENT_SECRETS, scopes)
     # Console-style flow: server has no browser. Opens a local port; if you
     # are ssh'd in, forward it: ssh -L 8399:localhost:8399 <server>
     creds = flow.run_local_server(port=8399, open_browser=False)

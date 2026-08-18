@@ -165,7 +165,11 @@ def ingest_file(
     )
 
     is_audio = Path(filename).suffix.lower() in AUDIO_EXTENSIONS
-    if text_body is not None:
+    if kind == "location":
+        # Parsed synchronously by the /v1/location/import endpoint — a huge
+        # JSON export should never hit transcription or an agent turn.
+        pass
+    elif text_body is not None:
         db.fts_index(text_body, "artifact", artifact_id, artifact_id)
         # SMS whitelist: only messages from known, non-spam senders get an
         # agent turn. Everything is still stored and searchable (rule 4) and

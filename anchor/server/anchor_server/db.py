@@ -179,6 +179,20 @@ CREATE TABLE IF NOT EXISTS symptoms (
 CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(
     body, entity, entity_id UNINDEXED, artifact_id UNINDEXED
 );
+
+-- Local semantic index over vault_fts rows (Phase 3). Vectors are float32
+-- blobs; the sweep in the worker fills in whatever is missing, so the index
+-- can always be rebuilt by clearing this table.
+CREATE TABLE IF NOT EXISTS embeddings (
+    fts_rowid INTEGER PRIMARY KEY,
+    entity TEXT,
+    entity_id INTEGER,
+    artifact_id INTEGER,
+    model TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vector BLOB NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 

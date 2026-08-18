@@ -125,6 +125,20 @@ report)
         echo "Report download failed."
     fi
     ;;
+pack)
+    shift; topic="${*:?usage: anchor pack <topic>}"
+    out="/storage/emulated/0/Download/anchor-pack.zip"
+    if api GET "/v1/pack?topic=$(jq -rn --arg t "$topic" '$t|@uri')" -o "$out"; then
+        notify_user "Pack saved to Downloads: $topic (privileged excluded)."
+        command -v termux-open >/dev/null && termux-open "$out"
+    else
+        echo "Pack failed."
+    fi
+    ;;
+location-import)
+    f="${2:?usage: anchor location-import <timeline-export.json>}"
+    api POST /v1/location/import -F "file=@$f" | jq .
+    ;;
 sweep)
     exec "$HOME/.anchor/bin/anchor-sweep"
     ;;
@@ -141,6 +155,8 @@ anchor — your external memory. Commands:
   anchor fix <correction>     fix a wrong event/task/fact
   anchor log [text]           log a symptom (dated)
   anchor report [days]        symptom-log PDF for the doctor (default 90)
+  anchor pack <topic>         export a source-linked bundle (to Downloads)
+  anchor location-import <f>  import a Google Timeline export JSON
   anchor backfill             upload ALL existing call recordings/voicemails
   anchor backfill-report      what backfill found
   anchor sweep                force a sync sweep now

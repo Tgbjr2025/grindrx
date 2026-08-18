@@ -46,7 +46,7 @@ async def ingest_upload(
     backfill: bool = Form(False),
     sha256: str | None = Form(None),
 ):
-    if kind not in ("call", "voicemail", "photo", "note", "sms", "fix"):
+    if kind not in ("call", "voicemail", "photo", "note", "sms", "fix", "email"):
         raise HTTPException(status_code=400, detail=f"Unknown kind {kind!r}")
     # Fast path: client already knows the hash and we already have it.
     if sha256:
@@ -335,6 +335,57 @@ def close_task(task_id: int, body: TaskCloseIn):
 
 
 # --------------------------------------------------------------------------
+# Pack export + location import (Phase 3)
+# --------------------------------------------------------------------------
+
+@app.get("/v1/pack", dependencies=[Depends(auth_or_query_token)])
+def build_pack_endpoint(
+    topic: str,
+    days: int | None = None,
+    include_privileged: bool = False,
+    include_audio: bool = False,
+):
+    from fastapi.responses import Response
+
+    from . import pack
+
+    data = pack.build_pack(topic, days, include_privileged, include_audio)
+    safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in topic)[:40].strip() or "pack"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="anchor-pack-{safe}.zip"'},
+    )
+
+
+@app.post("/v1/location/import", dependencies=[Depends(auth)])
+async def location_import(file: UploadFile):
+    from . import location
+
+    with tempfile.NamedTemporaryFile(dir=config.DATA_DIR, delete=False, suffix=".json") as tmp:
+        while chunk := await file.read(1 << 20):
+            tmp.write(chunk)
+        tmp_path = Path(tmp.name)
+    try:
+        result = ingest.ingest_file(
+            tmp_path,
+            filename=file.filename or "location-history.json",
+            kind="location",
+            mime="application/json",
+        )
+        raw = Path(
+            db.q1("SELECT stored_path FROM artifacts WHERE id=?", (result["artifact_id"],))["stored_path"]
+        ).read_bytes()
+        try:
+            counts = location.import_json(raw, result["artifact_id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return {**result, **counts}
+
+
+# --------------------------------------------------------------------------
 # Symptom log (Phase 2)
 # --------------------------------------------------------------------------
 
@@ -394,6 +445,8 @@ def health():
         "SELECT ts, action, detail FROM audit_log WHERE action LIKE '%error%'"
         " OR action LIKE '%failed%' ORDER BY id DESC LIMIT 20"
     )
+    from . import embeddings
+
     return {
         "now": timeutil.now_iso(),
         "queue": depth,
@@ -402,6 +455,8 @@ def health():
         "recent_errors": [dict(r) for r in recent_errors],
         "dry_run": config.DRY_RUN,
         "llm_backend": config.LLM_BACKEND,
+        "semantic_index": embeddings.index_status(),
+        "gmail_enabled": config.GMAIL_ENABLED,
     }
 
 

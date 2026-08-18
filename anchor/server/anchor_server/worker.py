@@ -149,9 +149,40 @@ def escalate_callbacks() -> None:
             db.audit("worker", "task.escalate", "task", task["id"], {"level": level + 1})
 
 
+_last_gmail_poll = 0.0
+
+
+def gmail_tick() -> None:
+    global _last_gmail_poll
+    if not config.GMAIL_ENABLED:
+        return
+    if time.monotonic() - _last_gmail_poll < config.GMAIL_POLL_SECONDS:
+        return
+    _last_gmail_poll = time.monotonic()
+    from . import gmail_ingest
+
+    count = gmail_ingest.poll()
+    if count:
+        print(f"[anchor-worker] gmail: ingested {count} email(s)")
+
+
+def embed_tick() -> None:
+    from . import embeddings
+
+    done = embeddings.embed_sweep()
+    if done:
+        print(f"[anchor-worker] semantic index: embedded {done} item(s)")
+
+
 def housekeeping() -> None:
-    check_phone_sync()
-    escalate_callbacks()
+    # Each step isolated: one failing subsystem can't starve the others, and
+    # every failure is recorded (rule 8).
+    for step in (check_phone_sync, escalate_callbacks, embed_tick, gmail_tick):
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[anchor-worker] {step.__name__} error: {exc}", file=sys.stderr)
+            db.audit("worker", f"{step.__name__}.error", detail={"error": repr(exc)})
     db.heartbeat("worker", json.dumps(queue.depth()))
 
 

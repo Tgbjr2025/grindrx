@@ -46,6 +46,10 @@ Appointments land on your Google Calendar **by themselves**, with reminders
 | Correct something | `anchor fix ...what's wrong...` |
 | Log a symptom | `anchor log headache since lunch` |
 | Report for the doctor | `anchor report` (PDF lands in Downloads) |
+| Everything about a topic | `anchor pack imaging` (zip in Downloads) |
+
+Or use the **home-screen buttons** (Anchor-Record, Anchor-Stop, Anchor-Note,
+Anchor-Ask) — add the Termux:Widget to your home screen once.
 
 Texts (SMS) save themselves — nothing to do.
 

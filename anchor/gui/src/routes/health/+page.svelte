@@ -57,6 +57,14 @@
   <h2>Agent backend</h2>
   <div class="row"><span>{data.llm_backend}</span><span>{data.dry_run ? 'DRY RUN' : 'live'}</span></div>
 
+  {#if data.semantic_index}
+    <h2>Semantic index</h2>
+    <div class="row {data.semantic_index.pending > 100 ? 'bad' : 'ok'}">
+      <span>indexed</span>
+      <span>{data.semantic_index.indexed} / {data.semantic_index.total}</span>
+    </div>
+  {/if}
+
   {#if data.failed_jobs.length}
     <h2>Failed jobs</h2>
     {#each data.failed_jobs as job}

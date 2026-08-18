@@ -30,7 +30,8 @@ def clean_db():
     conn = db.connect()
     tables = [
         "artifacts", "jobs", "events", "tasks", "facts", "contacts",
-        "confirms", "audit_log", "heartbeats", "outbox", "agent_runs", "vault_fts",
+        "confirms", "audit_log", "heartbeats", "outbox", "agent_runs",
+        "vault_fts", "embeddings", "symptoms",
     ]
     for t in tables:
         conn.execute(f"DELETE FROM {t}")  # test fixture only — rule 4 applies to prod code
