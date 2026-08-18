@@ -169,6 +169,13 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS symptoms (
+    id INTEGER PRIMARY KEY,
+    body TEXT NOT NULL,
+    logged_at TEXT NOT NULL,             -- when the user said it happened/was logged
+    created_at TEXT NOT NULL
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts USING fts5(
     body, entity, entity_id UNINDEXED, artifact_id UNINDEXED
 );

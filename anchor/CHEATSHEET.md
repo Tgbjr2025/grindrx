@@ -44,6 +44,21 @@ Appointments land on your Google Calendar **by themselves**, with reminders
 | Save a text note | `anchor note pick up meds Thursday` |
 | Ask a question | `anchor ask when is PT` |
 | Correct something | `anchor fix ...what's wrong...` |
+| Log a symptom | `anchor log headache since lunch` |
+| Report for the doctor | `anchor report` (PDF lands in Downloads) |
+
+Texts (SMS) save themselves — nothing to do.
+
+---
+
+## Rough day?
+
+Open the app → **More** → **Turn on bad-day mode**. Everything shrinks to
+just Today and Confirm, in very large text. Turn it off from the bottom of
+the Today screen when you're ready.
+
+**Where did that come from?** Open **Timeline**, tap any item, tap any line
+of the transcript — it plays that exact moment of the recording.
 
 ---
 

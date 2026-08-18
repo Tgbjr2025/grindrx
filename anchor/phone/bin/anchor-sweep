@@ -43,6 +43,9 @@ find ${ANCHOR_CALL_DIRS:-/storage/emulated/0/Recordings/Call /storage/emulated/0
     fi
 done
 
+# SMS ingestion (Phase 2) — piggybacks on the sweep cadence.
+[ -x "$HOME/.anchor/bin/anchor-sms-poll" ] && "$HOME/.anchor/bin/anchor-sms-poll"
+
 # Heartbeat — the server alerts if this stops arriving (rule 8).
 curl -sS -m 30 -X POST -H "Authorization: Bearer $ANCHOR_TOKEN" \
     -H 'Content-Type: application/json' \

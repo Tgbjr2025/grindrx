@@ -108,6 +108,23 @@ backfill-report)
         "", "NEEDS CONFIRM:",
         (.needs_confirm[]? | "  • \(.summary)")'
     ;;
+log)
+    shift; text="${*:-}"
+    [ -z "$text" ] && { printf "symptom> "; read -r text; }
+    api POST /v1/symptoms -H 'Content-Type: application/json' \
+        -d "$(jq -n --arg t "$text" '{text: $t}')" >/dev/null \
+        && notify_user "Symptom logged." || notify_user "Symptom log FAILED — try again."
+    ;;
+report)
+    days="${2:-90}"
+    out="/storage/emulated/0/Download/anchor-symptom-report.pdf"
+    if api GET "/v1/symptoms/report.pdf?days=$days" -o "$out"; then
+        notify_user "Report saved to Downloads (last $days days)."
+        command -v termux-open >/dev/null && termux-open "$out"
+    else
+        echo "Report download failed."
+    fi
+    ;;
 sweep)
     exec "$HOME/.anchor/bin/anchor-sweep"
     ;;
@@ -122,6 +139,8 @@ anchor — your external memory. Commands:
   anchor note [text]          save a text note
   anchor ask <question>       ask the record (answers cite sources)
   anchor fix <correction>     fix a wrong event/task/fact
+  anchor log [text]           log a symptom (dated)
+  anchor report [days]        symptom-log PDF for the doctor (default 90)
   anchor backfill             upload ALL existing call recordings/voicemails
   anchor backfill-report      what backfill found
   anchor sweep                force a sync sweep now

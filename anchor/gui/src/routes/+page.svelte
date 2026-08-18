@@ -1,5 +1,6 @@
 <script>
   import { api, fmtTime, fmtDay } from '$lib/api.js';
+  import { badday } from '$lib/badday.js';
   import { onMount, onDestroy } from 'svelte';
 
   let data = $state(null);
@@ -63,6 +64,12 @@
       {#if task.source_quote}<div class="source">“{task.source_quote}”</div>{/if}
     </div>
   {/each}
+
+  {#if $badday}
+    <button class="exit-badday" onclick={() => badday.set(false)}>
+      Feeling better? Turn off bad-day mode
+    </button>
+  {/if}
 {/if}
 
 <style>
@@ -88,4 +95,5 @@
   .big { font-size: 1.5rem; }
   .quiet { color: #64748b; }
   .error { color: #f87171; font-size: 1.2rem; }
+  .exit-badday { margin-top: 2rem; width: 100%; background: #334155; color: #94a3b8; }
 </style>

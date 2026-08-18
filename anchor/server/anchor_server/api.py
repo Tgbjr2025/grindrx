@@ -83,6 +83,9 @@ class NoteIn(BaseModel):
     phone_number: str | None = None
     batch_id: str | None = None
     backfill: bool = False
+    # Stable-across-retries identity widener (e.g. SMS sender|received-stamp)
+    # so identical bodies from different senders/times don't dedupe together.
+    dedupe_salt: str | None = None
 
 
 @app.post("/v1/ingest/text", dependencies=[Depends(auth)])
@@ -107,6 +110,7 @@ def ingest_text(body: NoteIn):
             backfill=body.backfill,
             mime="text/plain",
             text_body=body.text,
+            dedupe_salt=body.dedupe_salt,
         )
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -312,6 +316,59 @@ def artifact_audio(artifact_id: int):
 def list_tasks(status: str = "open"):
     rows = db.q("SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC", (status,))
     return {"tasks": [dict(r) for r in rows]}
+
+
+class TaskCloseIn(BaseModel):
+    reason: str = "closed from Anchor Console"
+
+
+@app.post("/v1/tasks/{task_id}/close", dependencies=[Depends(auth)])
+def close_task(task_id: int, body: TaskCloseIn):
+    from .agent import tools
+
+    output, is_error = tools.dispatch(
+        "task_close", {"task_id": task_id, "reason": body.reason}
+    )
+    if is_error:
+        raise HTTPException(status_code=404, detail=json.loads(output).get("error"))
+    return json.loads(output)
+
+
+# --------------------------------------------------------------------------
+# Symptom log (Phase 2)
+# --------------------------------------------------------------------------
+
+class SymptomIn(BaseModel):
+    text: str
+    logged_at: str | None = None
+
+
+@app.post("/v1/symptoms", dependencies=[Depends(auth)])
+def add_symptom(body: SymptomIn):
+    from . import symptoms
+
+    return symptoms.add_entry(body.text, body.logged_at)
+
+
+@app.get("/v1/symptoms", dependencies=[Depends(auth)])
+def list_symptoms(days: int | None = None):
+    from . import symptoms
+
+    return {"symptoms": symptoms.list_entries(days)}
+
+
+@app.get("/v1/symptoms/report.pdf", dependencies=[Depends(auth_or_query_token)])
+def symptom_report(days: int | None = None):
+    from fastapi.responses import Response
+
+    from . import symptoms
+
+    pdf = symptoms.build_pdf(days)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="symptom-report.pdf"'},
+    )
 
 
 @app.get("/v1/contacts", dependencies=[Depends(auth)])

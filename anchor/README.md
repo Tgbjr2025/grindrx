@@ -91,13 +91,16 @@ uv pip install -e '.[dev]' && pytest`
 
 ## Phase status
 
-- **Phase 1 (this tree): done.** Durable core, ingestion→transcription→agent
-  pipeline, backfill + report, live auto-sync, CLI, minimal GUI (Today /
-  Confirm / Ask), digest + backups + health.
-- **Phase 2 next:** SMS poller, Timeline GUI with offset playback, contacts &
-  system-health views, bad-day mode toggle, symptom log/report.
-- **Phase 3:** embeddings search, `anchor pack`, Gmail ingestion, location
-  history, widget capture.
+- **Phase 1: done.** Durable core, ingestion→transcription→agent pipeline,
+  backfill + report, live auto-sync, CLI, minimal GUI (Today / Confirm / Ask),
+  digest + backups + health.
+- **Phase 2: done.** SMS ingestion (poller on the sweep cadence; server-side
+  whitelist — unknown/spam senders are stored + searchable but don't drive the
+  agent), full GUI (Timeline with tap-to-play offset playback, Tasks,
+  Contacts, System health, bad-day mode), symptom log (`anchor log`) with
+  dated PDF report (`anchor report`). The 8 AM digest shipped in Phase 1.
+- **Phase 3 next:** embeddings search, `anchor pack`, Gmail ingestion,
+  location history, widget capture.
 
 ## Notes for the user's attorneys
 

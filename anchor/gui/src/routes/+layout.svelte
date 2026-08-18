@@ -1,16 +1,22 @@
 <script>
   import { page } from '$app/stores';
   import { getToken, setToken } from '$lib/api.js';
+  import { badday } from '$lib/badday.js';
 
   let { children } = $props();
   let hasToken = $state(!!getToken());
   let tokenInput = $state('');
 
-  const tabs = [
+  const allTabs = [
     { href: '/', label: 'Today' },
     { href: '/confirm', label: 'Confirm' },
-    { href: '/ask', label: 'Ask' }
+    { href: '/ask', label: 'Ask' },
+    { href: '/timeline', label: 'Timeline' },
+    { href: '/more', label: 'More' }
   ];
+  const baddayTabs = allTabs.slice(0, 2); // Today + Confirm only
+
+  let tabs = $derived($badday ? baddayTabs : allTabs);
 
   function saveToken() {
     if (!tokenInput.trim()) return;
@@ -30,7 +36,11 @@
 {:else}
   <nav>
     {#each tabs as tab}
-      <a href={tab.href} class:active={$page.url.pathname === tab.href}>{tab.label}</a>
+      <a
+        href={tab.href}
+        class:active={tab.href === '/'
+          ? $page.url.pathname === '/'
+          : $page.url.pathname.startsWith(tab.href)}>{tab.label}</a>
     {/each}
   </nav>
   <main>
@@ -63,10 +73,10 @@
   nav a {
     flex: 1;
     text-align: center;
-    padding: 1rem 0.5rem;
+    padding: 1rem 0.3rem;
     color: #94a3b8;
     text-decoration: none;
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     font-weight: 600;
   }
   nav a.active {

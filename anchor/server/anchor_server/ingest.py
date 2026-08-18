@@ -96,10 +96,19 @@ def ingest_file(
     backfill: bool = False,
     mime: str | None = None,
     text_body: str | None = None,
+    dedupe_salt: str | None = None,
 ) -> dict[str, Any]:
     """Store one artifact and enqueue its processing. Returns
-    {artifact_id, duplicate}."""
+    {artifact_id, duplicate}.
+
+    dedupe_salt widens identity beyond raw content — two SMS that both say
+    "Yes" from different senders/times are different artifacts. The salt must
+    be stable across retries of the same logical capture (e.g. sender +
+    received timestamp), so retried uploads still dedupe.
+    """
     digest = sha256_file(tmp_path)
+    if dedupe_salt:
+        digest = hashlib.sha256(f"{digest}|{dedupe_salt}".encode()).hexdigest()
     existing = db.q1("SELECT id FROM artifacts WHERE sha256 = ?", (digest,))
     if existing:
         db.audit("api", "ingest.duplicate", "artifact", existing["id"], {"filename": filename})
@@ -158,7 +167,18 @@ def ingest_file(
     is_audio = Path(filename).suffix.lower() in AUDIO_EXTENSIONS
     if text_body is not None:
         db.fts_index(text_body, "artifact", artifact_id, artifact_id)
-        queue.enqueue("agent_turn", artifact_id)
+        # SMS whitelist: only messages from known, non-spam senders get an
+        # agent turn. Everything is still stored and searchable (rule 4) and
+        # counted in the digest — unknown-sender texts just don't drive the
+        # brain, so spam floods can't burn agent turns or spray notifications.
+        if kind == "sms" and (contact is None or contact["category"] == "spam"):
+            db.audit(
+                "api", "sms.agent_skipped", "artifact", artifact_id,
+                {"reason": "unknown_sender" if contact is None else "spam_sender",
+                 "phone_number": phone},
+            )
+        else:
+            queue.enqueue("agent_turn", artifact_id)
     elif is_audio:
         queue.enqueue("transcribe", artifact_id)
     else:
