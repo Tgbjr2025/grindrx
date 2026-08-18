@@ -1,0 +1,55 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Reconciliation sweep — THE delivery guarantee (the watcher is only a latency
+# optimization). Every 15 min: diff local recordings against the server
+# manifest, upload anything missing, then heartbeat. A dead watcher, a phone
+# reboot, or a server outage can delay capture but never lose it.
+set -u
+
+CONF="$HOME/.anchor/config"
+[ -f "$CONF" ] && . "$CONF"
+: "${ANCHOR_SERVER:?missing config}" ; : "${ANCHOR_TOKEN:?missing config}"
+
+LOG="$HOME/.anchor/sweep.log"
+exec >>"$LOG" 2>&1
+echo "--- sweep $(date -Iseconds)"
+
+MANIFEST=$(curl -sS -m 60 -H "Authorization: Bearer $ANCHOR_TOKEN" \
+    "$ANCHOR_SERVER/v1/sync/manifest") || { echo "manifest fetch failed"; exit 1; }
+
+uploaded=0; skipped=0; failed=0
+find ${ANCHOR_CALL_DIRS:-/storage/emulated/0/Recordings/Call /storage/emulated/0/Call /storage/emulated/0/Sounds/Voicemail} \
+    "$HOME/.anchor/captures" \
+    -type f \( -iname '*.m4a' -o -iname '*.mp3' -o -iname '*.amr' -o -iname '*.3gp' \
+       -o -iname '*.wav' -o -iname '*.aac' -o -iname '*.ogg' -o -iname '*.jpg' \) \
+    2>/dev/null | while read -r f; do
+    # Skip a file still being written (recording in progress).
+    if [ -n "$(find "$f" -newermt '-20 seconds' 2>/dev/null)" ]; then continue; fi
+    sha=$(sha256sum "$f" | cut -d' ' -f1)
+    if echo "$MANIFEST" | grep -q "$sha"; then skipped=$((skipped+1)); continue; fi
+    kind=call
+    case "$f" in
+        *oicemail*|*VVM*) kind=voicemail;;
+        *captures/photo_*) kind=photo;;
+        *captures/rec_*) kind=note;;
+    esac
+    stamp=$(date -r "$f" +%Y-%m-%dT%H:%M:%S%:z)
+    if curl -sS -m 300 -X POST -H "Authorization: Bearer $ANCHOR_TOKEN" \
+        -F "file=@$f" -F "kind=$kind" -F "sha256=$sha" \
+        -F "source_path=$f" -F "captured_at=$stamp" \
+        "$ANCHOR_SERVER/v1/ingest" >/dev/null; then
+        uploaded=$((uploaded+1)); echo "uploaded $f"
+    else
+        failed=$((failed+1)); echo "FAILED $f (next sweep retries)"
+    fi
+done
+
+# SMS ingestion (Phase 2) — piggybacks on the sweep cadence.
+[ -x "$HOME/.anchor/bin/anchor-sms-poll" ] && "$HOME/.anchor/bin/anchor-sms-poll"
+
+# Heartbeat — the server alerts if this stops arriving (rule 8).
+curl -sS -m 30 -X POST -H "Authorization: Bearer $ANCHOR_TOKEN" \
+    -H 'Content-Type: application/json' \
+    -d "{\"device\":\"phone\",\"detail\":\"sweep ok\"}" \
+    "$ANCHOR_SERVER/v1/sync/heartbeat" >/dev/null || echo "heartbeat failed"
+
+tail -n 500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"

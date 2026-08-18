@@ -1,0 +1,39 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# SMS ingestion poller (Phase 2). The phone is SMS/MMS-only, so this covers
+# all texting. Runs at the end of every sweep (15 min). Sender whitelisting
+# is SERVER-side (known, non-spam contacts get agent turns; everything is
+# stored either way) — this script just ships messages.
+set -u
+CONF="$HOME/.anchor/config"; [ -f "$CONF" ] && . "$CONF"
+: "${ANCHOR_SERVER:?missing config}" ; : "${ANCHOR_TOKEN:?missing config}"
+
+STATE="$HOME/.anchor/sms_last_received"
+LAST=$(cat "$STATE" 2>/dev/null || echo "1970-01-01 00:00")
+
+command -v termux-sms-list >/dev/null || exit 0
+
+# termux-sms-list: [{"threadid":..,"type":"inbox","read":true,
+#   "number":"+1313...","received":"2026-08-18 10:00","body":"..."}]
+LIST=$(termux-sms-list -l 200 -t inbox 2>/dev/null) || exit 0
+[ -z "$LIST" ] && exit 0
+
+# Oldest-first so the cursor can advance strictly in order; on the first
+# failed upload we stop, leaving the cursor before it for the next poll.
+echo "$LIST" | jq -c --arg last "$LAST" \
+    '[.[] | select(.received > $last)] | sort_by(.received) | .[]' | while read -r msg; do
+    number=$(echo "$msg" | jq -r '.number // empty')
+    received=$(echo "$msg" | jq -r '.received')
+    body=$(echo "$msg" | jq -r '.body // empty')
+    [ -z "$body" ] && continue
+    payload=$(jq -n --arg t "$body" --arg n "$number" --arg r "$received" \
+        '{text: $t, kind: "sms", phone_number: $n,
+          captured_at: ($r | sub(" "; "T")),
+          dedupe_salt: ($n + "|" + $r)}')
+    if curl -sS -m 60 -X POST -H "Authorization: Bearer $ANCHOR_TOKEN" \
+        -H 'Content-Type: application/json' -d "$payload" \
+        "$ANCHOR_SERVER/v1/ingest/text" >/dev/null; then
+        echo "$received" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+    else
+        break  # retry from here next poll; dedupe_salt makes re-sends harmless
+    fi
+done
