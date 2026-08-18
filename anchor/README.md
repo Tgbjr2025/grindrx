@@ -99,8 +99,15 @@ uv pip install -e '.[dev]' && pytest`
   agent), full GUI (Timeline with tap-to-play offset playback, Tasks,
   Contacts, System health, bad-day mode), symptom log (`anchor log`) with
   dated PDF report (`anchor report`). The 8 AM digest shipped in Phase 1.
-- **Phase 3 next:** embeddings search, `anchor pack`, Gmail ingestion,
-  location history, widget capture.
+- **Phase 3: done.** Local semantic search (on-box fastembed/ONNX; the
+  worker's sweep indexes the vault incrementally, `vault_search` is hybrid
+  keyword+semantic, keyword-only degradation is loud), `anchor pack <topic>`
+  (dated, source-linked zip; privileged excluded by default and the exclusion
+  is stated in the report), Gmail ingestion (opt-in, read-only,
+  label-filtered — confirmation emails become normal agent turns), Google
+  Timeline import (`anchor location-import` or share the export JSON to
+  Termux; visits become searchable facts), and Termux:Widget one-tap
+  home-screen buttons (Record / Stop / Note / Ask).
 
 ## Notes for the user's attorneys
 

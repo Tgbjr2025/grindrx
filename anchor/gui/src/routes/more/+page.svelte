@@ -4,8 +4,18 @@
 
   let symptom = $state('');
   let logStatus = $state('');
+  let packTopic = $state('');
 
   const reportUrl = `/v1/symptoms/report.pdf?days=90&token=${encodeURIComponent(getToken())}`;
+
+  function downloadPack() {
+    const topic = packTopic.trim();
+    if (!topic) return;
+    window.open(
+      `/v1/pack?topic=${encodeURIComponent(topic)}&token=${encodeURIComponent(getToken())}`,
+      '_blank'
+    );
+  }
 
   async function logSymptom() {
     const text = symptom.trim();
@@ -32,6 +42,13 @@
 <button class="badday" class:on={$badday} onclick={() => badday.update((v) => !v)}>
   {$badday ? 'Bad-day mode is ON — tap to turn off' : 'Turn on bad-day mode'}
 </button>
+
+<h2>Export a pack</h2>
+<p class="hint">Everything on a topic, dated and source-linked, as a zip. Attorney material is excluded automatically.</p>
+<form onsubmit={(e) => { e.preventDefault(); downloadPack(); }}>
+  <input bind:value={packTopic} placeholder="e.g. imaging, insurance claim" />
+  <button type="submit">Export</button>
+</form>
 
 <h2>Symptom log</h2>
 <form onsubmit={(e) => { e.preventDefault(); logSymptom(); }}>

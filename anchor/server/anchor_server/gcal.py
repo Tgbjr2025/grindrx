@@ -23,7 +23,10 @@ def _credentials():
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    creds = Credentials.from_authorized_user_file(config.GOOGLE_TOKEN_PATH, SCOPES)
+    # No scopes arg: honor whatever the stored token was granted (the gmail
+    # scope is optional — google_auth requests it only when Gmail ingestion
+    # is enabled).
+    creds = Credentials.from_authorized_user_file(config.GOOGLE_TOKEN_PATH)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
     return creds

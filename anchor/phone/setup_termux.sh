@@ -26,6 +26,14 @@ cat > "$HOME/bin/termux-file-editor" <<'EOF'
 set -u
 . "$HOME/.anchor/config"
 f="$1"
+# Google Timeline exports go to the location importer, not the vault inbox.
+case "$f" in *.json)
+    resp=$(curl -sS -m 300 -X POST -H "Authorization: Bearer $ANCHOR_TOKEN" \
+        -F "file=@$f" "$ANCHOR_SERVER/v1/location/import")
+    termux-notification --title "Anchor" \
+        --content "Location import: $(echo "$resp" | jq -r '.facts_added // "failed"') visits added."
+    exit 0;;
+esac
 sha=$(sha256sum "$f" | cut -d' ' -f1)
 stamp=$(date -r "$f" +%Y-%m-%dT%H:%M:%S%:z)
 kind=voicemail
@@ -53,6 +61,32 @@ ANCHOR_TOKEN=$token
 EOF
     chmod 600 "$HOME/.anchor/config"
 fi
+
+# One-tap home-screen widgets (install the Termux:Widget app from F-Droid,
+# then add the widget to the home screen; each script here becomes a button).
+mkdir -p "$HOME/.shortcuts"
+cat > "$HOME/.shortcuts/Anchor-Record" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+anchor rec
+EOF
+cat > "$HOME/.shortcuts/Anchor-Stop" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+anchor stop
+EOF
+cat > "$HOME/.shortcuts/Anchor-Note" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+text=$(termux-dialog text -t "Anchor note" | jq -r '.text // empty')
+[ -n "$text" ] && anchor note "$text"
+EOF
+cat > "$HOME/.shortcuts/Anchor-Ask" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/bash
+q=$(termux-dialog text -t "Ask Anchor" | jq -r '.text // empty')
+[ -n "$q" ] || exit 0
+answer=$(anchor ask "$q")
+termux-notification --title "Anchor answer" --content "$answer"
+termux-dialog confirm -t "Anchor" -i "$answer" >/dev/null
+EOF
+chmod +x "$HOME/.shortcuts/"*
 
 # Detect the call-recording directory and report.
 for d in "/storage/emulated/0/Recordings/Call" "/storage/emulated/0/Call" \

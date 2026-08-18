@@ -103,6 +103,16 @@ GOOGLE_CLIENT_SECRETS = _env(
 GOOGLE_TOKEN_PATH = _env("ANCHOR_GOOGLE_TOKEN", str(DATA_DIR / "google_token.json"))
 GOOGLE_CALENDAR_ID = _env("ANCHOR_GOOGLE_CALENDAR_ID", "primary")
 
+# --- Semantic search (Phase 3) ----------------------------------------------
+EMBED_ENABLED = _env("ANCHOR_EMBED", "1") == "1"
+EMBED_MODEL = _env("ANCHOR_EMBED_MODEL", "BAAI/bge-small-en-v1.5")
+EMBED_BATCH = int(_env("ANCHOR_EMBED_BATCH", "32"))
+
+# --- Gmail ingestion (Phase 3, opt-in; read-only, label-filtered) ------------
+GMAIL_ENABLED = _env("ANCHOR_GMAIL_ENABLED", "0") == "1"
+GMAIL_LABEL = _env("ANCHOR_GMAIL_LABEL", "Anchor")
+GMAIL_POLL_SECONDS = int(_env("ANCHOR_GMAIL_POLL_SECONDS", "900"))
+
 # --- Behavior knobs ---------------------------------------------------------
 # Dry run: calendar/people/ntfy calls are recorded in the outbox table instead
 # of hitting the network. Used by tests and for first-boot smoke checks.

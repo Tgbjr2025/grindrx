@@ -126,7 +126,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     },
     {
         "name": "vault_search",
-        "description": "Full-text search over all transcripts, notes, and facts in the vault. Returns matches with artifact ids and provenance.",
+        "description": "Search all transcripts, notes, facts, and symptoms in the vault — exact keyword matches first, then semantically similar content (so 'cardiologist' finds the 'cardiology' call). Returns matches with artifact ids and provenance.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -452,30 +452,10 @@ def task_close(inp: dict[str, Any]) -> Any:
 
 
 def vault_search(inp: dict[str, Any]) -> Any:
+    from .. import search  # deferred: pulls the embeddings module
+
     limit = min(int(inp.get("limit", 10)), 50)
-    try:
-        rows = db.q(
-            "SELECT v.body, v.entity, v.entity_id, v.artifact_id,"
-            " a.kind, a.captured_at, a.contact_hint, a.privileged"
-            " FROM vault_fts v LEFT JOIN artifacts a ON a.id = v.artifact_id"
-            " WHERE vault_fts MATCH ? ORDER BY rank LIMIT ?",
-            (inp["query"], limit),
-        )
-    except db.sqlite3.OperationalError as exc:
-        raise ToolError(f"Search query error: {exc}") from exc
-    return [
-        {
-            "snippet": r["body"][:500],
-            "entity": r["entity"],
-            "entity_id": r["entity_id"],
-            "artifact_id": r["artifact_id"],
-            "kind": r["kind"],
-            "captured_at": r["captured_at"],
-            "contact": r["contact_hint"],
-            "privileged": bool(r["privileged"]),
-        }
-        for r in rows
-    ]
+    return search.hybrid_search(inp["query"], limit)
 
 
 def fact_write(inp: dict[str, Any]) -> Any:
