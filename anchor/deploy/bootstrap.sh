@@ -132,19 +132,20 @@ if command -v npm >/dev/null; then
 fi
 
 ANCHOR_URL=""
-if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
-    tailscale serve --bg 8300 >/dev/null 2>&1 || tailscale serve --bg --https=443 http://127.0.0.1:8300 >/dev/null 2>&1 || true
-    TSNAME="$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName' | sed 's/\.$//')"
-    if [[ -n "${TSNAME:-}" && "$TSNAME" != "null" ]]; then
-        ANCHOR_URL="https://$TSNAME"; ok "published over Tailscale: $ANCHOR_URL"
-    else
-        TSIP="$(tailscale ip -4 2>/dev/null | head -1)"
-        ANCHOR_URL="http://${TSIP:-127.0.0.1}:8300"
-        warn "Tailscale HTTPS not ready — enable MagicDNS+HTTPS in the admin console, then re-run. Using $ANCHOR_URL for now."
-    fi
+# Bind the API to the PRIVATE Tailscale IP only. That interface is reachable
+# only by your own signed-in devices — never the public internet — and
+# Tailscale encrypts the traffic (WireGuard), so plain http over it is safe.
+# No `tailscale serve`, no certificate step, nothing that can hang.
+TSIP=""
+command -v tailscale >/dev/null && TSIP="$(timeout 10 tailscale ip -4 2>/dev/null | head -1 || true)"
+if [[ -n "$TSIP" ]]; then
+    set_env ANCHOR_API_HOST "$TSIP"
+    systemctl restart anchor-api 2>/dev/null || true
+    ANCHOR_URL="http://$TSIP:8300"
+    ok "reachable over Tailscale at $ANCHOR_URL"
 else
     ANCHOR_URL="http://127.0.0.1:8300  (local only)"
-    warn "Tailscale not detected — install it (curl -fsSL https://tailscale.com/install.sh | sh && tailscale up) and re-run for phone access."
+    warn "Tailscale IP not found — run 'tailscale up' on this server and re-run for phone access."
 fi
 
 # ---------------------------------------------------------------------------
