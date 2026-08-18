@@ -1,0 +1,22 @@
+[Unit]
+Description=Anchor API (ingestion + GUI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=anchor
+Group=anchor
+EnvironmentFile=/etc/anchor/anchor.env
+ExecStart=/opt/anchor/venv/bin/anchor-api
+Restart=always
+RestartSec=3
+# Vault holds medical + legal audio: lock the process down.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/anchor
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

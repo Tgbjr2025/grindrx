@@ -1,0 +1,13 @@
+[Unit]
+Description=Anchor morning digest (one-shot)
+
+[Service]
+Type=oneshot
+User=anchor
+Group=anchor
+EnvironmentFile=/etc/anchor/anchor.env
+ExecStart=/opt/anchor/venv/bin/anchor-digest
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/anchor

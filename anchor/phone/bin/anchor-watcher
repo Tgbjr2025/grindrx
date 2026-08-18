@@ -1,0 +1,18 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Latency optimization only: inotify on the recording dirs triggers an
+# immediate sweep so a finished call uploads within seconds. If this process
+# dies, the 15-minute sweep still guarantees delivery.
+set -u
+CONF="$HOME/.anchor/config"; [ -f "$CONF" ] && . "$CONF"
+
+DIRS=""
+for d in ${ANCHOR_CALL_DIRS:-/storage/emulated/0/Recordings/Call /storage/emulated/0/Call /storage/emulated/0/Sounds/Voicemail}; do
+    [ -d "$d" ] && DIRS="$DIRS $d"
+done
+[ -z "$DIRS" ] && { echo "no recording dirs found; watcher idle (sweep still covers)"; exit 0; }
+
+echo "watching:$DIRS"
+inotifywait -m -e close_write -e moved_to $DIRS 2>/dev/null | while read -r _line; do
+    sleep 5   # let the recorder finish flushing
+    "$HOME/.anchor/bin/anchor-sweep"
+done
