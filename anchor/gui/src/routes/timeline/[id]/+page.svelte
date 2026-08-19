@@ -66,8 +66,8 @@
     <div class="card"><strong>What Anchor did:</strong> {a.agent_summary}</div>
   {/if}
 
-  {#if (a.kind === 'call' || a.kind === 'voicemail') && a.status !== 'spam'}
-    <button class="spam" onclick={markSpam}>🚫 This was spam — block this number here</button>
+  {#if (a.kind === 'call' || a.kind === 'voicemail' || a.kind === 'sms') && a.status !== 'spam'}
+    <button class="spam" onclick={markSpam}>🚫 Spam — block this sender</button>
   {/if}
 
   {#if data.events.length || data.tasks.length || data.facts.length}
