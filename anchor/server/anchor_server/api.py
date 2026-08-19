@@ -468,8 +468,14 @@ def ping():
 
 db.heartbeat("api", "started")
 
-# Serve the built GUI (SvelteKit static build) if present.
-_gui_dir = Path(__file__).resolve().parents[2] / "gui" / "build"
+# Serve the built GUI (SvelteKit static build) if present. Prefer an explicit
+# ANCHOR_GUI_DIR (set by the installer, since the package is installed away
+# from the repo), falling back to the repo-relative build dir for dev.
+_gui_dir = (
+    Path(config.GUI_DIR)
+    if config.GUI_DIR
+    else Path(__file__).resolve().parents[2] / "gui" / "build"
+)
 if _gui_dir.is_dir():
     app.mount("/", StaticFiles(directory=_gui_dir, html=True), name="gui")
 

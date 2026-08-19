@@ -47,6 +47,10 @@ fi
 "$PYTHON_BIN" -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install -q --upgrade pip
 "$INSTALL_DIR/venv/bin/pip" install -q "$REPO_DIR/server"
+# Force the package code to refresh even when the version string is unchanged
+# (pip skips same-version installs), so a git pull + re-run always ships the
+# latest code into the venv (site-packages is readable by the service user).
+"$INSTALL_DIR/venv/bin/pip" install -q --force-reinstall --no-deps "$REPO_DIR/server"
 cp "$REPO_DIR/deploy/backup.sh" "$INSTALL_DIR/backup.sh"
 chmod 755 "$INSTALL_DIR/backup.sh"
 
