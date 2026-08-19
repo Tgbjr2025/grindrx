@@ -1,9 +1,0 @@
-.env
-server/.venv/
-__pycache__/
-*.pyc
-gui/node_modules/
-gui/build/
-gui/.svelte-kit/
-gui/bun.lock
-gui/package-lock.json
