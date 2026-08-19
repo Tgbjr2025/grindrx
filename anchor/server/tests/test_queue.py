@@ -1,6 +1,6 @@
 """Durable queue: claim, reclaim after crash, retry backoff, terminal failure."""
 
-from anchor_server import config, db, queue
+from anchor_server import config, db, queue, timeutil
 
 
 def test_enqueue_claim_done():
@@ -34,7 +34,8 @@ def test_retry_backoff_then_terminal_failure():
         assert outcome == "retry"
         row = db.q1("SELECT * FROM jobs WHERE id=?", (job_id,))
         assert row["state"] == "queued"
-        assert row["next_run_at"] > db.q1("SELECT datetime('now') AS n")["n"][:10]
+        # Backoff pushes the next attempt into the future (timezone-safe compare).
+        assert timeutil.parse_iso(row["next_run_at"]) > timeutil.now_local()
     outcome = queue.mark_failed(job_id, len(config.JOB_BACKOFF) + 1, "boom")
     assert outcome == "failed"
     assert db.q1("SELECT state FROM jobs WHERE id=?", (job_id,))["state"] == "failed"

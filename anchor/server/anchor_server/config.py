@@ -69,6 +69,9 @@ TZ = ZoneInfo(TIMEZONE_NAME)
 # --- API server -------------------------------------------------------------
 API_HOST = _env("ANCHOR_API_HOST", "127.0.0.1")
 API_PORT = int(_env("ANCHOR_API_PORT", "8300"))
+# Where the built SvelteKit GUI lives (the installer copies it somewhere the
+# service user can read and sets this; empty falls back to the repo path).
+GUI_DIR = _env("ANCHOR_GUI_DIR", "")
 # Single bearer token shared by phone clients and the GUI.
 API_TOKEN_VAR = "ANCHOR_API_TOKEN"
 

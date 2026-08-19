@@ -126,8 +126,17 @@ systemctl restart anchor-api anchor-worker 2>/dev/null || true
 # ---------------------------------------------------------------------------
 say "Step 6/7 — Build the app screen + put Anchor on the network"
 if command -v npm >/dev/null; then
-    ( cd "$ANCHOR_DIR/gui" && npm install --no-audit --no-fund >/dev/null 2>&1 && npm run build >/dev/null 2>&1 ) \
-        && ok "app screen built" || warn "GUI build skipped (re-run later) — the API still works"
+    if ( cd "$ANCHOR_DIR/gui" && npm install --no-audit --no-fund >/dev/null 2>&1 && npm run build >/dev/null 2>&1 ); then
+        # Copy the build somewhere the service user can read (the repo lives
+        # under /root, which the 'anchor' user cannot enter) and point the API
+        # at it explicitly.
+        rm -rf /opt/anchor/gui && cp -r "$ANCHOR_DIR/gui/build" /opt/anchor/gui
+        chown -R anchor:anchor /opt/anchor/gui 2>/dev/null || true
+        set_env ANCHOR_GUI_DIR /opt/anchor/gui
+        ok "app screen built"
+    else
+        warn "GUI build skipped (re-run later) — the API still works"
+    fi
     systemctl restart anchor-api 2>/dev/null || true
 fi
 
