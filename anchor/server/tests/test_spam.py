@@ -93,3 +93,35 @@ def test_digest_counts_spam_without_listing_it():
     body = digest.build_digest()
     assert "Ignored 1 spam call" in body
     assert "Robocaller" not in body  # not listed among captures
+
+
+def test_safe_mode_holds_google_but_never_mutes_pushes(monkeypatch, tmp_path):
+    """Regression: SAFE MODE (Google unconnected) silenced ALL ntfy pushes,
+    so the 8 AM digest never reached the phone. Pushes must always send."""
+    import sys
+    from types import SimpleNamespace
+
+    from anchor_server import gcal, notify, timeutil
+    from datetime import timedelta
+
+    monkeypatch.setattr(config, "DRY_RUN", False)
+    monkeypatch.setattr(config, "SAFE_MODE", True)
+
+    # Google writes are held in the outbox...
+    start = timeutil.now_local() + timedelta(days=1)
+    g = gcal.create_event("Checkup", start, start + timedelta(hours=1), None, "d")
+    assert g["id"].startswith("dry-")
+    assert db.q1("SELECT * FROM outbox WHERE channel='gcal'") is not None
+
+    # ...but a push goes over the real wire (fake the requests lib to prove
+    # the network path is taken, not the outbox).
+    sent = {}
+
+    def fake_post(url, data=None, headers=None, timeout=None):
+        sent["url"] = url
+        return SimpleNamespace(raise_for_status=lambda: None)
+
+    monkeypatch.setitem(sys.modules, "requests", SimpleNamespace(post=fake_post))
+    assert notify.push("Digest", "hello") is True
+    assert "test-topic" in sent["url"]
+    assert db.q1("SELECT * FROM outbox WHERE channel='ntfy'") is None

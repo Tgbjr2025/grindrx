@@ -49,7 +49,7 @@ def create_contact(name: str, phone: str, organization: str | None = None) -> di
     """Create a phone-visible contact in the Anchor group. The display name
     always carries the suffix so agent-created entries are unmistakable."""
     display = name if name.endswith(NAME_SUFFIX) else name + NAME_SUFFIX
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         return _dry("create_contact", {"name": display, "phone": phone, "organization": organization})
     svc = _service()
     group = _ensure_group(svc)
@@ -74,7 +74,7 @@ def update_contact(people_resource: str, name: str | None = None, phone: str | N
             f"Refusing to modify {people_resource}: not an Anchor-created contact. "
             "Anchor never edits contacts the user created himself."
         )
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         return _dry("update_contact", {"resource": people_resource, "name": name, "phone": phone})
     svc = _service()
     person = svc.people().get(resourceName=people_resource, personFields="names,phoneNumbers").execute()

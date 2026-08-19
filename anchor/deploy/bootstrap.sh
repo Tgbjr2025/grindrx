@@ -182,7 +182,12 @@ if [[ ! -f /var/lib/anchor/google_client_secret.json ]]; then
     echo "then run 'anchor-google' again."
     exit 1
 fi
-exec sudo -u anchor HOME=/var/lib/anchor /opt/anchor/venv/bin/python -m anchor_server.google_auth
+sudo -u anchor HOME=/var/lib/anchor /opt/anchor/venv/bin/python -m anchor_server.google_auth
+if [[ -f /var/lib/anchor/google_token.json ]]; then
+    sed -i 's/^ANCHOR_SAFE_MODE=.*/ANCHOR_SAFE_MODE=0/' /etc/anchor/anchor.env
+    systemctl restart anchor-api anchor-worker
+    echo "Google connected — SAFE MODE off. Calendar and contact writing is LIVE."
+fi
 EOS
 chmod +x /usr/local/bin/anchor-google
 
@@ -190,13 +195,15 @@ CLAUDE_TODO=1
 [[ -e "$DATA_DIR/.claude/.credentials.json" || -e "$DATA_DIR/.claude.json" ]] && { CLAUDE_TODO=0; ok "Claude already logged in"; }
 [[ "$CLAUDE_TODO" -eq 1 ]] && warn "Claude sign-in still needed — run 'anchor-login' after this (shown below)."
 
-# Google stays in SAFE MODE until connected (captures/transcribe/app all work;
-# calendar writes are held). Connect later with 'anchor-google'.
+# Google stays in SAFE MODE until connected: calendar/contact writes are held,
+# but pushes and everything else run for real. ANCHOR_DRY_RUN is tests-only —
+# force it off on live boxes (older installs set it and it muted pushes).
+set_env ANCHOR_DRY_RUN 0
 if [[ ! -f "$DATA_DIR/google_token.json" ]]; then
-    set_env ANCHOR_DRY_RUN 1
-    warn "Google not connected — running in SAFE MODE. Connect later with 'anchor-google'."
+    set_env ANCHOR_SAFE_MODE 1
+    warn "Google not connected — SAFE MODE (calendar writes held). Connect later with 'anchor-google'."
 else
-    set_env ANCHOR_DRY_RUN 0
+    set_env ANCHOR_SAFE_MODE 0
 fi
 chown root:anchor "$ENV_FILE" 2>/dev/null; chmod 640 "$ENV_FILE" 2>/dev/null
 systemctl restart anchor-api anchor-worker 2>/dev/null || true
