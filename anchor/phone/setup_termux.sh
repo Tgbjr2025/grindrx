@@ -13,7 +13,7 @@ mkdir -p "$HOME/.anchor/bin" "$HOME/.anchor/captures" "$HOME/.termux/boot"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cp "$HERE/bin/anchor" "$HERE/bin/anchor-sweep" "$HERE/bin/anchor-watcher" \
-   "$HERE/bin/anchor-sms-poll" "$HOME/.anchor/bin/"
+   "$HERE/bin/anchor-sms-poll" "$HERE/bin/anchor-spam-stop" "$HOME/.anchor/bin/"
 cp "$HERE/boot/anchor-boot.sh" "$HOME/.termux/boot/anchor-boot.sh"
 chmod +x "$HOME/.anchor/bin/"* "$HOME/.termux/boot/anchor-boot.sh"
 ln -sf "$HOME/.anchor/bin/anchor" "$PREFIX/bin/anchor"

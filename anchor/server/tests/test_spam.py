@@ -125,3 +125,17 @@ def test_safe_mode_holds_google_but_never_mutes_pushes(monkeypatch, tmp_path):
     assert notify.push("Digest", "hello") is True
     assert "test-topic" in sent["url"]
     assert db.q1("SELECT * FROM outbox WHERE channel='ntfy'") is None
+
+
+def test_spam_numbers_endpoint_feeds_phone_blocklist():
+    _register_spam()
+    db.execute(
+        "INSERT INTO contacts (name, numbers, category, origin, created_at, updated_at)"
+        " VALUES ('Marketing blast', ?, 'spam', 'anchor', '2026-01-01T00:00:00-05:00',"
+        " '2026-01-01T00:00:00-05:00')",
+        (json.dumps(["44222"]),),
+    )
+    r = client.get("/v1/spam/numbers", headers=AUTH)
+    assert r.status_code == 200
+    nums = r.json()["numbers"]
+    assert SPAM_NUM in nums and "44222" in nums

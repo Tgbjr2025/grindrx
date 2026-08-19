@@ -1,0 +1,34 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Auto-unsubscribe from spam TEXT senders (runs on the sweep cadence).
+#
+# Split by sender type, deliberately:
+#   • 5–6 digit SHORT CODES = legitimate commercial senders, legally required
+#     to honor STOP → we reply "STOP" once, ever, per code.
+#   • Regular 10-digit numbers = likely scammers; replying CONFIRMS your
+#     number is live and makes it worse → never reply, just stay blocked
+#     Anchor-side.
+#
+# This is the ONE deliberate exception to "Anchor never sends messages as
+# you", opted into by the owner, limited to the literal word "STOP" sent to
+# short codes the owner (or the brain) flagged as spam.
+set -u
+CONF="$HOME/.anchor/config"; [ -f "$CONF" ] && . "$CONF"
+: "${ANCHOR_SERVER:?missing config}" ; : "${ANCHOR_TOKEN:?missing config}"
+[ "${ANCHOR_AUTO_STOP:-1}" = "1" ] || exit 0
+command -v termux-sms-send >/dev/null || exit 0
+
+STOPPED="$HOME/.anchor/stopped_numbers"
+touch "$STOPPED"
+
+curl -sS -m 30 -H "Authorization: Bearer $ANCHOR_TOKEN" \
+    "$ANCHOR_SERVER/v1/spam/numbers" | jq -r '.numbers[]?' | while read -r num; do
+    digits=$(echo "$num" | tr -cd '0-9')
+    # Short codes only (5–6 digits). Long numbers are never replied to.
+    [ "${#digits}" -ge 5 ] && [ "${#digits}" -le 6 ] || continue
+    grep -qx "$digits" "$STOPPED" && continue
+    if termux-sms-send -n "$digits" "STOP"; then
+        echo "$digits" >> "$STOPPED"
+        termux-notification --title "Anchor" \
+            --content "Sent STOP (unsubscribe) to $digits." 2>/dev/null || true
+    fi
+done

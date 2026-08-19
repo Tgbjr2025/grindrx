@@ -452,6 +452,17 @@ def list_contacts():
     return {"contacts": [dict(r) for r in rows]}
 
 
+@app.get("/v1/spam/numbers", dependencies=[Depends(auth)])
+def spam_numbers():
+    """All numbers flagged spam — the phone polls this to auto-unsubscribe
+    (STOP to legit short codes) and to know who's blocked."""
+    rows = db.q("SELECT numbers FROM contacts WHERE category='spam'")
+    numbers: list[str] = []
+    for r in rows:
+        numbers.extend(json.loads(r["numbers"]))
+    return {"numbers": sorted(set(numbers))}
+
+
 @app.get("/v1/digest/preview", dependencies=[Depends(auth)])
 def digest_preview():
     return {"digest": build_digest()}
