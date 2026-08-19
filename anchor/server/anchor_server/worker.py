@@ -174,10 +174,31 @@ def embed_tick() -> None:
         print(f"[anchor-worker] semantic index: embedded {done} item(s)")
 
 
+def spam_purge() -> None:
+    """Delete audio of spam calls older than SPAM_PURGE_DAYS. The metadata
+    row is kept so the number stays recognized as spam."""
+    from datetime import timedelta
+    from pathlib import Path
+
+    if config.SPAM_PURGE_DAYS <= 0:
+        return
+    cutoff = timeutil.iso(timeutil.now_local() - timedelta(days=config.SPAM_PURGE_DAYS))
+    rows = db.q(
+        "SELECT id, stored_path FROM artifacts WHERE status='spam'"
+        " AND created_at < ? AND stored_path IS NOT NULL",
+        (cutoff,),
+    )
+    for r in rows:
+        Path(r["stored_path"]).unlink(missing_ok=True)
+        db.execute("UPDATE artifacts SET stored_path=NULL WHERE id=?", (r["id"],))
+    if rows:
+        db.audit("worker", "spam.purged", detail={"count": len(rows)})
+
+
 def housekeeping() -> None:
     # Each step isolated: one failing subsystem can't starve the others, and
     # every failure is recorded (rule 8).
-    for step in (check_phone_sync, escalate_callbacks, embed_tick, gmail_tick):
+    for step in (check_phone_sync, escalate_callbacks, embed_tick, gmail_tick, spam_purge):
         try:
             step()
         except Exception as exc:  # noqa: BLE001

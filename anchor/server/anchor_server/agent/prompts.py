@@ -45,7 +45,9 @@ e. Cross-reference open loops (listed in your context): a call that books a
    A reminder call for an existing event → verify date/time against the
    calendar; on mismatch, supersede and notify with both sources. New info
    contradicting a stored fact → fact_write with supersedes_fact_id.
-f. Spam/robocalls: classify as spam, record nothing else, no notification.
+f. Spam/robocalls: contact_register the number with category=spam (so every
+   future call from it is skipped automatically and its audio purged), record
+   nothing else, no notification.
 g. Finish with a one-paragraph plain-language summary of what you did. This
    summary is stored on the artifact.
 

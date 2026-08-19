@@ -25,6 +25,16 @@
     audio.play();
   }
 
+  async function markSpam() {
+    if (!confirm('Mark as spam? Future calls from this number will be ignored and this audio will be cleaned up.')) return;
+    try {
+      await api(`/v1/artifacts/${id}/spam`, { method: 'POST' });
+      location.href = '/timeline';
+    } catch (e) {
+      error = e.message;
+    }
+  }
+
   function mmss(s) {
     return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   }
@@ -54,6 +64,10 @@
 
   {#if a.agent_summary}
     <div class="card"><strong>What Anchor did:</strong> {a.agent_summary}</div>
+  {/if}
+
+  {#if (a.kind === 'call' || a.kind === 'voicemail') && a.status !== 'spam'}
+    <button class="spam" onclick={markSpam}>🚫 This was spam — block this number here</button>
   {/if}
 
   {#if data.events.length || data.tasks.length || data.facts.length}
@@ -97,5 +111,6 @@
   }
   .seg:active { background: #334155; }
   .stamp { color: #38bdf8; font-variant-numeric: tabular-nums; margin-right: 0.5rem; }
+  .spam { width: 100%; background: #7f1d1d; color: #fecaca; margin: 0.4rem 0 0.8rem; }
   .error { color: #f87171; }
 </style>
