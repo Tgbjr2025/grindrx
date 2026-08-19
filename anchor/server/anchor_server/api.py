@@ -259,12 +259,36 @@ def resolve_confirm(confirm_id: int, body: ResolveIn):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/v1/artifacts/{artifact_id}/spam", dependencies=[Depends(auth)])
+def mark_spam(artifact_id: int):
+    """One-tap: this call was spam. Hides it, registers the number as spam so
+    future calls from it are skipped without transcription, audio auto-purges."""
+    from .agent import tools
+
+    row = db.q1("SELECT * FROM artifacts WHERE id = ?", (artifact_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such artifact")
+    db.execute("UPDATE artifacts SET status='spam' WHERE id=?", (artifact_id,))
+    if row["phone_number"]:
+        tools.dispatch(
+            "contact_register",
+            {
+                "name": row["contact_hint"] or f"Spam {row['phone_number']}",
+                "phone_number": row["phone_number"],
+                "category": "spam",
+            },
+        )
+    db.audit("user", "spam.marked", "artifact", artifact_id,
+             {"phone_number": row["phone_number"]})
+    return {"result": "spam", "blocked_number": row["phone_number"]}
+
+
 @app.get("/v1/timeline", dependencies=[Depends(auth)])
-def timeline(limit: int = 50, before: str | None = None):
+def timeline(limit: int = 50, before: str | None = None, include_spam: bool = False):
     params: list = []
-    where = ""
+    where = "WHERE status != 'spam'" if not include_spam else "WHERE 1=1"
     if before:
-        where = "WHERE captured_at < ?"
+        where += " AND captured_at < ?"
         params.append(before)
     rows = db.q(
         f"SELECT id, kind, filename, contact_hint, phone_number, captured_at, privileged,"

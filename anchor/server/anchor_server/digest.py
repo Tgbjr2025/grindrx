@@ -48,8 +48,14 @@ def build_digest() -> str:
         (timeutil.now_iso(), today_end),
     )
     captures = db.q(
-        "SELECT * FROM artifacts WHERE created_at > ? ORDER BY captured_at", (day_ago,)
+        "SELECT * FROM artifacts WHERE created_at > ? AND status != 'spam'"
+        " ORDER BY captured_at",
+        (day_ago,),
     )
+    spam_count = db.q1(
+        "SELECT COUNT(*) AS n FROM artifacts WHERE created_at > ? AND status = 'spam'",
+        (day_ago,),
+    )["n"]
     open_tasks = db.q("SELECT * FROM tasks WHERE status='open' ORDER BY created_at")
     confirms = db.q("SELECT * FROM confirms WHERE status='pending' ORDER BY created_at")
 
@@ -77,6 +83,10 @@ def build_digest() -> str:
                 who = c["contact_hint"] or c["phone_number"] or "unknown"
                 lines.append(f"• {c['kind']} — {who}" + (
                     f": {c['agent_summary'][:100]}" if c["agent_summary"] else ""))
+        lines.append("")
+
+    if spam_count:
+        lines.append(f"🚫 Ignored {spam_count} spam call{'s' if spam_count != 1 else ''}.")
         lines.append("")
 
     if open_tasks:

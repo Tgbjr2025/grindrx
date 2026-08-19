@@ -136,6 +136,12 @@ JOB_BACKOFF = (60, 300, 1800)
 # Escalating reminder schedule for open callback tasks (seconds since created).
 TASK_ESCALATION_SECONDS = (4 * 3600, 24 * 3600, 48 * 3600)
 
+# Spam calls from known-spam numbers: never transcribed, hidden from the
+# timeline, and their audio purged after this many days (metadata row kept so
+# the number stays blocked). 0 disables purging. User-directed exception to
+# the keep-everything rule — spam is noise, not memory.
+SPAM_PURGE_DAYS = int(_env("ANCHOR_SPAM_PURGE_DAYS", "30"))
+
 
 def api_token() -> str:
     return require(API_TOKEN_VAR)

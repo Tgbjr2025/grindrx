@@ -122,6 +122,12 @@ def ingest_file(
     phone = normalize_phone(phone_number) or parsed["phone_number"]
     contact = match_contact(hint, phone)
     privileged = bool(contact and contact["privileged"])
+    # Calls/voicemails from known-spam numbers: keep only the metadata row
+    # (so the number stays recognized), skip transcription and the agent
+    # entirely; audio is purged on a timer by the worker.
+    is_spam = bool(
+        contact and contact["category"] == "spam" and kind in ("call", "voicemail")
+    )
 
     # Vault layout: vault/YYYY/MM/<sha256><ext> — content-addressed, immutable.
     dt = timeutil.parse_iso(captured)
@@ -152,7 +158,7 @@ def ingest_file(
             batch_id,
             int(privileged),
             text_body,
-            "transcribed" if text_body is not None else "ingested",
+            "spam" if is_spam else ("transcribed" if text_body is not None else "ingested"),
             timeutil.now_iso(),
         ),
     )
@@ -165,7 +171,10 @@ def ingest_file(
     )
 
     is_audio = Path(filename).suffix.lower() in AUDIO_EXTENSIONS
-    if kind == "location":
+    if is_spam:
+        db.audit("api", "spam.skipped", "artifact", artifact_id,
+                 {"phone_number": phone, "contact": contact["name"] if contact else None})
+    elif kind == "location":
         # Parsed synchronously by the /v1/location/import endpoint — a huge
         # JSON export should never hit transcription or an agent turn.
         pass
