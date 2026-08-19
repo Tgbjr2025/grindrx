@@ -122,11 +122,13 @@ def ingest_file(
     phone = normalize_phone(phone_number) or parsed["phone_number"]
     contact = match_contact(hint, phone)
     privileged = bool(contact and contact["privileged"])
-    # Calls/voicemails from known-spam numbers: keep only the metadata row
-    # (so the number stays recognized), skip transcription and the agent
-    # entirely; audio is purged on a timer by the worker.
+    # Calls/voicemails/texts from known-spam numbers: keep only the metadata
+    # row (so the number stays recognized), skip transcription and the agent
+    # entirely; audio is purged on a timer by the worker. Everything from a
+    # sender NOT marked spam gets full processing — an unknown number saying
+    # "your MRI is scheduled" is exactly what must never be skipped.
     is_spam = bool(
-        contact and contact["category"] == "spam" and kind in ("call", "voicemail")
+        contact and contact["category"] == "spam" and kind in ("call", "voicemail", "sms")
     )
 
     # Vault layout: vault/YYYY/MM/<sha256><ext> — content-addressed, immutable.
@@ -180,18 +182,10 @@ def ingest_file(
         pass
     elif text_body is not None:
         db.fts_index(text_body, "artifact", artifact_id, artifact_id)
-        # SMS whitelist: only messages from known, non-spam senders get an
-        # agent turn. Everything is still stored and searchable (rule 4) and
-        # counted in the digest — unknown-sender texts just don't drive the
-        # brain, so spam floods can't burn agent turns or spray notifications.
-        if kind == "sms" and (contact is None or contact["category"] == "spam"):
-            db.audit(
-                "api", "sms.agent_skipped", "artifact", artifact_id,
-                {"reason": "unknown_sender" if contact is None else "spam_sender",
-                 "phone_number": phone},
-            )
-        else:
-            queue.enqueue("agent_turn", artifact_id)
+        # Every non-spam text gets a full agent turn. (An earlier whitelist
+        # skipped unknown senders; wrong default — appointment texts routinely
+        # come from unknown numbers. Spam is filtered by the is_spam gate.)
+        queue.enqueue("agent_turn", artifact_id)
     elif is_audio:
         queue.enqueue("transcribe", artifact_id)
     else:

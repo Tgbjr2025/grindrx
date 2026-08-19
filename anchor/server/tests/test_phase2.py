@@ -48,16 +48,14 @@ def test_sms_dedupe_salt_separates_identical_bodies():
     assert r4.json()["artifact_id"] == r1.json()["artifact_id"]
 
 
-def test_sms_from_unknown_sender_stored_but_no_agent_turn():
+def test_sms_from_unknown_sender_gets_agent_turn():
+    # Appointment texts routinely come from unknown numbers — they must be
+    # processed, not just stored (only spam-flagged senders are skipped).
     r = _sms("your appointment is tomorrow", "+19998887777", "2026-08-18T09:00:00")
     art = r.json()["artifact_id"]
-    # Stored + searchable...
-    assert db.q1("SELECT * FROM artifacts WHERE id=?", (art,)) is not None
     assert db.q("SELECT * FROM vault_fts WHERE vault_fts MATCH 'appointment'")
-    # ...but no agent job, and the skip is audit-logged (not silent).
-    assert db.q1("SELECT * FROM jobs WHERE artifact_id=?", (art,)) is None
-    skip = db.q1("SELECT * FROM audit_log WHERE action='sms.agent_skipped' AND entity_id=?", (art,))
-    assert skip is not None
+    job = db.q1("SELECT * FROM jobs WHERE artifact_id=?", (art,))
+    assert job is not None and job["type"] == "agent_turn"
 
 
 def test_sms_from_known_sender_gets_agent_turn():
@@ -73,7 +71,28 @@ def test_sms_from_known_sender_gets_agent_turn():
 def test_sms_from_spam_sender_no_agent_turn():
     _register_contact("Robocaller", "+18005550000", "spam")
     r = _sms("FINAL NOTICE about your car warranty", "+18005550000", "2026-08-18T09:45:00")
-    assert db.q1("SELECT * FROM jobs WHERE artifact_id=?", (r.json()["artifact_id"],)) is None
+    art = db.q1("SELECT * FROM artifacts WHERE id=?", (r.json()["artifact_id"],))
+    assert art["status"] == "spam"
+    assert db.q1("SELECT * FROM jobs WHERE artifact_id=?", (art["id"],)) is None
+
+
+def test_requeue_orphans_rescues_stuck_texts():
+    # Simulate a text left behind by the old whitelist: transcribed, no job.
+    from anchor_server import worker
+
+    art = db.execute(
+        "INSERT INTO artifacts (sha256, kind, filename, transcript, status,"
+        " captured_at, created_at) VALUES ('orphan1', 'sms', 'sms_x.txt',"
+        " 'MRI scheduled for the 3rd', 'transcribed',"
+        " '2026-08-18T09:00:00-04:00', '2026-08-18T09:00:00-04:00')"
+    )
+    worker.requeue_orphans()
+    job = db.q1("SELECT * FROM jobs WHERE artifact_id=?", (art,))
+    assert job is not None and job["type"] == "agent_turn"
+    # Idempotent: a second sweep doesn't double-queue.
+    worker.requeue_orphans()
+    n = db.q1("SELECT COUNT(*) AS n FROM jobs WHERE artifact_id=?", (art,))["n"]
+    assert n == 1
 
 
 def test_symptom_log_and_pdf_report():

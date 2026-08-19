@@ -195,10 +195,48 @@ def spam_purge() -> None:
         db.audit("worker", "spam.purged", detail={"count": len(rows)})
 
 
+def requeue_orphans() -> None:
+    """Self-healing: any artifact that should have a pipeline job but doesn't
+    gets one. Catches crash gaps and policy changes (e.g. texts skipped by the
+    old SMS whitelist get their agent turn retroactively)."""
+    from datetime import timedelta
+    from pathlib import Path
+
+    cutoff = timeutil.iso(timeutil.now_local() - timedelta(minutes=5))
+    # Transcribed (or text) artifacts that never got ANY agent turn.
+    rows = db.q(
+        "SELECT a.id FROM artifacts a WHERE a.status = 'transcribed'"
+        " AND a.created_at < ? AND NOT EXISTS"
+        " (SELECT 1 FROM jobs j WHERE j.artifact_id = a.id AND j.type = 'agent_turn')"
+        " LIMIT 25",
+        (cutoff,),
+    )
+    for r in rows:
+        queue.enqueue("agent_turn", r["id"])
+    # Audio artifacts that never got a transcription job at all.
+    rows2 = db.q(
+        "SELECT a.id, a.filename FROM artifacts a WHERE a.status = 'ingested'"
+        " AND a.created_at < ? AND NOT EXISTS"
+        " (SELECT 1 FROM jobs j WHERE j.artifact_id = a.id)"
+        " LIMIT 25",
+        (cutoff,),
+    )
+    from .ingest import AUDIO_EXTENSIONS
+
+    for r in rows2:
+        if Path(r["filename"] or "").suffix.lower() in AUDIO_EXTENSIONS:
+            queue.enqueue("transcribe", r["id"])
+        else:
+            queue.enqueue("agent_turn", r["id"])
+    if rows or rows2:
+        db.audit("worker", "orphans.requeued", detail={"count": len(rows) + len(rows2)})
+
+
 def housekeeping() -> None:
     # Each step isolated: one failing subsystem can't starve the others, and
     # every failure is recorded (rule 8).
-    for step in (check_phone_sync, escalate_callbacks, embed_tick, gmail_tick, spam_purge):
+    for step in (check_phone_sync, escalate_callbacks, requeue_orphans,
+                 embed_tick, gmail_tick, spam_purge):
         try:
             step()
         except Exception as exc:  # noqa: BLE001
