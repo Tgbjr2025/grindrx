@@ -1,9 +1,0 @@
-[Unit]
-Description=Anchor morning digest at 8:00 AM Detroit time
-
-[Timer]
-OnCalendar=*-*-* 08:00:00 America/Detroit
-Persistent=true
-
-[Install]
-WantedBy=timers.target
