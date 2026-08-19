@@ -118,8 +118,14 @@ GMAIL_POLL_SECONDS = int(_env("ANCHOR_GMAIL_POLL_SECONDS", "900"))
 
 # --- Behavior knobs ---------------------------------------------------------
 # Dry run: calendar/people/ntfy calls are recorded in the outbox table instead
-# of hitting the network. Used by tests and for first-boot smoke checks.
+# of hitting the network. Tests only.
 DRY_RUN = _env("ANCHOR_DRY_RUN", "0") == "1"
+
+# Safe mode: Google isn't connected yet — calendar/contact writes are held in
+# the outbox, but EVERYTHING ELSE (pushes included) runs for real. This is
+# the live-server state before `anchor-google`; it must never mute ntfy — a
+# memory prosthetic that can't speak is broken (rule 8).
+SAFE_MODE = _env("ANCHOR_SAFE_MODE", "0") == "1"
 
 # Reminders forced onto every created event, minutes before start.
 EVENT_REMINDER_MINUTES = (120, 45)

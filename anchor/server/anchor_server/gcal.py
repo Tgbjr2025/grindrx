@@ -69,7 +69,7 @@ def create_event(
         "reminders": _reminders(),
         "extendedProperties": {"private": {"anchor": "1"}},
     }
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         return _dry("create", body)
     return (
         _service().events().insert(calendarId=config.GOOGLE_CALENDAR_ID, body=body).execute()
@@ -80,7 +80,7 @@ def update_event(gcal_id: str, patch: dict[str, Any]) -> dict[str, Any]:
     # Reminders are re-forced on every update so a correction can never
     # accidentally drop them.
     patch = {**patch, "reminders": _reminders()}
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         return _dry("update", {"gcal_id": gcal_id, **patch})
     return (
         _service()
@@ -93,7 +93,7 @@ def update_event(gcal_id: str, patch: dict[str, Any]) -> dict[str, Any]:
 def cancel_event(gcal_id: str) -> None:
     """Mark an event cancelled on Google Calendar. The local row is kept
     (status='superseded'/'cancelled') — nothing is deleted (rule 4)."""
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         _dry("cancel", {"gcal_id": gcal_id})
         return
     _service().events().patch(
@@ -102,7 +102,7 @@ def cancel_event(gcal_id: str) -> None:
 
 
 def list_events(start: datetime, end: datetime) -> list[dict[str, Any]]:
-    if config.DRY_RUN:
+    if config.DRY_RUN or config.SAFE_MODE:
         # In dry-run mode the local events table is the source of truth.
         rows = db.q(
             "SELECT * FROM events WHERE status='active' AND start >= ? AND start < ? ORDER BY start",
