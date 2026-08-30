@@ -34,18 +34,19 @@ GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https:/
 - Views (who viewed you)
 
 **Privacy & security**
-- **PIN app-lock** — optional PIN gate, stored only as a salted hash on-device
+- **App lock** — optional PIN (stored only as a salted hash) and/or **fingerprint / face unlock**; open the app with just a biometric if you like, with the device PIN/pattern as a fallback
 - **Notification settings** — per-type (message / tap) toggles, enforced natively
 - Incognito, reveal-profile-views and reveal-read-receipt controls, discreet app icon
 - Keyring session storage (OS keychain), authenticated image loading (no black squares)
 
 **Account**
-- Blocked / Hidden / Favorites management, with private notes on favorites
+- Blocked / Hidden / Favorites management, with private notes on favorites (**auto-fill a note from your chat** — name, number, or address they mentioned)
 - **Album management** — create, rename, delete, add photos, and manage viewers
 - Profile photo management, km/mi units
 
 **Meta**
 - In-app update notifications with changelog
+- **First-run feature tour** + per-version "What's new" (reopen from Settings → GrindrX)
 - Share GrindrX with a friend (native share sheet)
 - Downloads & active-users stats
 
@@ -56,6 +57,16 @@ See [CHANGES.md](./CHANGES.md) for the full per-version changelog.
 ---
 
 ## Installation
+
+### F-Droid (via the GrindrX repository)
+
+GrindrX has its own F-Droid repository, so you get update notifications and one-tap upgrades in the [F-Droid app](https://f-droid.org/). It's a custom repo (not the default F-Droid catalog), so you add it by this link — in F-Droid: **Settings → Repositories → ＋** → paste (or scan a QR of):
+
+```
+https://cam.dominusaxis.com/fdroid/repo?fingerprint=EE96F55410D8C32967546245885717037F4D20EF344D5BD186246BA4EED523A5
+```
+
+Then search **GrindrX** and install. See **[FDROID.md](./FDROID.md)** for the full walkthrough — including how people discover it, and (for maintainers) how the repo is built and updated.
 
 ### Sideloaded APK (Android)
 
