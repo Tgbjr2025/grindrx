@@ -3,6 +3,7 @@
 	import { untrack } from "svelte";
 
 	import * as Card from "$lib/components/ui/card";
+	import type { AlbumExpirationType } from "$lib/model/album";
 	import type { Message } from "$lib/model/message";
 	import { getConversations } from "../conversations-context.svelte";
 	import ChatNavBar from "./ChatNavBar.svelte";
@@ -59,8 +60,21 @@
 	<MessagesList {conversationState} />
 	<MessageComposer
 		onSend={(message: Message) => conversationState.send(message)}
-		onSendAlbum={(albumIds, expirationType) => conversationState.sendAlbums(albumIds, expirationType)}
-		onSendPhotoOptimistic={(params) => conversationState.sendPhoto(params)}
+		onSendAlbum={(albumIds: number[], expirationType: AlbumExpirationType) =>
+			conversationState.sendAlbums(albumIds, expirationType)}
+		onSendPhotoOptimistic={(params: {
+			mediaId: number;
+			mediaHash: string;
+			url?: string;
+			createdAt: number | null;
+		}) => conversationState.sendPhoto(params)}
+		onSendAudio={(params: {
+			mediaId: number;
+			mediaHash: string;
+			url: string;
+			contentType: string;
+			length: number;
+		}) => conversationState.sendAudio(params)}
 		recipientProfileId={conversationState.profile?.profileId ?? null}
 	/>
 </Card.Content>

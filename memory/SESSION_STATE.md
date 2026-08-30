@@ -1,5 +1,21 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.28 big feature batch (4 subagents + cross-cutting).** Built with 4 file-disjoint
+general-purpose subagents (favorites-notes, profile/tag search, album management, ProfilePhotoReply
+render + atomic prefs write) + own cross-cutting work (voice messages, nav wiring, capabilities,
+README). NEW: **voice-message sending** (`MessageComposer` record/upload/send via `api/audio.ts` +
+`ConversationState.sendAudio`, reuses `upload_image`, `RECORD_AUDIO` in manifest — format needs
+device verify), **profile/tag search** (Search tab → `searchProfiles`), **album management**
+(create/rename/delete/add-photo/viewers in `album.ts` + `settings/albums` route — 2 endpoints
+best-effort, flagged), **favorites notes** (`api/favorites-notes.ts` + dialog), **ProfilePhotoReply**
+message render, **atomic preference writes** (`app-data/index.ts` temp+rename + `fs:allow-rename`
+capability). README brought current (real signing cert `22d6…`, grindrx links). Fixed a subagent
+`state`/`$state` rune collision (16 errors → renamed vars). Verified vitest 177 (was 156),
+svelte-check 0 errors, eslint clean except 1 pre-existing NavBar cva false-positive. Bumped
+0.1.27→0.1.28 (versionCode base 1060→1065). Rollback tag `pre-v0.1.28` = `00ae334`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.28.md`. **DEFERRED: biometric unlock** (needs native-plugin build validation).
+APK build + push/release in progress. flake.nix system-SDK patch still local-uncommitted.
+
 **2026-08-30 v0.1.27 on-device feedback batch.** Fixed Blocked/Hidden/Favorites "failed to load"
 (all used bad reverse-engineered endpoints → corrected to documented `/v3.1/me/blocks`+getProfiles,
 `{hides}` shape, favorites cascade `favorites=true`; unfavorite → `/v3/me/favorites/{id}`). Built
@@ -11,8 +27,10 @@ from the settings version label. Honest no-fix: "unlock all profile viewers" is 
 server gate (`/v7/views/list` withholds locked viewers' ids) — same as CAS-4001, can't bypass;
 page already shows all it's given. Verified vitest 156, svelte-check 0 errors, eslint clean. Bumped
 0.1.26→0.1.27 (versionCode base 1055→1060). Rollback tag `pre-v0.1.27` = `773c376`. FIX_NOTES:
-`memory/FIX_NOTES_v0.1.27.md`. APK build + push/release in progress; flake.nix system-SDK patch
-still local-uncommitted (see v0.1.26 note).
+`memory/FIX_NOTES_v0.1.27.md`. Pushed Forgejo main+branch + GitHub branch (`00ae334`); releases
+v0.1.27 on both (GH id 379234370 / FJ id 34). **Signed APK `GrindrX-v0.1.27.apk`** (versionName
+0.1.27, versionCode 1060, cert `22d6…4c01`) built + uploaded to both releases +
+`~/grindrx-artifacts/`. flake.nix system-SDK patch still local-uncommitted (see v0.1.26 note).
 
 **2026-08-30 v0.1.26 SIGNED APK built + published.** `GrindrX-v0.1.26.apk` (universal, 70 MB,
 versionName 0.1.26, versionCode 1059 via autoIncrement, package `com.grindrx.app`) — signed with

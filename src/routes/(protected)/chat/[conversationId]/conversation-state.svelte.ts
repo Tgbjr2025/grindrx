@@ -564,6 +564,61 @@ export class ConversationState {
 		}
 	}
 
+	async sendAudio({
+		mediaId,
+		mediaHash,
+		url,
+		contentType,
+		length,
+	}: {
+		mediaId: number;
+		mediaHash: string;
+		url: string;
+		contentType: string;
+		length: number;
+	}): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const tempId = `pending-${crypto.randomUUID()}`;
+		const optimistic: OptimisticMessage = {
+			type: "Audio",
+			body: { mediaId, mediaHash, url, contentType, length, expiresAt: null },
+			messageId: tempId,
+			conversationId: this.conversationId,
+			senderId: this.ourProfileId,
+			timestamp: Date.now(),
+			unsent: false,
+			reactions: [],
+			status: "pending",
+		};
+		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
+		this.#updatePreview(optimistic);
+		try {
+			const { messageId } = await sendMessage({
+				toUserId: this.profile.profileId,
+				message: {
+					type: "Audio",
+					body: { mediaId, mediaHash, url, contentType, length, expiresAt: null },
+				},
+			});
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "sent";
+				msg.messageId = messageId;
+			}
+			this.messages = removeDuplicateMessages(this.messages);
+			this.#syncCache();
+			const latestMsg = this.messages[0] ?? this.messages.at(-1);
+			if (latestMsg) this.#updatePreview(latestMsg);
+		} catch (err) {
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "error";
+				this.#updatePreview(this.messages.find((m) => m.status === "sent"));
+			}
+			throw err;
+		}
+	}
+
 	async #resolveMessage({
 		tempId,
 		message,

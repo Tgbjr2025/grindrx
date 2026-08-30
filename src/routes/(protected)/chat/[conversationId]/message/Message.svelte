@@ -5,21 +5,22 @@
 
 	import type { ApiResponseMessage } from "$lib/model/message";
 	import AlbumMessage from "./AlbumMessage.svelte";
+	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
+	import AudioMessage from "./AudioMessage.svelte";
 	import { setMessageContext } from "./context";
+	import GaymojiMessage from "./GaymojiMessage.svelte";
+	import GiphyMessage from "./GiphyMessage.svelte";
 	import ImageMessage from "./ImageMessage.svelte";
+	import LocationMessage from "./LocationMessage.svelte";
 	import MessageContextMenu from "./MessageContextMenu.svelte";
 	import MessageDateGroup from "./MessageDateGroup.svelte";
 	import MessageTime from "./MessageTime.svelte";
 	import MessageWrapper from "./MessageWrapper.svelte";
+	import ProfilePhotoReplyMessage from "./ProfilePhotoReplyMessage.svelte";
 	import Reaction from "./Reaction.svelte";
 	import TextMessage from "./TextMessage.svelte";
 	import UnsentMessage from "./UnsentMessage.svelte";
 	import UnsupportedMessage from "./UnsupportedMessage.svelte";
-	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
-	import LocationMessage from "./LocationMessage.svelte";
-	import AudioMessage from "./AudioMessage.svelte";
-	import GaymojiMessage from "./GaymojiMessage.svelte";
-	import GiphyMessage from "./GiphyMessage.svelte";
 	import VideoMessage from "./VideoMessage.svelte";
 
 	let {
@@ -194,6 +195,8 @@
 			<VideoMessage message={message.body} />
 		{:else if message.type === "Gaymoji"}
 			<GaymojiMessage message={message.body} />
+		{:else if message.type === "ProfilePhotoReply"}
+			<ProfilePhotoReplyMessage {message} />
 		{:else if message.type === "Unsent"}
 			<UnsentMessage />
 		{:else}
