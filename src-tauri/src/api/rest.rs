@@ -443,14 +443,19 @@ pub async fn fetch_media_bytes(url: String) -> Result<tauri::ipc::Response, AppE
 /// Fetch the latest release JSON for the in-app update banner.
 ///
 /// This is done natively rather than with a WebView `fetch()` because the
-/// Forgejo API at `git.dominusaxis.com` does not send `Access-Control-Allow-Origin`,
-/// so a browser fetch from the `tauri.localhost` origin is blocked by CORS and the
-/// update check silently fails. The URL is fixed (not caller-supplied), so there is
-/// no SSRF surface, and no Authorization header is attached.
+/// release API does not send `Access-Control-Allow-Origin`, so a browser fetch
+/// from the `tauri.localhost` origin is blocked by CORS and the update check
+/// silently fails. The URL is fixed (not caller-supplied), so there is no SSRF
+/// surface, and no Authorization header is attached.
+///
+/// Points at THIS fork's public repo (`Tgbjr2025/grindrx`), not upstream
+/// open-grind — the banner must surface GrindrX releases, and the returned JSON
+/// carries `tag_name`, `html_url`, and `body` (the changelog shown as "what's
+/// new"). GitHub's API requires a `User-Agent` header or it answers 403.
 #[tauri::command]
 pub async fn fetch_latest_release() -> Result<String, AppError> {
     const RELEASES_URL: &str =
-        "https://git.dominusaxis.com/api/v1/repos/dominus/open-grind/releases/latest";
+        "https://api.github.com/repos/Tgbjr2025/grindrx/releases/latest";
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -458,7 +463,8 @@ pub async fn fetch_latest_release() -> Result<String, AppError> {
         .map_err(|e| AppError::Http(e.to_string()))?;
     let response = http
         .get(RELEASES_URL)
-        .header("Accept", "application/json")
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "GrindrX-UpdateCheck")
         .send()
         .await?;
     if !response.status().is_success() {

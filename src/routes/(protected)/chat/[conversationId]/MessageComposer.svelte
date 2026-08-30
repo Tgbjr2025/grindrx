@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CameraIcon, ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
+	import { CameraIcon, ChatTextIcon, ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
@@ -11,6 +11,7 @@
 	import type { AlbumExpirationType } from "$lib/model/album";
 	import type { Message } from "$lib/model/message";
 	import AlbumPicker from "./AlbumPicker.svelte";
+	import SavedPhrasesDrawer from "./SavedPhrasesDrawer.svelte";
 
 	let {
 		onSend,
@@ -19,15 +20,26 @@
 		recipientProfileId,
 	}: {
 		onSend: (params: Message) => void | Promise<void>;
-		onSendAlbum: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
+		onSendAlbum: (albumIds: number[], expirationType: AlbumExpirationType) => Promise<void>;
 		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; url?: string; createdAt: number | null }) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
 
 	let textContent = $state("");
 	let albumPickerOpen = $state(false);
+	let savedPhrasesOpen = $state(false);
 	let uploading = $state(false);
 	let fileInputEl = $state<HTMLInputElement | null>(null);
+
+	function insertPhrase(text: string) {
+		const current = textContent;
+		if (current.trim() === "") {
+			textContent = text;
+		} else {
+			// Append to whatever is typed, with a single separating space.
+			textContent = current.replace(/\s+$/, "") + " " + text;
+		}
+	}
 
 	async function onSubmit() {
 		const text = textContent.trim();
@@ -41,8 +53,8 @@
 		}
 	}
 
-	async function onShareAlbum(albumId: number, expirationType: AlbumExpirationType) {
-		await onSendAlbum(albumId, expirationType);
+	async function onShareAlbum(albumIds: number[], expirationType: AlbumExpirationType) {
+		await onSendAlbum(albumIds, expirationType);
 	}
 
 	async function onSendPhoto(params: {
@@ -92,6 +104,22 @@
 		}}
 	>
 		<ImagesIcon
+			weight="fill"
+			color="var(--muted-foreground)"
+			class="size-4.5"
+		/>
+	</Button>
+
+	<!-- Saved phrases / quick replies -->
+	<Button
+		type="button"
+		variant="ghost"
+		size="icon"
+		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Saved phrases"
+		onclick={() => (savedPhrasesOpen = true)}
+	>
+		<ChatTextIcon
 			weight="fill"
 			color="var(--muted-foreground)"
 			class="size-4.5"
@@ -183,6 +211,8 @@
 </div>
 
 <AlbumPicker bind:open={albumPickerOpen} onShare={onShareAlbum} {onSendPhoto} />
+
+<SavedPhrasesDrawer bind:open={savedPhrasesOpen} onInsert={insertPhrase} />
 
 <style lang="postcss">
 	@reference "$layout";

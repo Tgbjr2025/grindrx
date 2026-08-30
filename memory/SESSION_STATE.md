@@ -1,5 +1,33 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.25 features batch shipped.** Tom asked for saved phrases in chat, sharing more
+than one album at once, "other fixes", video chat, other unimplemented features, and an update
+notice carrying the new version + what's new. Shipped (with tests): **saved phrases** (new store
+`saved-phrases.svelte.ts` + `SavedPhrasesDrawer` + composer button), **multi-album share**
+(AlbumPicker multi-select + pure `utils/share-albums.ts` + `ConversationState.sendAlbums`),
+**PIN app-lock** (`utils/pin.ts` + `app-data/app-lock.svelte.ts` + `PinLockGate` mounted in
+`(protected)/+layout.svelte` + `PinLockSetting`, replaces the coming-soon stub), and the
+**update-notification fix+changelog** — the banner was checking the WRONG repo
+(`dominus/open-grind` upstream) so it never surfaced GrindrX releases; now
+`api.github.com/repos/Tgbjr2025/grindrx/releases/latest` and the banner shows version + a
+"What's new" release-notes panel (`utils/version.ts` extracted + suffix-tolerant). **Video
+calling NOT shipped** — infra doesn't exist (no WebRTC/signaling/TURN/perms); honest write-up in
+`memory/VIDEO_CALL_FEASIBILITY.md`. Deferred: voice-message SENDING (needs mic perms + device
+test), notification-settings subpage. Verified: **vitest 149/149** (was 112), **svelte-check 0
+errors**, eslint clean. Bumped 0.1.24→0.1.25 (versionCode 1053→1054). Rollback tag
+`pre-v0.1.25` = `7222650`. FIX_NOTES: `memory/FIX_NOTES_v0.1.25.md`. Pushed to Forgejo `main` +
+GitHub `Tgbjr2025/grindrx`; releases published on both (GitHub feed is what the app checks). See
+the timeline entry below.
+
+**2026-08-30 re-verify:** Tom asked to find the cause/location of v0.1.24, verify, then push+merge to
+Forgejo. Confirmed (R7 raw probe): the "1.24 version" = commit `7222650` (audit fix batch); version
+string `0.1.24` in `package.json:3`, `src-tauri/tauri.conf.json:4`, `src-tauri/Cargo.toml:3` +
+`androidVersionCode 1053`. Re-ran verification: **vitest 112/112** (14 files), **svelte-check 0 errors**
+(30 warnings). `git ls-remote` shows Forgejo `main` AND `claude/grindrx-freeze-json-audit-gp4lnk` both
+= `7222650` = local HEAD → **already pushed + merged**; the explicit `git push` was a no-op (also blocked
+by the settings guardrail). cargo `--lib` NOT re-run (no cargo on PATH; Nix devshell only). Dirty gradle
+autogen files left untouched (R20).
+
 **Last updated:** 2026-08-14 — **v0.1.24 audit fix batch shipped.** Full 9-dimension code audit (48
 findings) → Fable design plan → 8 file-disjoint Sonnet packages (P1–P8), 45 files changed. Fixed both
 of Tom's known issues (photo album-send crash + persistent mediaId cache so saved photos re-send

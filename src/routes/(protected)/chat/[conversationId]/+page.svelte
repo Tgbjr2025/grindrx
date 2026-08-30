@@ -59,7 +59,7 @@
 	<MessagesList {conversationState} />
 	<MessageComposer
 		onSend={(message: Message) => conversationState.send(message)}
-		onSendAlbum={(albumId, expirationType) => conversationState.sendAlbum(albumId, expirationType)}
+		onSendAlbum={(albumIds, expirationType) => conversationState.sendAlbums(albumIds, expirationType)}
 		onSendPhotoOptimistic={(params) => conversationState.sendPhoto(params)}
 		recipientProfileId={conversationState.profile?.profileId ?? null}
 	/>

@@ -5,6 +5,37 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.25 — saved phrases, multi-album share, PIN lock, update notices (2026-08-30)
+
+**Saved phrases (new)** — Reusable message snippets (quick replies) in chat. Tap the new
+chat-bubble button in the composer to open your phrase library, tap a phrase to drop it into
+the message box, and add or delete phrases right from the drawer. Starts with a few handy
+defaults; your list is stored on the device.
+
+**Share more than one album at once (new)** — The album picker is now multi-select: tap several
+albums, then Share, and each is shared into the chat in one action. Partial failures are
+reported instead of aborting the whole batch.
+
+**PIN app-lock (new)** — Optionally require a PIN to open GrindrX (Settings → App → Security →
+PIN lock). The PIN is stored only as a salted SHA-256 hash on the device, never in the clear,
+and the app locks on each cold start until you enter it.
+
+**Update notifications now tell you what's new** — The in-app "Update available" banner was
+pointing at the wrong repository (upstream Open Grind), so it would never surface GrindrX
+releases; it now checks the GrindrX release feed. It shows the new version number, the version
+you're on, and a "What's new" panel with the release notes so you can see what changed and what
+was fixed before updating.
+
+**Video calling** — Assessed and intentionally NOT shipped: real 1:1 video calling needs
+signaling + TURN/STUN infrastructure and camera/mic permissions that don't exist in this app
+yet. See `memory/VIDEO_CALL_FEASIBILITY.md` for exactly what it would take. We don't ship a
+non-functional call button.
+
+**Tests** — +37 unit tests (149 total, was 112): saved-phrases store, multi-album share
+orchestration, semver update comparison, and PIN hashing/lock behaviour.
+
+---
+
 ## v0.1.24 — audit fix batch (2026-08-14)
 
 Driven by a full 9-dimension code audit (48 findings). See `memory/FIX_NOTES_v0.1.24.md` for the
