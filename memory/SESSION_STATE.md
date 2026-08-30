@@ -1,5 +1,13 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.29 auto-fill favorite notes.** Frontend-only: `utils/note-extract.ts`
+(`extractNoteFields`/`buildNoteText`, pure regex — name/phone/address, tested) + "Auto-fill from
+chat" button in `FavoriteNotesDialog` (scans the other person's Text messages via
+`getConversationMessages`, fills phone if empty + appends Name/Address, user reviews before Save).
+No LLM, no new endpoints, no Rust. Verified vitest 189 (was 177), svelte-check 0, eslint clean.
+Bumped 0.1.28→0.1.29 (versionCode base 1065→1070). Rollback tag `pre-v0.1.29` = `aaf1bf5`.
+FIX_NOTES: `memory/FIX_NOTES_v0.1.29.md`. APK build + push/release in progress.
+
 **2026-08-30 v0.1.28 big feature batch (4 subagents + cross-cutting).** Built with 4 file-disjoint
 general-purpose subagents (favorites-notes, profile/tag search, album management, ProfilePhotoReply
 render + atomic prefs write) + own cross-cutting work (voice messages, nav wiring, capabilities,
@@ -14,7 +22,10 @@ capability). README brought current (real signing cert `22d6…`, grindrx links)
 svelte-check 0 errors, eslint clean except 1 pre-existing NavBar cva false-positive. Bumped
 0.1.27→0.1.28 (versionCode base 1060→1065). Rollback tag `pre-v0.1.28` = `00ae334`. FIX_NOTES:
 `memory/FIX_NOTES_v0.1.28.md`. **DEFERRED: biometric unlock** (needs native-plugin build validation).
-APK build + push/release in progress. flake.nix system-SDK patch still local-uncommitted.
+Pushed Forgejo main+branch + GitHub branch (`aaf1bf5`); releases v0.1.28 on both (GH 379241539 /
+FJ 36). **Signed APK `GrindrX-v0.1.28.apk`** (versionName 0.1.28, versionCode 1061, cert `22d6…4c01`,
+RECORD_AUDIO present) built + uploaded to both + `~/grindrx-artifacts/`. Rust (state.rs/lib.rs/ws.rs
+notification atomics + capabilities) compiled clean. flake.nix system-SDK patch still local-uncommitted.
 
 **2026-08-30 v0.1.27 on-device feedback batch.** Fixed Blocked/Hidden/Favorites "failed to load"
 (all used bad reverse-engineered endpoints → corrected to documented `/v3.1/me/blocks`+getProfiles,
