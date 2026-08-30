@@ -5,6 +5,20 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.26 — share with a friend + downloads/active-users stats (2026-08-30)
+
+**Share with a friend (new)** — A "Share GrindrX with a friend" option in Settings opens your
+phone's share sheet so you can send an invite link by any app you like (messages, email, social,
+etc.), with a copy-link fallback. A free way to spread the app.
+
+**Downloads & active-users stats (new)** — A new Stats screen (Settings → Downloads & active
+users) shows total downloads across every version and both repos (GitHub + Forgejo), broken down
+by version, plus active users in the last hour / 24 hours / 7 days and by app version. Active
+users are counted from an anonymous launch ping (a random per-install id + the app version — no
+personal data) aggregated over a rolling 7-day window.
+
+---
+
 ## v0.1.25 — saved phrases, multi-album share, PIN lock, update notices (2026-08-30)
 
 **Saved phrases (new)** — Reusable message snippets (quick replies) in chat. Tap the new

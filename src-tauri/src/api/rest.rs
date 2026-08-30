@@ -476,6 +476,96 @@ pub async fn fetch_latest_release() -> Result<String, AppError> {
     Ok(response.text().await.unwrap_or_default())
 }
 
+/// Aggregate download stats source: fetches the GitHub + Forgejo release lists
+/// (each a JSON array whose releases carry `assets[].download_count`) and returns
+/// them wrapped as `{"github": <array-or-null>, "forgejo": <array-or-null>}`. The
+/// summing is done in the frontend (`$lib/utils/stats`). Done natively because the
+/// WebView CSP blocks these hosts; URLs are fixed (no SSRF); no auth header (public
+/// repos). A failed or non-2xx fetch contributes `null` rather than failing the whole
+/// call, so one source being down still yields the other.
+#[tauri::command]
+pub async fn fetch_download_stats() -> Result<String, AppError> {
+    const GITHUB_URL: &str =
+        "https://api.github.com/repos/Tgbjr2025/grindrx/releases?per_page=100";
+    const FORGEJO_URL: &str =
+        "https://git.dominusaxis.com/api/v1/repos/dominus/grindrx/releases?limit=50";
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    async fn get_json(http: &reqwest::Client, url: &str, accept: &str) -> String {
+        match http
+            .get(url)
+            .header("Accept", accept)
+            .header("User-Agent", "GrindrX-Stats")
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await.unwrap_or_else(|_| "null".to_owned())
+            }
+            _ => "null".to_owned(),
+        }
+    }
+
+    let github = get_json(&http, GITHUB_URL, "application/vnd.github+json").await;
+    let forgejo = get_json(&http, FORGEJO_URL, "application/json").await;
+    Ok(format!("{{\"github\":{github},\"forgejo\":{forgejo}}}"))
+}
+
+/// Fetch active-user stats from the telemetry aggregator (7-day window, broken out
+/// by version). Returns the raw stats JSON (`active_1h/24h/7d`, `versions_24h`,
+/// `total_known`). URL is fixed; no auth.
+#[tauri::command]
+pub async fn fetch_active_users() -> Result<String, AppError> {
+    const STATS_URL: &str = "https://cam.dominusaxis.com/grindrx/stats";
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    let response = http
+        .get(STATS_URL)
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(AppError::Http(format!(
+            "active-users fetch failed with status {}",
+            response.status()
+        )));
+    }
+    Ok(response.text().await.unwrap_or_default())
+}
+
+/// Fire-and-forget anonymous usage ping so active-user counts can be aggregated.
+/// Body is `{"id","v"}` — an anonymous per-install id + the app version, no PII.
+/// URL is fixed. Inputs are sanitised to a safe charset before building the JSON
+/// so this can't inject into the body. Caller swallows failures.
+#[tauri::command]
+pub async fn send_usage_ping(id: String, version: String) -> Result<(), AppError> {
+    const PING_BASE: &str = "https://cam.dominusaxis.com/grindrx/ping";
+    // The aggregator reads `id` and `v` from the QUERY STRING (not the body).
+    // Sanitise to a URL-safe charset so no encoding is needed and nothing can be
+    // injected into the query.
+    fn sanitize(s: &str) -> String {
+        s.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
+            .take(64)
+            .collect()
+    }
+    let url = format!("{PING_BASE}?id={}&v={}", sanitize(&id), sanitize(&version));
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .connect_timeout(std::time::Duration::from_secs(6))
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    http.post(url).send().await?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct RequestPayload {
     method: String,
