@@ -8,10 +8,10 @@
 	import { blockProfile } from "$lib/api/block";
 	import { clearProfileCache, getProfile } from "$lib/api/profile";
 	import { assertOk, sendTapWithType, TAP_TYPES, type TapType } from "$lib/api/taps";
-	import { getAdjacentProfileId } from "$lib/stores/grid-order.svelte";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import Button from "$lib/components/ui/button/button.svelte";
 	import { Skeleton } from "$lib/components/ui/skeleton";
+	import { getAdjacentProfileId } from "$lib/stores/grid-order.svelte";
 	import ReportDialog from "../../../chat/[conversationId]/message/ReportDialog.svelte";
 	import AboutMe from "./AboutMe.svelte";
 	import Distance from "./Distance.svelte";
@@ -96,7 +96,10 @@
 		const next = !current;
 		favoriteOverride = next;
 		try {
-			const response = await fetchRest(`/v1/favorites/${profileId}`, {
+			// Documented endpoint (grindr-api/users/favorites): POST/DELETE
+			// /v3/me/favorites/{id}. The old /v1/favorites/{id} was a reverse-
+			// engineered guess and silently failed ("failed to update favorite").
+			const response = await fetchRest(`/v3/me/favorites/${profileId}`, {
 				method: next ? "POST" : "DELETE",
 			});
 			assertOk(response);
