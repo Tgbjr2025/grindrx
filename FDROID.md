@@ -155,6 +155,33 @@ does this) so F-Droid recognises it as newer.
 
 ---
 
+## Getting into IzzyOnDroid (searchable discovery)
+
+IzzyOnDroid ingests the **published, self-signed APK** from GitHub releases — no rebuild from source —
+and reads the repo's fastlane metadata, so the listing (description, icon, per-version changelogs)
+comes straight from `fastlane/metadata/android/en-US/` in this repo (already in place).
+
+Prerequisites (done): public GitHub repo with an OSI license, tagged releases each carrying an APK
+whose filename/versionCode increases, and the fastlane metadata folder.
+
+To submit (needs a GitLab account — a maintainer action, not automatable here):
+
+1. Go to https://gitlab.com/IzzyOnDroid/repo/-/issues → **New issue** → the *Request Application*
+   template.
+2. Fill in and post (values for GrindrX):
+   - **App name:** GrindrX
+   - **Package ID:** `com.grindrx.app`
+   - **Source / releases:** https://github.com/Tgbjr2025/grindrx (APKs on the Releases page)
+   - **License:** MIT
+   - **Notes:** Unofficial Grindr client (fork of open-grind), Tauri 2 + SvelteKit. Talks to Grindr's
+     proprietary service → please tag `NonFreeNet`. Fastlane metadata + icon + changelogs are in the
+     repo under `fastlane/metadata/android/en-US/`.
+3. After a maintainer accepts it, IzzyOnDroid auto-tracks new GitHub releases — publish a release and
+   it appears as an update for everyone who has the IzzyOnDroid repo added (which is a lot of users).
+
+Users then find GrindrX by **searching in F-Droid** once they've added IzzyOnDroid
+(`https://apt.izzysoft.de/fdroid/repo`), which many already have.
+
 ## Notes
 
 - Two keys are in play: the **APK** key (`~/open-grind-key.jks`, cert `22:D6:88:9E…4C:01`) that signs
