@@ -1,0 +1,1 @@
+Auto-fill a favorite's note from your chat — pulls a name, number, or address they mentioned.

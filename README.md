@@ -68,6 +68,14 @@ https://cam.dominusaxis.com/fdroid/repo?fingerprint=EE96F55410D8C329675462458857
 
 Then search **GrindrX** and install. See **[FDROID.md](./FDROID.md)** for the full walkthrough — including how people discover it, and (for maintainers) how the repo is built and updated.
 
+### Obtainium (auto-updates from releases)
+
+[Obtainium](https://github.com/ImranR98/Obtainium) tracks the GitHub releases directly. In Obtainium: **Add App**, paste the repo URL, and it will pick up every new signed APK:
+
+```
+https://github.com/Tgbjr2025/grindrx
+```
+
 ### Sideloaded APK (Android)
 
 1. Download the latest APK from [releases](https://github.com/Tgbjr2025/grindrx/releases)

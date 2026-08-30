@@ -1,0 +1,1 @@
+Biometric unlock: use fingerprint/face instead of typing your PIN lock.

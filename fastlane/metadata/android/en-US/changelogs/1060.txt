@@ -1,0 +1,1 @@
+Fixed Blocked/Hidden/Favorites lists that failed to load; notification settings (message/tap toggles); saved-phrase autocomplete.

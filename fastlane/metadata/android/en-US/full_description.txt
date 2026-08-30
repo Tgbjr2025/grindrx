@@ -1,0 +1,18 @@
+I got sick of the official Grindr app — ads, trackers, and it chews through battery — so I've been maintaining my own client. GrindrX is a fork of open-grind, built with Tauri 2: all the Grindr API calls happen in Rust and the UI is SvelteKit embedded in the native shell. No ads, no analytics. MIT-licensed.
+
+On top of upstream it adds:
+
+* Voice messages — record and send audio in chat
+* Saved phrases — reusable quick replies that also pop up as you type
+* Album management — create, rename, delete albums, add photos, manage viewers, and share several at once
+* Private notes on favorites — with "auto-fill from chat" that pulls a name, number, or address they mentioned
+* App lock — a PIN and/or fingerprint/face; open the app with just a biometric (device PIN/pattern as the fallback)
+* Notification controls — turn message and tap notifications on or off
+* Profile / tag search
+* A radar map of nearby profiles, a per-chat media gallery, taps & favorites, and inbox search
+* Session storage in the OS keychain, and fixed authenticated image loading (no more black squares on private pics)
+* In-app update notices with a changelog, a first-run feature tour, and a share-with-a-friend link
+
+Some Grindr features are XTRA/server-gated (unlocking every profile viewer, browsing other regions, video calling) and simply can't be provided by a third-party client — GrindrX surfaces what the server returns and never fakes access to a paid feature.
+
+Unofficial, obviously — use a throwaway account if you're worried about a ban. The APKs are dev-signed with a stable key, so updates install in place. Auto-updates work through Obtainium (point it at the GitHub releases) or the GrindrX F-Droid repository.

@@ -1,0 +1,1 @@
+Open the app with your fingerprint or face — biometric can now be the sole app lock (no PIN needed), with your device PIN/pattern as the fallback.
