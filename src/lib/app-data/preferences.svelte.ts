@@ -11,6 +11,11 @@ const preferencesSchema = z.object({
 	revealMessageRead: z.boolean().default(false),
 	revealProfileViews: z.boolean().default(false),
 	incognito: z.boolean().default(false),
+	// Local notification toggles (Grindr has no server-side equivalent). Default
+	// on, matching prior behaviour. Enforced in Rust: the values are pushed into
+	// AppState via `set_notification_prefs` and read by the WS notifier.
+	notifyMessages: z.boolean().default(true),
+	notifyTaps: z.boolean().default(true),
 });
 
 function defaultPreferences(): z.infer<typeof preferencesSchema> {
@@ -19,6 +24,8 @@ function defaultPreferences(): z.infer<typeof preferencesSchema> {
 		revealMessageRead: false,
 		revealProfileViews: false,
 		incognito: false,
+		notifyMessages: true,
+		notifyTaps: true,
 	};
 }
 

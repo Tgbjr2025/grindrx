@@ -27,9 +27,21 @@ pub fn run() {
         builder = builder.plugin(devtools);
     }
 
+	// Biometric unlock is a mobile-only capability (Android/iOS).
+	#[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_biometric::init());
+    }
+
 	#[tauri::command]
     fn set_foreground(state: tauri::State<'_, AppState>, foreground: bool) {
         state.is_foreground.store(foreground, Ordering::Relaxed);
+    }
+
+	#[tauri::command]
+    fn set_notification_prefs(state: tauri::State<'_, AppState>, messages: bool, taps: bool) {
+        state.notify_messages.store(messages, Ordering::Relaxed);
+        state.notify_taps.store(taps, Ordering::Relaxed);
     }
 
 	builder
@@ -46,6 +58,8 @@ pub fn run() {
             auth_notify,
             ws_reset,
             is_foreground: AtomicBool::new(true),
+            notify_messages: AtomicBool::new(true),
+            notify_taps: AtomicBool::new(true),
         })
         .invoke_handler(tauri::generate_handler![
             api::auth::login,
@@ -59,7 +73,11 @@ pub fn run() {
             api::rest::fetch_authed_bytes,
             api::rest::fetch_media_bytes,
             api::rest::fetch_latest_release,
+            api::rest::fetch_download_stats,
+            api::rest::fetch_active_users,
+            api::rest::send_usage_ping,
             set_foreground,
+            set_notification_prefs,
             api::ws::ws_connect,
             api::ws::ws_send,
             api::client::rotate_api_params,

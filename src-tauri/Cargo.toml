@@ -1,6 +1,6 @@
 [package]
 name = "open-grind"
-version = "0.1.24"
+version = "0.1.32"
 description = "FLOSS Grindr client"
 authors = ["GrindrX (https://git.dominusaxis.com/dominus/open-grind)"]
 homepage = "https://git.dominusaxis.com/dominus/open-grind"
@@ -52,6 +52,7 @@ apple-native-keyring-store = { version = "0.2.3", features = ["keychain", "prote
 
 [target.'cfg(target_os = "ios")'.dependencies]
 apple-native-keyring-store = { version = "0.2.3", features = ["keychain", "protected"] }
+tauri-plugin-biometric = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "0.5.1"
@@ -61,4 +62,5 @@ linux-keyutils-keyring-store = "0.2.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-native-keyring-store = "0.5.0"
+tauri-plugin-biometric = "2"
 

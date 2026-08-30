@@ -1,28 +1,38 @@
 <script lang="ts">
 	import { UserIcon } from "phosphor-svelte";
+	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 	import z from "zod";
 
-	import { onMount } from "svelte";
-
 	import { fetchRest } from "$lib/api";
 	import { unblockProfile } from "$lib/api/block";
+	import { getProfiles } from "$lib/api/profile";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
 	import { Spinner } from "$lib/components/ui/spinner";
 
-	const blockedProfileSchema = z.object({
-		profileId: z.coerce.number().int().nonnegative(),
-		displayName: z.string().nullable(),
-		profileImageMediaHash: z.string().nullable(),
-	});
-
+	// Per the Grindr API docs (grindr-api/browse/blocks): GET /v3.1/me/blocks returns
+	// `{ blocking: [{ profileId, blockedTime }] }` — IDs only, no name/photo — NOT
+	// `{ profiles: [...] }` at `/v1/blocks`. The old shape never matched, so the parse
+	// threw and the page always showed "Failed to load". We resolve names + avatars
+	// with a /v3/profiles lookup (getProfiles).
 	const blocksResponseSchema = z.object({
-		profiles: z.array(blockedProfileSchema),
+		blocking: z
+			.array(
+				z.object({
+					profileId: z.coerce.number().int().nonnegative(),
+					blockedTime: z.number().optional().catch(0),
+				}),
+			)
+			.catch([]),
 	});
 
-	type BlockedProfile = z.infer<typeof blockedProfileSchema>;
+	type BlockedProfile = {
+		profileId: number;
+		displayName: string | null;
+		profileImageMediaHash: string | null;
+	};
 
 	let blockedProfiles = $state<BlockedProfile[]>([]);
 	let loading = $state(true);
@@ -33,9 +43,18 @@
 		loading = true;
 		fetchError = null;
 		try {
-			const res = await fetchRest("/v1/blocks", { method: "GET" });
-			const data = res.jsonParsed(blocksResponseSchema);
-			blockedProfiles = data.profiles;
+			const res = await fetchRest("/v3.1/me/blocks", { method: "GET" });
+			const { blocking } = res.jsonParsed(blocksResponseSchema);
+			const ids = blocking.map((b) => b.profileId);
+			// Resolve names/avatars; tolerate a failed/partial lookup so we still
+			// list every blocked id (falling back to "Anonymous").
+			const resolved = await getProfiles(ids).catch(() => []);
+			const byId = new Map(resolved.map((p) => [p.profileId, p]));
+			blockedProfiles = blocking.map((b) => ({
+				profileId: b.profileId,
+				displayName: byId.get(b.profileId)?.displayName ?? null,
+				profileImageMediaHash: byId.get(b.profileId)?.profileImageMediaHash ?? null,
+			}));
 		} catch (err) {
 			console.error("Failed to load blocked users", err);
 			fetchError = "Failed to load blocked users.";

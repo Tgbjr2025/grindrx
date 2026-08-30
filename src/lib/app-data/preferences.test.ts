@@ -24,6 +24,8 @@ const DEFAULTS = {
 	revealMessageRead: false,
 	revealProfileViews: false,
 	incognito: false,
+	notifyMessages: true,
+	notifyTaps: true,
 };
 
 function encodedPrefs(overrides: Record<string, unknown> = {}) {

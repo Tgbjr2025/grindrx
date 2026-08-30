@@ -5,6 +5,153 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.32 — open the app with your fingerprint (no PIN needed) (2026-08-30)
+
+**Fingerprint/face can now lock the app on its own** — Previously biometric unlock was only an
+alternative to typing your PIN. Now you can turn on "Unlock with fingerprint / face" **without
+setting a PIN at all**, so opening GrindrX just asks for your fingerprint or face. If the sensor
+ever won't cooperate, the OS prompt falls back to your device PIN/pattern, so you can't get locked
+out. (Set a PIN too if you want both.) Settings → App → Security.
+
+---
+
+## v0.1.31 — biometric unlock (2026-08-30)
+
+**Unlock with fingerprint / face (new)** — If you use the PIN lock, you can now unlock with your
+device's biometrics instead of typing the PIN. Turn it on in Settings → App → Security → PIN lock →
+"Unlock with fingerprint / face" (you'll confirm once to enable it). When the app opens locked it
+prompts for your fingerprint/face automatically, with your PIN always available as a fallback. The
+biometric check is handled by Android; GrindrX never sees your biometric data.
+
+---
+
+## v0.1.30 — favorite fix + first-run tour & What's-New (2026-08-30)
+
+**Fixed: favoriting now works** — Adding/removing a favorite (the heart on a profile) was hitting a
+wrong endpoint and silently failing ("failed to update favorite"). It now uses the documented
+endpoint. This also unblocks favorite notes / auto-fill, which need a favorite to exist first.
+
+**Feature tour + What's-New (new)** — The first time you open the app it offers a short guided tour
+of the features that aren't in the regular Grindr app (saved phrases, voice messages, album
+management, favorite notes with auto-fill, PIN lock, notification controls, search, and more). After
+each update you'll see a "What's new" card listing that version's changes. You can reopen the tour
+anytime from Settings → GrindrX → "Take the feature tour".
+
+---
+
+## v0.1.29 — auto-fill favorite notes from chat (2026-08-30)
+
+**Auto-fill from chat (new)** — When adding a note to a favorite, tap "Auto-fill from chat" and
+GrindrX scans your conversation with them for details worth remembering — a name they introduced
+themselves with, a phone number, or a street address — and pre-fills the note and phone fields for
+you to review before saving. It only reads their messages (things they told you), never overwrites
+what you've already typed (it appends and fills blanks), and everything stays on your device except
+the note you choose to save. The detection is a plain pattern match — no AI, nothing sent anywhere.
+
+---
+
+## v0.1.28 — voice messages, search, album management, favorites notes (2026-08-30)
+
+A big feature batch.
+
+**Voice messages (new)** — Record and send a voice message: tap the mic in the composer, watch the
+timer, then send or cancel. Receiving voice notes already worked; now you can send them too.
+
+**Profile / tag search (new)** — A new Search tab in the bottom bar lets you search profiles by tag,
+with tappable results that open the profile.
+
+**Album management (new)** — Settings → Account → My Albums: create, rename, and delete albums, add
+photos, and see and remove who each album is shared with.
+
+**Notes on favorites (new)** — Attach a private note (and phone number) to any favorite, from the
+Favorites screen.
+
+**Photo-reply messages render** — "ProfilePhotoReply" chat messages (a reply to one of your photos)
+now show the photo + reply instead of "Unsupported message type".
+
+**Reliability** — Preferences are now written atomically (write-to-temp then rename), so an app
+crash mid-save can no longer corrupt your settings.
+
+**Docs** — The repository README is brought current (correct download links, real signing
+fingerprint, and the full current feature list).
+
+_Note: voice-message playback format and a couple of album-management endpoints are implemented
+against the documented API but not yet verified on a live device — see FIX_NOTES if anything
+misbehaves. Biometric unlock was scoped out of this build (it needs its own native-plugin
+validation) and is planned next._
+
+---
+
+## v0.1.27 — settings fixes, notification settings, phrase autocomplete (2026-08-30)
+
+**Blocked / Hidden / Favorites now load (fixes)** — All three account lists showed "Failed to
+load" because they hit reverse-engineered endpoints/shapes that never matched Grindr's real API.
+Fixed against the documented API: Blocked users now use `GET /v3.1/me/blocks` (resolving names +
+photos via a profile lookup), Hidden users parse the real `{ hides: [...] }` shape, and Favorites
+load from the documented favorites grid instead of a non-existent `/v1/favorites` (with a
+"location needed" hint when the grid has no location yet). Unfavorite now uses the documented
+`/v3/me/favorites/{id}` endpoint.
+
+**Notification settings (new)** — Settings → App → Notifications lets you turn message and tap
+notifications on or off. Grindr has no server-side notification toggle, so these are enforced on
+the device: the switches are read by the native notifier before it posts, so turning one off
+actually stops those notifications. The system-wide on/off still lives in your device settings.
+
+**Saved-phrase autocomplete (new)** — As you type in a chat, matching saved phrases now pop up
+above the message box for one-tap completion (in addition to the existing phrases button).
+
+**Stats page updates live** — The Downloads & active-users screen now auto-refreshes while open
+and has a manual Refresh button, instead of only loading once.
+
+**Branding** — The version label on the settings screen now reads GrindrX instead of OpenGrind.
+
+---
+
+## v0.1.26 — share with a friend + downloads/active-users stats (2026-08-30)
+
+**Share with a friend (new)** — A "Share GrindrX with a friend" option in Settings opens your
+phone's share sheet so you can send an invite link by any app you like (messages, email, social,
+etc.), with a copy-link fallback. A free way to spread the app.
+
+**Downloads & active-users stats (new)** — A new Stats screen (Settings → Downloads & active
+users) shows total downloads across every version and both repos (GitHub + Forgejo), broken down
+by version, plus active users in the last hour / 24 hours / 7 days and by app version. Active
+users are counted from an anonymous launch ping (a random per-install id + the app version — no
+personal data) aggregated over a rolling 7-day window.
+
+---
+
+## v0.1.25 — saved phrases, multi-album share, PIN lock, update notices (2026-08-30)
+
+**Saved phrases (new)** — Reusable message snippets (quick replies) in chat. Tap the new
+chat-bubble button in the composer to open your phrase library, tap a phrase to drop it into
+the message box, and add or delete phrases right from the drawer. Starts with a few handy
+defaults; your list is stored on the device.
+
+**Share more than one album at once (new)** — The album picker is now multi-select: tap several
+albums, then Share, and each is shared into the chat in one action. Partial failures are
+reported instead of aborting the whole batch.
+
+**PIN app-lock (new)** — Optionally require a PIN to open GrindrX (Settings → App → Security →
+PIN lock). The PIN is stored only as a salted SHA-256 hash on the device, never in the clear,
+and the app locks on each cold start until you enter it.
+
+**Update notifications now tell you what's new** — The in-app "Update available" banner was
+pointing at the wrong repository (upstream Open Grind), so it would never surface GrindrX
+releases; it now checks the GrindrX release feed. It shows the new version number, the version
+you're on, and a "What's new" panel with the release notes so you can see what changed and what
+was fixed before updating.
+
+**Video calling** — Assessed and intentionally NOT shipped: real 1:1 video calling needs
+signaling + TURN/STUN infrastructure and camera/mic permissions that don't exist in this app
+yet. See `memory/VIDEO_CALL_FEASIBILITY.md` for exactly what it would take. We don't ship a
+non-functional call button.
+
+**Tests** — +37 unit tests (149 total, was 112): saved-phrases store, multi-album share
+orchestration, semver update comparison, and PIN hashing/lock behaviour.
+
+---
+
 ## v0.1.24 — audit fix batch (2026-08-14)
 
 Driven by a full 9-dimension code audit (48 findings). See `memory/FIX_NOTES_v0.1.24.md` for the

@@ -9,6 +9,10 @@ import {
 	apiResponseMessageSchema,
 	previewFromMessage,
 } from "$lib/model/message";
+import {
+	shareAlbumsErrorMessage,
+	shareAlbumsSequential,
+} from "$lib/utils/share-albums";
 import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 import type { AlbumExpirationType } from "$lib/model/album";
 import type {
@@ -412,7 +416,23 @@ export class ConversationState {
 		void this.#resolveMessage({ tempId, message });
 	}
 
-	async sendAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
+	/**
+	 * Share one or more of our albums into this conversation. Each album is a
+	 * separate share (the endpoint is keyed by album id) and gets its own
+	 * optimistic message, so partial success is possible: if some albums fail we
+	 * still surface the ones that succeeded and throw an aggregated error for the
+	 * rest so the picker can report it.
+	 */
+	async sendAlbums(albumIds: number[], expirationType: AlbumExpirationType): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const result = await shareAlbumsSequential(albumIds, (albumId) =>
+			this.#sendOneAlbum(albumId, expirationType),
+		);
+		const message = shareAlbumsErrorMessage(result, albumIds.length);
+		if (message !== null) throw new Error(message);
+	}
+
+	async #sendOneAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
 		const tempId = `pending-${crypto.randomUUID()}`;
 		const isExpiring = expirationType !== "INDEFINITE";
@@ -530,6 +550,61 @@ export class ConversationState {
 			// response and, with 2+ concurrent pending sends, create a second
 			// entry with the same real messageId — collapse it immediately
 			// rather than waiting for the next poll reconcile.
+			this.messages = removeDuplicateMessages(this.messages);
+			this.#syncCache();
+			const latestMsg = this.messages[0] ?? this.messages.at(-1);
+			if (latestMsg) this.#updatePreview(latestMsg);
+		} catch (err) {
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "error";
+				this.#updatePreview(this.messages.find((m) => m.status === "sent"));
+			}
+			throw err;
+		}
+	}
+
+	async sendAudio({
+		mediaId,
+		mediaHash,
+		url,
+		contentType,
+		length,
+	}: {
+		mediaId: number;
+		mediaHash: string;
+		url: string;
+		contentType: string;
+		length: number;
+	}): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const tempId = `pending-${crypto.randomUUID()}`;
+		const optimistic: OptimisticMessage = {
+			type: "Audio",
+			body: { mediaId, mediaHash, url, contentType, length, expiresAt: null },
+			messageId: tempId,
+			conversationId: this.conversationId,
+			senderId: this.ourProfileId,
+			timestamp: Date.now(),
+			unsent: false,
+			reactions: [],
+			status: "pending",
+		};
+		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
+		this.#updatePreview(optimistic);
+		try {
+			const { messageId } = await sendMessage({
+				toUserId: this.profile.profileId,
+				message: {
+					type: "Audio",
+					body: { mediaId, mediaHash, url, contentType, length, expiresAt: null },
+				},
+			});
+			const msg = this.messages.find((m) => m.messageId === tempId);
+			if (msg) {
+				msg.status = "sent";
+				msg.messageId = messageId;
+			}
 			this.messages = removeDuplicateMessages(this.messages);
 			this.#syncCache();
 			const latestMsg = this.messages[0] ?? this.messages.at(-1);
