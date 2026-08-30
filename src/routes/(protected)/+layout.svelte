@@ -5,6 +5,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { getProfiles } from "$lib/api/profile";
+	import PinLockGate from "$lib/components/PinLockGate.svelte";
 	import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 	import { getOrCreateConversationsState } from "./chat/conversations-context.svelte";
 
@@ -99,3 +100,5 @@
 </script>
 
 {@render children?.()}
+
+<PinLockGate />

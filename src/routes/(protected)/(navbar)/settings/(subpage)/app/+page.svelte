@@ -6,6 +6,7 @@
 	import DiscreetIconSetting from "./DiscreetIconSetting.svelte";
 	import DistanceUnitSetting from "./DistanceUnitSetting.svelte";
 	import IncognitoSetting from "./IncognitoSetting.svelte";
+	import PinLockSetting from "./PinLockSetting.svelte";
 	import RevealMessageReadSetting from "./RevealMessageReadSetting.svelte";
 	import RevealProfileViewSetting from "./RevealProfileViewSetting.svelte";
 
@@ -21,11 +22,6 @@
 			title: "Notifications",
 			description:
 				"Notification settings are not yet available in this version. Enable notifications from your device settings.",
-		},
-		PIN: {
-			title: "PIN Lock",
-			description:
-				"PIN lock adds an extra layer of security. This feature is coming soon.",
 		},
 	};
 </script>
@@ -61,7 +57,7 @@
 		<RevealProfileViewSetting />
 		<h2>Security</h2>
 		<DiscreetIconSetting />
-		{@render item({ title: "PIN" })}
+		<PinLockSetting />
 	</main>
 </div>
 

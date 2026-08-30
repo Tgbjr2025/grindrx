@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { ImagesIcon } from "phosphor-svelte";
+	import { CheckIcon, ImagesIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { getMyAlbums, type MyAlbum } from "$lib/api/album";
-	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import {
 		getProfileUploadedPhotos,
 		invalidateCachedMediaId,
@@ -11,6 +10,7 @@
 		prepareSavedPhotoForSend,
 		type ProfilePhoto,
 	} from "$lib/api/profile";
+	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -22,7 +22,7 @@
 		onSendPhoto,
 	}: {
 		open: boolean;
-		onShare: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
+		onShare: (albumIds: number[], expirationType: AlbumExpirationType) => Promise<void>;
 		onSendPhoto: (params: {
 			mediaId: number;
 			mediaHash: string;
@@ -71,8 +71,16 @@
 	let albumsState = $state<AlbumsState>({ status: "idle" });
 	let photosState = $state<PhotosState>({ status: "idle" });
 	let privateState = $state<PrivateState>({ status: "idle" });
-	let selectedAlbumId = $state<number | null>(null);
+	// Multi-select: the ids of every album queued to share. Reassigned (not
+	// mutated in place) on toggle so Svelte's reactivity picks up the change.
+	let selectedAlbumIds = $state<number[]>([]);
 	let expirationType = $state<AlbumExpirationType>("INDEFINITE");
+
+	function toggleAlbum(albumId: number) {
+		selectedAlbumIds = selectedAlbumIds.includes(albumId)
+			? selectedAlbumIds.filter((id) => id !== albumId)
+			: [...selectedAlbumIds, albumId];
+	}
 	let sharing = $state(false);
 	let sendingHash = $state<string | null>(null);
 	let sendingContentId = $state<number | null>(null);
@@ -112,9 +120,6 @@
 			getMyAlbums()
 				.then(({ albums }) => {
 					albumsState = { status: "loaded", albums };
-					if (albums.length > 0 && selectedAlbumId === null) {
-						selectedAlbumId = albums[0].albumId;
-					}
 				})
 				.catch((err: unknown) => {
 					console.error("Failed to load albums", err);
@@ -152,16 +157,18 @@
 	});
 
 	async function handleShare() {
-		if (selectedAlbumId === null) return;
+		if (selectedAlbumIds.length === 0) return;
+		const count = selectedAlbumIds.length;
 		sharing = true;
 		try {
-			await onShare(selectedAlbumId, expirationType);
-			toast.success("Album shared!");
+			await onShare(selectedAlbumIds, expirationType);
+			toast.success(count > 1 ? `${count} albums shared!` : "Album shared!");
+			selectedAlbumIds = [];
 			open = false;
 		} catch (err) {
-			console.error("Failed to share album:", err);
+			console.error("Failed to share albums:", err);
 			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
-			toast.error(`Failed to share album${detail}`, { duration: 30000 });
+			toast.error(`Failed to share album${count > 1 ? "s" : ""}${detail}`, { duration: 30000 });
 		} finally {
 			sharing = false;
 		}
@@ -321,15 +328,17 @@
 						<div class="flex flex-col gap-2">
 							{#each albumsState.albums as album (album.albumId)}
 								{@const cover = coverUrl(album)}
+								{@const selected = selectedAlbumIds.includes(album.albumId)}
 								<button
 									type="button"
+									aria-pressed={selected}
 									class={[
 										"flex items-center gap-3 p-2 rounded-xl border transition-colors cursor-pointer",
-										selectedAlbumId === album.albumId
+										selected
 											? "border-primary bg-primary/10"
 											: "border-border",
 									]}
-									onclick={() => (selectedAlbumId = album.albumId)}
+									onclick={() => toggleAlbum(album.albumId)}
 								>
 									<div class="size-14 rounded-lg overflow-hidden shrink-0 bg-muted">
 										{#if cover}
@@ -345,13 +354,25 @@
 											</div>
 										{/if}
 									</div>
-									<div class="flex flex-col items-start min-w-0">
+									<div class="flex flex-col items-start min-w-0 flex-1">
 										<span class="text-sm font-medium truncate">
 											{album.albumName ?? "My album"}
 										</span>
 										<span class="text-xs text-muted-foreground">
 											{contentLabel(album)}
 										</span>
+									</div>
+									<div
+										class={[
+											"size-5 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+											selected
+												? "border-primary bg-primary text-primary-foreground"
+												: "border-border",
+										]}
+									>
+										{#if selected}
+											<CheckIcon class="size-3.5" weight="bold" />
+										{/if}
 									</div>
 								</button>
 							{/each}
@@ -379,13 +400,15 @@
 
 						<Button
 							class="w-full cursor-pointer"
-							disabled={selectedAlbumId === null || sharing}
+							disabled={selectedAlbumIds.length === 0 || sharing}
 							onclick={handleShare}
 						>
 							{#if sharing}
 								<Spinner class="size-4 mr-2" />
 							{/if}
-							Share
+							{selectedAlbumIds.length > 1
+								? `Share ${selectedAlbumIds.length} albums`
+								: "Share"}
 						</Button>
 					{/if}
 				{/if}

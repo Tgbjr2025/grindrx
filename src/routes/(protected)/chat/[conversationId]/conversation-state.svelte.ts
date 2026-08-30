@@ -9,6 +9,10 @@ import {
 	apiResponseMessageSchema,
 	previewFromMessage,
 } from "$lib/model/message";
+import {
+	shareAlbumsErrorMessage,
+	shareAlbumsSequential,
+} from "$lib/utils/share-albums";
 import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 import type { AlbumExpirationType } from "$lib/model/album";
 import type {
@@ -412,7 +416,23 @@ export class ConversationState {
 		void this.#resolveMessage({ tempId, message });
 	}
 
-	async sendAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
+	/**
+	 * Share one or more of our albums into this conversation. Each album is a
+	 * separate share (the endpoint is keyed by album id) and gets its own
+	 * optimistic message, so partial success is possible: if some albums fail we
+	 * still surface the ones that succeeded and throw an aggregated error for the
+	 * rest so the picker can report it.
+	 */
+	async sendAlbums(albumIds: number[], expirationType: AlbumExpirationType): Promise<void> {
+		if (!this.profile) throw new Error("Conversation not loaded");
+		const result = await shareAlbumsSequential(albumIds, (albumId) =>
+			this.#sendOneAlbum(albumId, expirationType),
+		);
+		const message = shareAlbumsErrorMessage(result, albumIds.length);
+		if (message !== null) throw new Error(message);
+	}
+
+	async #sendOneAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
 		const tempId = `pending-${crypto.randomUUID()}`;
 		const isExpiring = expirationType !== "INDEFINITE";
