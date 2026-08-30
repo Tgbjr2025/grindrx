@@ -1,42 +1,74 @@
 <script lang="ts">
-	import { HeartIcon, UserIcon } from "phosphor-svelte";
-	import { toast } from "svelte-sonner";
-	import z from "zod";
-
+	import { HeartIcon, MapPinIcon, UserIcon } from "phosphor-svelte";
 	import { onMount } from "svelte";
+	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
+	import { getCascadeV3 } from "$lib/api/grid";
+	import { getProfiles } from "$lib/api/profile";
 	import { assertOk } from "$lib/api/taps";
+	import { getPreferences } from "$lib/app-data/preferences.svelte";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
 	import { Spinner } from "$lib/components/ui/spinner";
 
-	const favoriteProfileSchema = z.object({
-		profileId: z.coerce.number().int().nonnegative(),
-		displayName: z.string().nullable(),
-		profileImageMediaHash: z.string().nullable(),
-		distance: z.number().nullable().optional(),
-	});
-
-	const favoritesResponseSchema = z.object({
-		profiles: z.array(favoriteProfileSchema),
-	});
-
-	type FavoriteProfile = z.infer<typeof favoriteProfileSchema>;
+	type FavoriteProfile = {
+		profileId: number;
+		displayName: string | null;
+		profileImageMediaHash: string | null;
+	};
 
 	let favoriteProfiles = $state<FavoriteProfile[]>([]);
 	let loading = $state(true);
 	let fetchError = $state<string | null>(null);
+	let noLocation = $state(false);
 	let unfavoriting = $state<Set<number>>(new Set());
 
+	// Grindr has no documented "list favorites" endpoint. The old `/v1/favorites`
+	// was a bad guess (it never returned `{profiles}`, so the page always failed).
+	// The documented way to list favorited profiles is the cascade grid with
+	// `favorites=true` (grindr-api/browse/grid). Full cascade items carry name +
+	// photo; partial items are just ids we resolve via /v3/profiles.
 	async function loadFavorites() {
 		loading = true;
 		fetchError = null;
+		noLocation = false;
 		try {
-			const res = await fetchRest("/v1/favorites", { method: "GET" });
-			const data = res.jsonParsed(favoritesResponseSchema);
-			favoriteProfiles = data.profiles;
+			const { geohash } = await getPreferences();
+			if (!geohash) {
+				noLocation = true;
+				favoriteProfiles = [];
+				return;
+			}
+			const cascade = await getCascadeV3({ nearbyGeoHash: geohash, favorites: true });
+			const partialIds: number[] = [];
+			for (const item of cascade.items) {
+				if (item.type === "partial_profile_v1") partialIds.push(item.data.profileId);
+			}
+			const resolved = partialIds.length
+				? await getProfiles(partialIds).catch(() => [])
+				: [];
+			const byId = new Map(resolved.map((p) => [p.profileId, p]));
+
+			favoriteProfiles = cascade.items.flatMap((item) => {
+				if (item.type === "full_profile_v1") {
+					return [{
+						profileId: item.data.profileId,
+						displayName: item.data.displayName ?? null,
+						profileImageMediaHash: item.data.photoMediaHashes?.[0] ?? null,
+					}];
+				}
+				if (item.type === "partial_profile_v1") {
+					const p = byId.get(item.data.profileId);
+					return [{
+						profileId: item.data.profileId,
+						displayName: p?.displayName ?? null,
+						profileImageMediaHash: p?.profileImageMediaHash ?? null,
+					}];
+				}
+				return [];
+			});
 		} catch (err) {
 			console.error("Failed to load favorites", err);
 			fetchError = "Failed to load favorites.";
@@ -48,7 +80,8 @@
 	async function unfavorite(profileId: number) {
 		unfavoriting = new Set([...unfavoriting, profileId]);
 		try {
-			const response = await fetchRest(`/v1/favorites/${profileId}`, { method: "DELETE" });
+			// Documented endpoint (grindr-api/users/favorites): DELETE /v3/me/favorites/{id}.
+			const response = await fetchRest(`/v3/me/favorites/${profileId}`, { method: "DELETE" });
 			assertOk(response);
 			favoriteProfiles = favoriteProfiles.filter((p) => p.profileId !== profileId);
 		} catch (err) {
@@ -79,6 +112,19 @@
 					Try again
 				</Button.Root>
 			</div>
+		{:else if noLocation}
+			<Empty.Root class="flex-1">
+				<Empty.Header>
+					<Empty.Media variant="icon">
+						<MapPinIcon weight="fill" />
+					</Empty.Media>
+					<Empty.Title>Location needed</Empty.Title>
+					<Empty.Description>
+						Your favorites are loaded from the grid, which needs your location.
+						Open the grid once to set it, then come back.
+					</Empty.Description>
+				</Empty.Header>
+			</Empty.Root>
 		{:else if favoriteProfiles.length === 0}
 			<Empty.Root class="flex-1">
 				<Empty.Header>

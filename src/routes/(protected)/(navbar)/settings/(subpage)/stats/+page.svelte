@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { DownloadSimpleIcon, UsersIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, DownloadSimpleIcon, UsersIcon } from "phosphor-svelte";
 	import { onMount } from "svelte";
 
 	import { fetchActiveUsers, fetchDownloadStats } from "$lib/api/usage";
+	import { Button } from "$lib/components/ui/button";
 	import { Spinner } from "$lib/components/ui/spinner";
 	import type { ActiveUsers, DownloadStats } from "$lib/utils/stats";
 
@@ -13,16 +14,36 @@
 	let active = $state<ActiveUsers | null>(null);
 	let activeLoading = $state(true);
 	let activeError = $state(false);
+	let refreshing = $state(false);
+
+	// Poll while the page is open so counts update live (downloads + active users).
+	const REFRESH_MS = 30_000;
+
+	async function load() {
+		refreshing = true;
+		await Promise.all([
+			fetchDownloadStats()
+				.then((data) => {
+					downloads = data;
+					downloadsError = false;
+				})
+				.catch(() => (downloadsError = true))
+				.finally(() => (downloadsLoading = false)),
+			fetchActiveUsers()
+				.then((data) => {
+					active = data;
+					activeError = false;
+				})
+				.catch(() => (activeError = true))
+				.finally(() => (activeLoading = false)),
+		]);
+		refreshing = false;
+	}
 
 	onMount(() => {
-		fetchDownloadStats()
-			.then((data) => (downloads = data))
-			.catch(() => (downloadsError = true))
-			.finally(() => (downloadsLoading = false));
-		fetchActiveUsers()
-			.then((data) => (active = data))
-			.catch(() => (activeError = true))
-			.finally(() => (activeLoading = false));
+		void load();
+		const timer = setInterval(() => void load(), REFRESH_MS);
+		return () => clearInterval(timer);
 	});
 
 	function fmt(n: number): string {
@@ -32,6 +53,19 @@
 
 <div class="flex w-full px-4">
 	<main class="pb-18 flex flex-col gap-4 w-full max-w-120 m-auto">
+		<div class="flex items-center justify-end -mb-1">
+			<Button
+				variant="ghost"
+				size="sm"
+				class="gap-1.5 cursor-pointer text-muted-foreground"
+				disabled={refreshing}
+				onclick={() => void load()}
+			>
+				<ArrowsClockwiseIcon class={["size-4", refreshing && "animate-spin"]} />
+				Refresh
+			</Button>
+		</div>
+
 		<!-- Active users -->
 		<section class="rounded-2xl border border-border p-4">
 			<div class="flex items-center gap-2 mb-3">
