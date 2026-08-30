@@ -5,6 +5,17 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.29 — auto-fill favorite notes from chat (2026-08-30)
+
+**Auto-fill from chat (new)** — When adding a note to a favorite, tap "Auto-fill from chat" and
+GrindrX scans your conversation with them for details worth remembering — a name they introduced
+themselves with, a phone number, or a street address — and pre-fills the note and phone fields for
+you to review before saving. It only reads their messages (things they told you), never overwrites
+what you've already typed (it appends and fills blanks), and everything stays on your device except
+the note you choose to save. The detection is a plain pattern match — no AI, nothing sent anywhere.
+
+---
+
 ## v0.1.28 — voice messages, search, album management, favorites notes (2026-08-30)
 
 A big feature batch.
