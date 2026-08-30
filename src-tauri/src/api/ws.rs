@@ -357,6 +357,13 @@ fn message_preview(val: &Value) -> String {
 /// hidden tail and (more importantly) emitted so the frontend deep-link handler
 /// can route a tap to /chat/{conversationId}.
 fn maybe_notify_message(app: &AppHandle, val: &Value) {
+    if !app
+        .state::<crate::state::AppState>()
+        .notify_messages
+        .load(Ordering::Relaxed)
+    {
+        return;
+    }
     let body = message_preview(val);
     let conversation_id = val["payload"]["conversationId"].as_str().unwrap_or("");
 
@@ -366,6 +373,13 @@ fn maybe_notify_message(app: &AppHandle, val: &Value) {
 /// Posts a system notification for an incoming tap (`tap.v1.tap_sent`).
 /// The tap payload includes `senderDisplayName`, so we can use it as the title.
 fn maybe_notify_tap(app: &AppHandle, val: &Value) {
+    if !app
+        .state::<crate::state::AppState>()
+        .notify_taps
+        .load(Ordering::Relaxed)
+    {
+        return;
+    }
     let title = val["payload"]["senderDisplayName"]
         .as_str()
         .filter(|s| !s.is_empty())

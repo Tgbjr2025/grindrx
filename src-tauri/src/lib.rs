@@ -32,6 +32,12 @@ pub fn run() {
         state.is_foreground.store(foreground, Ordering::Relaxed);
     }
 
+	#[tauri::command]
+    fn set_notification_prefs(state: tauri::State<'_, AppState>, messages: bool, taps: bool) {
+        state.notify_messages.store(messages, Ordering::Relaxed);
+        state.notify_taps.store(taps, Ordering::Relaxed);
+    }
+
 	builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -46,6 +52,8 @@ pub fn run() {
             auth_notify,
             ws_reset,
             is_foreground: AtomicBool::new(true),
+            notify_messages: AtomicBool::new(true),
+            notify_taps: AtomicBool::new(true),
         })
         .invoke_handler(tauri::generate_handler![
             api::auth::login,
@@ -63,6 +71,7 @@ pub fn run() {
             api::rest::fetch_active_users,
             api::rest::send_usage_ping,
             set_foreground,
+            set_notification_prefs,
             api::ws::ws_connect,
             api::ws::ws_send,
             api::client::rotate_api_params,

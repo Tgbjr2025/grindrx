@@ -19,6 +19,12 @@ pub struct AppState {
     pub ws_reset: Arc<Notify>,
     /// true when the WebView is visible/active; false when app is backgrounded
     pub is_foreground: AtomicBool,
+    /// Local notification preferences, pushed from the WebView via
+    /// `set_notification_prefs` (Grindr has no server-side toggle for these).
+    /// The Rust WS notifier reads these before posting an OS notification, so a
+    /// disabled toggle actually suppresses the notification. Default on.
+    pub notify_messages: AtomicBool,
+    pub notify_taps: AtomicBool,
 }
 
 impl AppState {

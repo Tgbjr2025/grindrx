@@ -8,6 +8,7 @@
 	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
+	import { getSavedPhrases } from "$lib/stores/saved-phrases.svelte";
 	import type { AlbumExpirationType } from "$lib/model/album";
 	import type { Message } from "$lib/model/message";
 	import AlbumPicker from "./AlbumPicker.svelte";
@@ -39,6 +40,30 @@
 			// Append to whatever is typed, with a single separating space.
 			textContent = current.replace(/\s+$/, "") + " " + text;
 		}
+	}
+
+	// Live saved-phrase suggestions: as the user types, saved phrases that match
+	// the current text surface above the composer for one-tap completion. An exact
+	// match is excluded, so a just-picked phrase doesn't keep suggesting itself.
+	const phraseSuggestions = $derived.by(() => {
+		const q = textContent.trim().toLowerCase();
+		if (q.length < 1) return [];
+		return getSavedPhrases()
+			.filter((p) => {
+				const t = p.text.toLowerCase();
+				return t.includes(q) && t !== q;
+			})
+			.sort((a, b) => {
+				// Prefer phrases that START with the query.
+				const as = a.text.toLowerCase().startsWith(q) ? 0 : 1;
+				const bs = b.text.toLowerCase().startsWith(q) ? 0 : 1;
+				return as - bs;
+			})
+			.slice(0, 4);
+	});
+
+	function applySuggestion(text: string) {
+		textContent = text;
 	}
 
 	async function onSubmit() {
@@ -90,6 +115,20 @@
 		}
 	}
 </script>
+
+{#if phraseSuggestions.length > 0}
+	<div class="mx-2 mb-1 flex flex-col gap-1 shrink-0" transition:fade={{ duration: 120 }}>
+		{#each phraseSuggestions as phrase (phrase.id)}
+			<button
+				type="button"
+				class="text-left text-sm px-3 py-2 rounded-xl bg-card/90 backdrop-blur-sm border border-border/60 shadow-sm hover:bg-accent active:bg-accent/70 transition-colors cursor-pointer"
+				onclick={() => applySuggestion(phrase.text)}
+			>
+				<span class="line-clamp-1 break-words">{phrase.text}</span>
+			</button>
+		{/each}
+	</div>
+{/if}
 
 <div class="relative mx-2 mb-1 shrink-0 min-w-0 flex items-end gap-0 bg-card/80 backdrop-blur-sm rounded-[24px] border border-border/60 px-1 py-1 shadow-sm">
 	<!-- Albums / My Photos picker -->

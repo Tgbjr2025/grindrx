@@ -5,6 +5,31 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.27 — settings fixes, notification settings, phrase autocomplete (2026-08-30)
+
+**Blocked / Hidden / Favorites now load (fixes)** — All three account lists showed "Failed to
+load" because they hit reverse-engineered endpoints/shapes that never matched Grindr's real API.
+Fixed against the documented API: Blocked users now use `GET /v3.1/me/blocks` (resolving names +
+photos via a profile lookup), Hidden users parse the real `{ hides: [...] }` shape, and Favorites
+load from the documented favorites grid instead of a non-existent `/v1/favorites` (with a
+"location needed" hint when the grid has no location yet). Unfavorite now uses the documented
+`/v3/me/favorites/{id}` endpoint.
+
+**Notification settings (new)** — Settings → App → Notifications lets you turn message and tap
+notifications on or off. Grindr has no server-side notification toggle, so these are enforced on
+the device: the switches are read by the native notifier before it posts, so turning one off
+actually stops those notifications. The system-wide on/off still lives in your device settings.
+
+**Saved-phrase autocomplete (new)** — As you type in a chat, matching saved phrases now pop up
+above the message box for one-tap completion (in addition to the existing phrases button).
+
+**Stats page updates live** — The Downloads & active-users screen now auto-refreshes while open
+and has a manual Refresh button, instead of only loading once.
+
+**Branding** — The version label on the settings screen now reads GrindrX instead of OpenGrind.
+
+---
+
 ## v0.1.26 — share with a friend + downloads/active-users stats (2026-08-30)
 
 **Share with a friend (new)** — A "Share GrindrX with a friend" option in Settings opens your

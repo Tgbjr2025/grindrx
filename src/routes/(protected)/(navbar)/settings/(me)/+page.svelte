@@ -10,6 +10,10 @@
 	import StatsLink from "./StatsLink.svelte";
 
 	const { data }: import("./$types").PageProps = $props();
+
+	// The composite version string is built as `OpenGrind/<v>\ngrindr3/...` (see
+	// svelte.config.js). Show it under the GrindrX brand instead of upstream's.
+	const displayVersion = version.replace(/OpenGrind/gi, "GrindrX");
 </script>
 
 <div class="flex w-full p-4">
@@ -33,7 +37,7 @@
 		<span
 			class="font-mono text-xs text-muted-foreground/50 break-all whitespace-pre-wrap py-2 px-4 select-text mt-2"
 		>
-			{version}
+			{displayVersion}
 		</span>
 	</main>
 </div>
