@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { HeartIcon, MapPinIcon, UserIcon } from "phosphor-svelte";
+	import { HeartIcon, MapPinIcon, NotePencilIcon, UserIcon } from "phosphor-svelte";
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
@@ -12,6 +12,7 @@
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
 	import { Spinner } from "$lib/components/ui/spinner";
+	import FavoriteNotesDialog from "./FavoriteNotesDialog.svelte";
 
 	type FavoriteProfile = {
 		profileId: number;
@@ -24,6 +25,15 @@
 	let fetchError = $state<string | null>(null);
 	let noLocation = $state(false);
 	let unfavoriting = $state<Set<number>>(new Set());
+
+	// The favorite whose private note dialog is currently open. `null` = closed.
+	let notesFor = $state<{ profileId: number; name: string | null } | null>(null);
+	let notesDialogOpen = $state(false);
+
+	function openNotes(profileId: number, name: string | null) {
+		notesFor = { profileId, name };
+		notesDialogOpen = true;
+	}
 
 	// Grindr has no documented "list favorites" endpoint. The old `/v1/favorites`
 	// was a bad guess (it never returned `{profiles}`, so the page always failed).
@@ -163,7 +173,15 @@
 							{profile.displayName ?? "Anonymous"}
 						</Item.Title>
 					</Item.Content>
-					<Item.Actions>
+					<Item.Actions class="gap-1.5">
+						<Button.Root
+							variant="outline"
+							size="sm"
+							onclick={() => openNotes(profile.profileId, profile.displayName)}
+						>
+							<NotePencilIcon />
+							Notes
+						</Button.Root>
 						<Button.Root
 							variant="outline"
 							size="sm"
@@ -178,3 +196,11 @@
 		{/if}
 	</main>
 </div>
+
+{#if notesFor}
+	<FavoriteNotesDialog
+		bind:open={notesDialogOpen}
+		profileId={notesFor.profileId}
+		profileName={notesFor.name}
+	/>
+{/if}

@@ -5,9 +5,9 @@
 	import DropIcon from "phosphor-svelte/lib/DropIcon";
 	import EyeIcon from "phosphor-svelte/lib/EyeIcon";
 	import FireIcon from "phosphor-svelte/lib/FireIcon";
+	import MagnifyingGlassIcon from "phosphor-svelte/lib/MagnifyingGlassIcon";
 	// "Nearby"/Map tab removed per request — import disabled with the tab below.
 	// import MapPinIcon from "phosphor-svelte/lib/MapPinIcon";
-
 	import UserIcon from "phosphor-svelte/lib/UserIcon";
 
 	import { getMyProfile } from "$lib/api/profile";
@@ -50,6 +50,9 @@
 		</a>
 		<a href="/interest" aria-label="Interest" data-active={page.route.id === "/(protected)/(navbar)/interest"}>
 			<FireIcon weight="fill" />
+		</a>
+		<a href="/search" aria-label="Search" data-active={page.route.id === "/(protected)/(navbar)/search"}>
+			<MagnifyingGlassIcon weight="bold" />
 		</a>
 		<a href="/views" aria-label="Views" data-active={page.route.id === "/(protected)/(navbar)/views"}>
 			<EyeIcon weight="fill" />

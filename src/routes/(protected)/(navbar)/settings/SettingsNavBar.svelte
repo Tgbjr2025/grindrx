@@ -39,6 +39,8 @@
 			App Settings
 		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/app/notifications"}
 			Notifications
+		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/albums"}
+			My Albums
 		{:else if page.route.id === "/(protected)/(navbar)/settings/(subpage)/stats"}
 			Stats
 		{/if}

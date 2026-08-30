@@ -6,34 +6,52 @@
 
 ## Downloads
 
-**Pre-built APKs and all releases are on the [Forgejo release page](https://git.dominusaxis.com/dominus/open-grind/releases).**
+**Pre-built, signed APKs are on the [GitHub releases page](https://github.com/Tgbjr2025/grindrx/releases)** (mirrored on the self-hosted [Forgejo releases](https://git.dominusaxis.com/dominus/grindrx/releases)).
 
-Source code mirror and canonical repository: [git.dominusaxis.com/dominus/open-grind](https://git.dominusaxis.com/dominus/open-grind)
+Grab `GrindrX-vX.Y.Z.apk` from the latest release. Every release is signed with the same key, so a new version installs as an in-place upgrade over an existing install (no uninstall / data loss).
 
-> This GitHub repository mirrors the canonical source. For the latest releases, issues, and up-to-date code, visit the Forgejo server above.
+The app also checks for updates on its own: when a newer release exists, an in-app banner shows the new version number and a "What's new" panel with the release notes.
 
 ---
 
 ## What is GrindrX?
 
-GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered.
+GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered. The Rust layer handles all Grindr API calls with device-header spoofing and session management; the SvelteKit frontend is embedded into the native binary.
 
-The Rust layer handles all Grindr API calls with device-header spoofing and session management. The SvelteKit frontend is embedded into the native binary.
+### Features
 
-### Features beyond upstream open-grind
+**Messaging**
+- **Voice messages** — record and send audio in chat (receiving voice notes, GIFs, videos, and gaymoji all render too)
+- **Saved phrases** — a reusable phrase library with type-ahead autocomplete as you type
+- **Photo sending** — send saved, profile, or private-album photos in chat; re-send without re-uploading
+- **Share multiple albums at once**, with per-share expiry
+- Inbox search, tappable links, correct read receipts, delete conversations, shared-location rendering
 
-- **Distance radar map** — visual map of nearby profiles
-- **Chat media gallery** — browse all media in a conversation
-- **Send taps & favorites** — full tap/favorite support
-- **Inbox search** — search your conversations
-- **Delete conversations** — remove chats locally
-- **Profile photo management** — upload and manage your photos
-- **Post Right Now** — post to the Right Now feed
-- **km/mi toggle** — switch distance units
-- **Keyring session storage** — secure credential storage using the OS keychain
-- **Online indicators** — green dot on grid cards for active users
-- **Authenticated image loading** — no more black squares for private media
-- **Incognito mode badge** — visual indicator (API-level suppression requires XTRA)
+**Discovery**
+- Browse grid with online indicators, filters, and Explore-a-location
+- **Profile / tag search**
+- Right Now feed + posting
+- Views (who viewed you)
+
+**Privacy & security**
+- **PIN app-lock** — optional PIN gate, stored only as a salted hash on-device
+- **Notification settings** — per-type (message / tap) toggles, enforced natively
+- Incognito, reveal-profile-views and reveal-read-receipt controls, discreet app icon
+- Keyring session storage (OS keychain), authenticated image loading (no black squares)
+
+**Account**
+- Blocked / Hidden / Favorites management, with private notes on favorites
+- **Album management** — create, rename, delete, add photos, and manage viewers
+- Profile photo management, km/mi units
+
+**Meta**
+- In-app update notifications with changelog
+- Share GrindrX with a friend (native share sheet)
+- Downloads & active-users stats
+
+See [CHANGES.md](./CHANGES.md) for the full per-version changelog.
+
+> Some Grindr features are server- or XTRA-gated and cannot be provided by a third-party client (e.g. unlocking all profile viewers, browsing arbitrary regions, video calling). GrindrX surfaces what the server returns and never fakes access to a paid capability.
 
 ---
 
@@ -41,43 +59,40 @@ The Rust layer handles all Grindr API calls with device-header spoofing and sess
 
 ### Sideloaded APK (Android)
 
-1. Download the latest APK from [releases](https://git.dominusaxis.com/dominus/open-grind/releases)
-2. Enable "Install unknown apps" for your file manager
+1. Download the latest APK from [releases](https://github.com/Tgbjr2025/grindrx/releases)
+2. Enable "Install unknown apps" for your browser or file manager
 3. Install the APK
 4. Samsung Knox / Secure Folder: use **Add apps** inside Secure Folder to move it in
 
 ### Build from source
 
-Requirements: Rust, Bun, Android SDK (NDK r27), Java 17, Gradle 8.
+Requirements: Rust, Bun, Android SDK (NDK r27), Java 17, Gradle 8. The repo ships a Nix flake that pins the whole toolchain.
 
 ```bash
-git clone https://git.dominusaxis.com/dominus/open-grind.git
-cd open-grind
-bun install
-bun run build                                     # frontend
-cargo build --release --target aarch64-linux-android  # Rust .so
-# See BUILDING.md for the full Gradle step
+git clone https://github.com/Tgbjr2025/grindrx.git
+cd grindrx
+nix run .#build-android          # builds the universal release APK
 ```
 
-See [BUILDING.md](./BUILDING.md) for the complete build pipeline including the jniLibs symlink fix required for release builds.
+See [BUILDING.md](./BUILDING.md) for the complete build pipeline and signing steps.
 
 ---
 
 ## Security
 
-All APK releases are signed with a Java KeyStore. SHA-256 fingerprint:
+All APK releases are signed with a Java KeyStore. SHA-256 certificate fingerprint:
 
 ```
-28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C
+22:D6:88:9E:F0:74:59:A2:09:19:D4:8A:FF:FE:7E:D7:A4:E3:90:30:39:E1:55:42:76:7C:ED:CD:FF:8D:4C:01
 ```
 
-Verification instructions are in [KEYS.md](./KEYS.md).
+Verify a downloaded APK with `apksigner verify --print-certs GrindrX-*.apk`. More in [KEYS.md](./KEYS.md).
 
 ---
 
 ## Issues & Contributing
 
-- **Issues / PRs**: file them on the [Forgejo repo](https://git.dominusaxis.com/dominus/open-grind/issues) (canonical)
+- **Issues / PRs**: [GitHub](https://github.com/Tgbjr2025/grindrx/issues) or the canonical [Forgejo repo](https://git.dominusaxis.com/dominus/grindrx/issues)
 - **Upstream**: [git.opengrind.org/open-grind/open-grind](https://git.opengrind.org/open-grind/open-grind)
 - See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 

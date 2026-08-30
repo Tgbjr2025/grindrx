@@ -5,6 +5,38 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.28 — voice messages, search, album management, favorites notes (2026-08-30)
+
+A big feature batch.
+
+**Voice messages (new)** — Record and send a voice message: tap the mic in the composer, watch the
+timer, then send or cancel. Receiving voice notes already worked; now you can send them too.
+
+**Profile / tag search (new)** — A new Search tab in the bottom bar lets you search profiles by tag,
+with tappable results that open the profile.
+
+**Album management (new)** — Settings → Account → My Albums: create, rename, and delete albums, add
+photos, and see and remove who each album is shared with.
+
+**Notes on favorites (new)** — Attach a private note (and phone number) to any favorite, from the
+Favorites screen.
+
+**Photo-reply messages render** — "ProfilePhotoReply" chat messages (a reply to one of your photos)
+now show the photo + reply instead of "Unsupported message type".
+
+**Reliability** — Preferences are now written atomically (write-to-temp then rename), so an app
+crash mid-save can no longer corrupt your settings.
+
+**Docs** — The repository README is brought current (correct download links, real signing
+fingerprint, and the full current feature list).
+
+_Note: voice-message playback format and a couple of album-management endpoints are implemented
+against the documented API but not yet verified on a live device — see FIX_NOTES if anything
+misbehaves. Biometric unlock was scoped out of this build (it needs its own native-plugin
+validation) and is planned next._
+
+---
+
 ## v0.1.27 — settings fixes, notification settings, phrase autocomplete (2026-08-30)
 
 **Blocked / Hidden / Favorites now load (fixes)** — All three account lists showed "Failed to
