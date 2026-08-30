@@ -1,17 +1,48 @@
 <script lang="ts">
+	import { getVersion } from "@tauri-apps/api/app";
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { onDestroy } from "svelte";
+	import { onDestroy, onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
 	import { getProfiles } from "$lib/api/profile";
+	import FeatureTour from "$lib/components/FeatureTour.svelte";
 	import PinLockGate from "$lib/components/PinLockGate.svelte";
+	import WhatsNewDialog from "$lib/components/WhatsNewDialog.svelte";
+	import {
+		isFirstRun,
+		isNewVersion,
+		markVersionSeen,
+	} from "$lib/stores/onboarding.svelte";
 	import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 	import { getOrCreateConversationsState } from "./chat/conversations-context.svelte";
 
 	let { data, children }: import("./$types").LayoutProps = $props();
 
 	const conversations = getOrCreateConversationsState(data.ourProfileId);
+
+	// First-run tour + per-version "What's new" card.
+	let tourOpen = $state(false);
+	let whatsNewOpen = $state(false);
+	let appVersion = $state("");
+
+	onMount(() => {
+		void (async () => {
+			try {
+				const version = await getVersion();
+				appVersion = version;
+				if (isFirstRun()) {
+					tourOpen = true;
+					markVersionSeen(version);
+				} else if (isNewVersion(version)) {
+					whatsNewOpen = true;
+					markVersionSeen(version);
+				}
+			} catch {
+				// no tauri app version available (e.g. web preview) — skip onboarding
+			}
+		})();
+	});
 
 	const unlistenPromise = ws.on(
 		"chat.v1.message_sent",
@@ -102,3 +133,6 @@
 {@render children?.()}
 
 <PinLockGate />
+
+<WhatsNewDialog bind:open={whatsNewOpen} version={appVersion} onTour={() => (tourOpen = true)} />
+<FeatureTour bind:open={tourOpen} />

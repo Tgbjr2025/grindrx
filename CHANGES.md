@@ -5,6 +5,20 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.30 — favorite fix + first-run tour & What's-New (2026-08-30)
+
+**Fixed: favoriting now works** — Adding/removing a favorite (the heart on a profile) was hitting a
+wrong endpoint and silently failing ("failed to update favorite"). It now uses the documented
+endpoint. This also unblocks favorite notes / auto-fill, which need a favorite to exist first.
+
+**Feature tour + What's-New (new)** — The first time you open the app it offers a short guided tour
+of the features that aren't in the regular Grindr app (saved phrases, voice messages, album
+management, favorite notes with auto-fill, PIN lock, notification controls, search, and more). After
+each update you'll see a "What's new" card listing that version's changes. You can reopen the tour
+anytime from Settings → GrindrX → "Take the feature tour".
+
+---
+
 ## v0.1.29 — auto-fill favorite notes from chat (2026-08-30)
 
 **Auto-fill from chat (new)** — When adding a note to a favorite, tap "Auto-fill from chat" and

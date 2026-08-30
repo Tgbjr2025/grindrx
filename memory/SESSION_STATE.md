@@ -1,5 +1,16 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.30 favorite fix + onboarding.** FIX: `profile/[profileId]` `toggleFavorite` used
+`/v1/favorites/{id}` (wrong) → "failed to update favorite"; now documented `/v3/me/favorites/{id}`
+(this also unblocked favorite notes/auto-fill — no favorite could be created before). NEW onboarding:
+`stores/onboarding.svelte.ts` (first-run + last-seen-version, tested) + `data/whats-new.ts` +
+`FeatureTour.svelte` (9-slide Drawer carousel of the independent features) + `WhatsNewDialog.svelte`
+(per-version highlights), wired in `(protected)/+layout.svelte` onMount (first run→tour, upgrade→
+What's-New) + reopenable via Settings→GrindrX→"Take the feature tour". Frontend-only, no Rust.
+Verified vitest 191 (was 189), svelte-check 0, eslint clean. Bumped 0.1.29→0.1.30 (versionCode base
+1070→1075). Rollback tag `pre-v0.1.30` = `c5f28ac`. FIX_NOTES: `memory/FIX_NOTES_v0.1.30.md`. APK
+build + push/release in progress.
+
 **2026-08-30 v0.1.29 auto-fill favorite notes.** Frontend-only: `utils/note-extract.ts`
 (`extractNoteFields`/`buildNoteText`, pure regex — name/phone/address, tested) + "Auto-fill from
 chat" button in `FavoriteNotesDialog` (scans the other person's Text messages via
