@@ -15,6 +15,7 @@
 		applyAndroidInsets,
 		applyBackGestureHandler,
 	} from "$lib/android-native-bridge";
+	import { sendUsagePing } from "$lib/api/usage";
 
 	// Analytics is OFF by default: this is a privacy-focused client and the route
 	// path carries sensitive ids (which profiles you view, which chats you open).
@@ -63,6 +64,8 @@
 
 	onMount(() => {
 		void trackPageview(window.location.pathname);
+		// Anonymous launch ping so active-user counts can be aggregated (best-effort).
+		void sendUsagePing();
 		applyAndroidInsets();
 		applyBackGestureHandler();
 

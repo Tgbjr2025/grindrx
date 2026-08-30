@@ -1,5 +1,22 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.26 share + stats batch shipped.** Tom added (mid-session): a "share with a
+friend" outlet + stats for downloads (across versions/repos) and active users. Shipped:
+**ShareWithFriend** (Web Share API + clipboard fallback, invite link to the GitHub releases page,
+on the settings landing); **Stats screen** (`settings/(subpage)/stats`) showing total downloads
+across all versions + GitHub/Forgejo, per-version, and active users 1h/24h/7d + by version.
+Downloads come from the GitHub + Forgejo release APIs (real APK counts on GitHub; Forgejo has no
+assets → 0); active users from the existing **`grindx-ping`** service (:4242, 7-day window),
+newly wired: app pings on launch (anonymous install-id + version) via Rust
+`send_usage_ping` → `POST cam.dominusaxis.com/grindrx/ping?id=&v=` (aggregator reads QUERY
+params). 3 new Rust commands (`fetch_download_stats`/`fetch_active_users`/`send_usage_ping`).
+**Infra:** added nginx `location /grindrx/` on `cam.dominusaxis.com` → `127.0.0.1:4242` (backup
+`~/cam.dominusaxis.com.conf.bak.pre_grindrx.*`); `nginx -t` + reload OK, cam root still 401s.
+End-to-end smoke-tested over HTTPS (test pings cleaned, `grindx-ping` restarted → stats at 0).
+Verified: **vitest 156** (was 149), svelte-check 0 errors, eslint clean. Bumped 0.1.25→0.1.26
+(versionCode 1054→1055). Rollback tag `pre-v0.1.26` = `b802080`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.26.md`. Push + release steps in the timeline below.
+
 **2026-08-30 v0.1.25 features batch shipped.** Tom asked for saved phrases in chat, sharing more
 than one album at once, "other fixes", video chat, other unimplemented features, and an update
 notice carrying the new version + what's new. Shipped (with tests): **saved phrases** (new store
@@ -15,9 +32,14 @@ calling NOT shipped** — infra doesn't exist (no WebRTC/signaling/TURN/perms); 
 `memory/VIDEO_CALL_FEASIBILITY.md`. Deferred: voice-message SENDING (needs mic perms + device
 test), notification-settings subpage. Verified: **vitest 149/149** (was 112), **svelte-check 0
 errors**, eslint clean. Bumped 0.1.24→0.1.25 (versionCode 1053→1054). Rollback tag
-`pre-v0.1.25` = `7222650`. FIX_NOTES: `memory/FIX_NOTES_v0.1.25.md`. Pushed to Forgejo `main` +
-GitHub `Tgbjr2025/grindrx`; releases published on both (GitHub feed is what the app checks). See
-the timeline entry below.
+`pre-v0.1.25` = `7222650`. FIX_NOTES: `memory/FIX_NOTES_v0.1.25.md`. Commit `b802080`. Pushed: Forgejo `main` + branch (fast-forward),
+GitHub branch + tag `v0.1.25`. Releases `v0.1.25` published on BOTH GitHub (id 379191720) and
+Forgejo (id 31) — the GitHub release feed is what the app's update banner checks.
+**GitHub `main` NOT updated:** it diverged (`a547f8e`, still app v0.1.24) carrying the separate
+`anchor/` SMS-project commits this grindrx lineage never had — not fast-forwardable, and merging
+two lineages into a public main is the user's call. Opened **PR #49** (branch→main) instead of
+forcing. Push guardrail lifted for the pushes and **restored** after
+(`~/.claude/settings.json.bak.pre_gitpush.20260830_053548`). See the timeline entry below.
 
 **2026-08-30 re-verify:** Tom asked to find the cause/location of v0.1.24, verify, then push+merge to
 Forgejo. Confirmed (R7 raw probe): the "1.24 version" = commit `7222650` (audit fix batch); version
