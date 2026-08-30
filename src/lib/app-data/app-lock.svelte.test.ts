@@ -22,7 +22,7 @@ function createMemoryStorage(): Storage {
 		get length() {
 			return store.size;
 		},
-	} as Storage;
+	};
 }
 
 beforeEach(() => {
@@ -112,5 +112,33 @@ describe("app-lock store", () => {
 
 		lockNow();
 		expect(isLocked()).toBe(true);
+	});
+
+	it("biometric opt-in only counts when a PIN is set, persists, and unlockWithBiometric unlocks", async () => {
+		const m = await import("$lib/app-data/app-lock.svelte");
+		// No PIN yet -> biometric never "enabled".
+		m.setBiometricUnlock(true);
+		expect(m.isBiometricUnlockEnabled()).toBe(false);
+
+		await m.setPin("1234");
+		m.setBiometricUnlock(true);
+		expect(m.isBiometricUnlockEnabled()).toBe(true);
+		expect(localStorage.getItem("grindrx-pinlock-biometric")).toBe("1");
+
+		m.lockNow();
+		expect(m.isLocked()).toBe(true);
+		m.unlockWithBiometric();
+		expect(m.isLocked()).toBe(false);
+	});
+
+	it("disablePin also clears the biometric opt-in", async () => {
+		const m = await import("$lib/app-data/app-lock.svelte");
+		await m.setPin("1234");
+		m.setBiometricUnlock(true);
+
+		m.disablePin();
+
+		expect(m.isBiometricUnlockEnabled()).toBe(false);
+		expect(localStorage.getItem("grindrx-pinlock-biometric")).toBeNull();
 	});
 });

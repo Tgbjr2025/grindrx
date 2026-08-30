@@ -1,12 +1,32 @@
 <script lang="ts">
-	import { LockKeyIcon } from "phosphor-svelte";
+	import { FingerprintIcon, LockKeyIcon } from "phosphor-svelte";
+	import { onMount } from "svelte";
 
-	import { isLocked, unlock } from "$lib/app-data/app-lock.svelte";
+	import { promptBiometric } from "$lib/api/biometric";
+	import {
+		isBiometricUnlockEnabled,
+		isLocked,
+		unlock,
+		unlockWithBiometric,
+	} from "$lib/app-data/app-lock.svelte";
 	import { Button } from "$lib/components/ui/button";
 
 	let pin = $state("");
 	let error = $state(false);
 	let checking = $state(false);
+
+	const biometricOn = isBiometricUnlockEnabled();
+
+	async function tryBiometric() {
+		if (!isLocked()) return;
+		const ok = await promptBiometric("Unlock GrindrX");
+		if (ok) unlockWithBiometric();
+	}
+
+	onMount(() => {
+		// Auto-prompt the fingerprint/face scan when the app opens locked.
+		if (biometricOn && isLocked()) void tryBiometric();
+	});
 
 	async function submit() {
 		if (pin === "" || checking) return;
@@ -68,6 +88,17 @@
 			>
 				Unlock
 			</Button>
+			{#if biometricOn}
+				<Button
+					type="button"
+					variant="ghost"
+					class="w-full cursor-pointer gap-1.5 text-muted-foreground"
+					onclick={() => void tryBiometric()}
+				>
+					<FingerprintIcon class="size-4.5" />
+					Use fingerprint / face
+				</Button>
+			{/if}
 		</form>
 	</div>
 {/if}
