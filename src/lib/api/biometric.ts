@@ -15,14 +15,19 @@ export async function isBiometricAvailable(): Promise<boolean> {
 }
 
 /** Prompt for a fingerprint/face scan. Resolves true on success, false on
- * failure/cancel/unavailable. */
-export async function promptBiometric(reason: string): Promise<boolean> {
+ * failure/cancel/unavailable.
+ *
+ * `allowDeviceCredential` offers the device PIN/pattern as a fallback in the OS
+ * prompt. Pass true when biometrics are the SOLE app lock (so a sensor lockout
+ * can't trap the user); pass false when the app's own PIN screen is the fallback. */
+export async function promptBiometric(
+	reason: string,
+	allowDeviceCredential = false,
+): Promise<boolean> {
 	try {
 		await authenticate(reason, {
 			title: "Unlock GrindrX",
-			// Don't offer the device PIN/pattern as a fallback — the app has its
-			// own PIN screen behind this.
-			allowDeviceCredential: false,
+			allowDeviceCredential,
 		});
 		return true;
 	} catch {

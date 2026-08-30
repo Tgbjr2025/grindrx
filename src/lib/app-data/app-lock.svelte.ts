@@ -1,9 +1,11 @@
-// App-lock: an optional PIN gate shown over the authenticated app.
-//
-// State is reactive so a mounted gate component re-renders when the lock state
-// changes. The PIN itself is stored only as a salted SHA-256 (see
-// `$lib/utils/pin`). Enabling a PIN locks on the next cold start / reload; the
-// gate can also re-lock on demand (e.g. when the app returns from background).
+// App-lock: an optional gate shown over the authenticated app. Two independent
+// gates that can be used alone or together:
+//   - PIN: a salted SHA-256 PIN (see `$lib/utils/pin`). Ground-truth fallback.
+//   - Biometric: fingerprint/face. Can gate the app on its OWN (no PIN required);
+//     when used alone, the OS biometric prompt falls back to the device
+//     credential (phone PIN/pattern), so you're never locked out.
+// The app is locked whenever EITHER gate is enabled. State is reactive so a
+// mounted gate re-renders when it changes.
 
 import { browser } from "$app/environment";
 
@@ -32,21 +34,34 @@ function readStr(key: string): string | null {
 	}
 }
 
-let enabled = $state(readBool(ENABLED_KEY));
-// If a PIN is set, the app starts locked and must be unlocked once per session.
-let locked = $state(readBool(ENABLED_KEY));
-// Whether the user opted into unlocking with fingerprint/face instead of typing
-// the PIN each time. Only meaningful when a PIN is also set.
+let pinEnabled = $state(readBool(ENABLED_KEY));
 let biometric = $state(readBool(BIOMETRIC_KEY));
+// The app starts locked whenever either gate is enabled; it must be unlocked
+// once per session (cold start / reload).
+let locked = $state(readBool(ENABLED_KEY) || readBool(BIOMETRIC_KEY));
 
-/** True when the user has set up a PIN lock. */
-export function isPinEnabled(): boolean {
-	return enabled;
+function lockActive(): boolean {
+	return pinEnabled || biometric;
 }
 
-/** True when the app should currently be gated behind the PIN entry screen. */
+/** True when a PIN is set. */
+export function isPinEnabled(): boolean {
+	return pinEnabled;
+}
+
+/** True when biometric unlock/lock is enabled (with or without a PIN). */
+export function isBiometricUnlockEnabled(): boolean {
+	return biometric;
+}
+
+/** True when any app lock is configured. */
+export function isLockEnabled(): boolean {
+	return lockActive();
+}
+
+/** True when the app should currently be gated behind the lock screen. */
 export function isLocked(): boolean {
-	return enabled && locked;
+	return lockActive() && locked;
 }
 
 /** Set (or replace) the PIN and mark the app unlocked for this session. */
@@ -63,7 +78,7 @@ export async function setPin(pin: string): Promise<void> {
 			throw new Error("Could not save PIN", { cause: err });
 		}
 	}
-	enabled = true;
+	pinEnabled = true;
 	locked = false;
 }
 
@@ -83,12 +98,7 @@ export async function unlock(pin: string): Promise<boolean> {
 	return ok;
 }
 
-/** True when the user has opted into biometric unlock (and a PIN exists). */
-export function isBiometricUnlockEnabled(): boolean {
-	return enabled && biometric;
-}
-
-/** Enable/disable biometric unlock. */
+/** Enable/disable biometric unlock (can be the sole lock, no PIN needed). */
 export function setBiometricUnlock(on: boolean): void {
 	biometric = on;
 	if (browser) {
@@ -99,31 +109,31 @@ export function setBiometricUnlock(on: boolean): void {
 			console.error("[GrindrX] Failed to persist biometric setting:", err);
 		}
 	}
+	// Turning off the last active gate leaves nothing to unlock.
+	if (!lockActive()) locked = false;
 }
 
-/** Unlock after a successful biometric check (bypasses the PIN entry). */
+/** Unlock after a successful biometric check (bypasses PIN entry). */
 export function unlockWithBiometric(): void {
-	if (enabled) locked = false;
+	if (lockActive()) locked = false;
 }
 
-/** Turn off the PIN lock and forget the stored hash (and biometric opt-in). */
+/** Turn off the PIN (keeps a biometric-only lock if one is enabled). */
 export function disablePin(): void {
 	if (browser) {
 		try {
 			localStorage.removeItem(SALT_KEY);
 			localStorage.removeItem(HASH_KEY);
 			localStorage.removeItem(ENABLED_KEY);
-			localStorage.removeItem(BIOMETRIC_KEY);
 		} catch (err) {
 			console.error("[GrindrX] Failed to clear PIN:", err);
 		}
 	}
-	enabled = false;
-	locked = false;
-	biometric = false;
+	pinEnabled = false;
+	if (!lockActive()) locked = false;
 }
 
-/** Re-lock now (no-op when no PIN is set). */
+/** Re-lock now (no-op when no lock is configured). */
 export function lockNow(): void {
-	if (enabled) locked = true;
+	if (lockActive()) locked = true;
 }

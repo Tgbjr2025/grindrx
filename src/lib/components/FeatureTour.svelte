@@ -51,8 +51,8 @@
 		},
 		{
 			icon: LockKeyIcon,
-			title: "PIN lock",
-			body: "Lock the app behind a PIN in Settings → App → Security.",
+			title: "Lock the app",
+			body: "Lock GrindrX behind a PIN and/or your fingerprint/face — open it with just a fingerprint if you like. Settings → App → Security.",
 		},
 		{
 			icon: BellIcon,

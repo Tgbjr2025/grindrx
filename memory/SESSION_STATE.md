@@ -1,5 +1,16 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.32 biometric as a STANDALONE app lock.** Tom wanted to open the app with a
+fingerprint (not just unlock a PIN). Restructured `app-lock.svelte.ts` to two independent gates
+(PIN + biometric); app locked when either on (`isLockEnabled`). Biometric can be the sole lock (no
+PIN); `promptBiometric(reason, allowDeviceCredential)` — device PIN/pattern fallback when biometric
+is alone (no lockout). `PinLockGate` has a biometric-only mode; the setting toggle shows always.
+Frontend-only (plugin already in v0.1.31). Verified vitest 194 (was 193), svelte-check 0, eslint
+clean. Bumped 0.1.31→0.1.32 (versionCode base 1080→1085). Rollback tag `pre-v0.1.32` = `3e21f6d`.
+FIX_NOTES: `memory/FIX_NOTES_v0.1.32.md`. Scope: gates app ACCESS with biometric (session already in
+keyring); does NOT store the Grindr password for a fresh post-logout login. APK build + push/release
+in progress.
+
 **2026-08-30 v0.1.31 biometric unlock (first native-plugin add).** Fingerprint/face unlock on top of
 the PIN. Wired `tauri-plugin-biometric` (Cargo android+ios target deps + `#[cfg(mobile)]` init in
 lib.rs; Cargo.lock pre-updated via flake cargo), `@tauri-apps/plugin-biometric` (bun.lock updated via
