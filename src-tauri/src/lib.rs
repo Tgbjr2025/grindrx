@@ -27,6 +27,12 @@ pub fn run() {
         builder = builder.plugin(devtools);
     }
 
+	// Biometric unlock is a mobile-only capability (Android/iOS).
+	#[cfg(mobile)]
+    {
+        builder = builder.plugin(tauri_plugin_biometric::init());
+    }
+
 	#[tauri::command]
     fn set_foreground(state: tauri::State<'_, AppState>, foreground: bool) {
         state.is_foreground.store(foreground, Ordering::Relaxed);

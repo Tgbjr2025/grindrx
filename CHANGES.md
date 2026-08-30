@@ -5,6 +5,16 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.31 — biometric unlock (2026-08-30)
+
+**Unlock with fingerprint / face (new)** — If you use the PIN lock, you can now unlock with your
+device's biometrics instead of typing the PIN. Turn it on in Settings → App → Security → PIN lock →
+"Unlock with fingerprint / face" (you'll confirm once to enable it). When the app opens locked it
+prompts for your fingerprint/face automatically, with your PIN always available as a fallback. The
+biometric check is handled by Android; GrindrX never sees your biometric data.
+
+---
+
 ## v0.1.30 — favorite fix + first-run tour & What's-New (2026-08-30)
 
 **Fixed: favoriting now works** — Adding/removing a favorite (the heart on a profile) was hitting a

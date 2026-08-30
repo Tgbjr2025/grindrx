@@ -12,6 +12,7 @@ import { constantTimeEqual, generateSalt, hashPin } from "$lib/utils/pin";
 const ENABLED_KEY = "grindrx-pinlock-enabled";
 const SALT_KEY = "grindrx-pinlock-salt";
 const HASH_KEY = "grindrx-pinlock-hash";
+const BIOMETRIC_KEY = "grindrx-pinlock-biometric";
 
 function readBool(key: string): boolean {
 	if (!browser) return false;
@@ -34,6 +35,9 @@ function readStr(key: string): string | null {
 let enabled = $state(readBool(ENABLED_KEY));
 // If a PIN is set, the app starts locked and must be unlocked once per session.
 let locked = $state(readBool(ENABLED_KEY));
+// Whether the user opted into unlocking with fingerprint/face instead of typing
+// the PIN each time. Only meaningful when a PIN is also set.
+let biometric = $state(readBool(BIOMETRIC_KEY));
 
 /** True when the user has set up a PIN lock. */
 export function isPinEnabled(): boolean {
@@ -79,19 +83,44 @@ export async function unlock(pin: string): Promise<boolean> {
 	return ok;
 }
 
-/** Turn off the PIN lock and forget the stored hash. */
+/** True when the user has opted into biometric unlock (and a PIN exists). */
+export function isBiometricUnlockEnabled(): boolean {
+	return enabled && biometric;
+}
+
+/** Enable/disable biometric unlock. */
+export function setBiometricUnlock(on: boolean): void {
+	biometric = on;
+	if (browser) {
+		try {
+			if (on) localStorage.setItem(BIOMETRIC_KEY, "1");
+			else localStorage.removeItem(BIOMETRIC_KEY);
+		} catch (err) {
+			console.error("[GrindrX] Failed to persist biometric setting:", err);
+		}
+	}
+}
+
+/** Unlock after a successful biometric check (bypasses the PIN entry). */
+export function unlockWithBiometric(): void {
+	if (enabled) locked = false;
+}
+
+/** Turn off the PIN lock and forget the stored hash (and biometric opt-in). */
 export function disablePin(): void {
 	if (browser) {
 		try {
 			localStorage.removeItem(SALT_KEY);
 			localStorage.removeItem(HASH_KEY);
 			localStorage.removeItem(ENABLED_KEY);
+			localStorage.removeItem(BIOMETRIC_KEY);
 		} catch (err) {
 			console.error("[GrindrX] Failed to clear PIN:", err);
 		}
 	}
 	enabled = false;
 	locked = false;
+	biometric = false;
 }
 
 /** Re-lock now (no-op when no PIN is set). */

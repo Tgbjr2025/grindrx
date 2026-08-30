@@ -1,10 +1,18 @@
 <script lang="ts">
 	import { toast } from "svelte-sonner";
 
-	import { disablePin, isPinEnabled, setPin } from "$lib/app-data/app-lock.svelte";
+	import { isBiometricAvailable, promptBiometric } from "$lib/api/biometric";
+	import {
+		disablePin,
+		isBiometricUnlockEnabled,
+		isPinEnabled,
+		setBiometricUnlock,
+		setPin,
+	} from "$lib/app-data/app-lock.svelte";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import { Button } from "$lib/components/ui/button";
 	import * as Item from "$lib/components/ui/item";
+	import SwitchField from "$lib/components/ui/switch-field/SwitchField.svelte";
 	import { isValidPin } from "$lib/utils/pin";
 
 	let dialogOpen = $state(false);
@@ -43,7 +51,38 @@
 
 	function turnOff() {
 		disablePin();
+		biometricValue = false;
 		toast.success("PIN lock disabled");
+	}
+
+	let biometricValue = $state(isBiometricUnlockEnabled());
+	let biometricBusy = $state(false);
+
+	async function toggleBiometric(on: boolean) {
+		if (biometricBusy) return;
+		biometricBusy = true;
+		try {
+			if (on) {
+				if (!(await isBiometricAvailable())) {
+					toast.error("No fingerprint or face unlock is set up on this device.");
+					biometricValue = false;
+					return;
+				}
+				// Confirm it works before enabling.
+				if (!(await promptBiometric("Confirm biometric unlock"))) {
+					biometricValue = false;
+					return;
+				}
+				setBiometricUnlock(true);
+				biometricValue = true;
+				toast.success("Biometric unlock enabled");
+			} else {
+				setBiometricUnlock(false);
+				biometricValue = false;
+			}
+		} finally {
+			biometricBusy = false;
+		}
 	}
 </script>
 
@@ -68,6 +107,21 @@
 		{/if}
 	</Item.Actions>
 </Item.Root>
+
+{#if isPinEnabled()}
+	<SwitchField
+		title="Unlock with fingerprint / face"
+		description="Use your device's biometrics to unlock instead of typing the PIN each time."
+		disabled={biometricBusy}
+		bind:checked={
+			() => biometricValue,
+			(v: boolean) => {
+				biometricValue = v;
+				void toggleBiometric(v);
+			}
+		}
+	/>
+{/if}
 
 <AlertDialog.Root
 	open={dialogOpen}

@@ -1,5 +1,15 @@
 # SESSION_STATE — grindrx-work
 
+**2026-08-30 v0.1.31 biometric unlock (first native-plugin add).** Fingerprint/face unlock on top of
+the PIN. Wired `tauri-plugin-biometric` (Cargo android+ios target deps + `#[cfg(mobile)]` init in
+lib.rs; Cargo.lock pre-updated via flake cargo), `@tauri-apps/plugin-biometric` (bun.lock updated via
+flake bun), `biometric:default` capability. App: `api/biometric.ts` wrapper, `app-lock.svelte.ts`
+biometric flag + `unlockWithBiometric`, `PinLockGate` auto-prompts on open (PIN fallback), toggle in
+`PinLockSetting`. Verified vitest 193 (was 191), svelte-check 0, eslint clean. Bumped 0.1.30→0.1.31
+(versionCode base 1075→1080). Rollback tag `pre-v0.1.31` = `41c4c89`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.31.md`. **APK build (compiles the plugin) + push/release in progress** — the
+build is the compile-validation for the native plugin. Needs on-device verify of the actual sensor.
+
 **2026-08-30 v0.1.30 favorite fix + onboarding.** FIX: `profile/[profileId]` `toggleFavorite` used
 `/v1/favorites/{id}` (wrong) → "failed to update favorite"; now documented `/v3/me/favorites/{id}`
 (this also unblocked favorite notes/auto-fill — no favorite could be created before). NEW onboarding:
