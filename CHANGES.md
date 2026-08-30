@@ -5,6 +5,16 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.32 — open the app with your fingerprint (no PIN needed) (2026-08-30)
+
+**Fingerprint/face can now lock the app on its own** — Previously biometric unlock was only an
+alternative to typing your PIN. Now you can turn on "Unlock with fingerprint / face" **without
+setting a PIN at all**, so opening GrindrX just asks for your fingerprint or face. If the sensor
+ever won't cooperate, the OS prompt falls back to your device PIN/pattern, so you can't get locked
+out. (Set a PIN too if you want both.) Settings → App → Security.
+
+---
+
 ## v0.1.31 — biometric unlock (2026-08-30)
 
 **Unlock with fingerprint / face (new)** — If you use the PIN lock, you can now unlock with your

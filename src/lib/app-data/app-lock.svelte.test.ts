@@ -114,15 +114,14 @@ describe("app-lock store", () => {
 		expect(isLocked()).toBe(true);
 	});
 
-	it("biometric opt-in only counts when a PIN is set, persists, and unlockWithBiometric unlocks", async () => {
+	it("biometric can be the SOLE lock (no PIN), and unlockWithBiometric unlocks", async () => {
 		const m = await import("$lib/app-data/app-lock.svelte");
-		// No PIN yet -> biometric never "enabled".
-		m.setBiometricUnlock(true);
-		expect(m.isBiometricUnlockEnabled()).toBe(false);
+		expect(m.isLockEnabled()).toBe(false);
 
-		await m.setPin("1234");
 		m.setBiometricUnlock(true);
 		expect(m.isBiometricUnlockEnabled()).toBe(true);
+		expect(m.isPinEnabled()).toBe(false);
+		expect(m.isLockEnabled()).toBe(true);
 		expect(localStorage.getItem("grindrx-pinlock-biometric")).toBe("1");
 
 		m.lockNow();
@@ -131,14 +130,26 @@ describe("app-lock store", () => {
 		expect(m.isLocked()).toBe(false);
 	});
 
-	it("disablePin also clears the biometric opt-in", async () => {
+	it("a biometric-only lock starts locked on the next load", async () => {
+		localStorage.setItem("grindrx-pinlock-biometric", "1");
+		const m = await import("$lib/app-data/app-lock.svelte");
+		expect(m.isPinEnabled()).toBe(false);
+		expect(m.isLocked()).toBe(true);
+	});
+
+	it("disablePin keeps a biometric-only lock; setBiometricUnlock(false) fully unlocks", async () => {
 		const m = await import("$lib/app-data/app-lock.svelte");
 		await m.setPin("1234");
 		m.setBiometricUnlock(true);
 
 		m.disablePin();
+		expect(m.isPinEnabled()).toBe(false);
+		expect(m.isBiometricUnlockEnabled()).toBe(true); // biometric survives
+		expect(m.isLockEnabled()).toBe(true);
 
-		expect(m.isBiometricUnlockEnabled()).toBe(false);
+		m.setBiometricUnlock(false);
+		expect(m.isLockEnabled()).toBe(false);
+		expect(m.isLocked()).toBe(false);
 		expect(localStorage.getItem("grindrx-pinlock-biometric")).toBeNull();
 	});
 });

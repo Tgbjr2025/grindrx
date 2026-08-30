@@ -108,20 +108,20 @@
 	</Item.Actions>
 </Item.Root>
 
-{#if isPinEnabled()}
-	<SwitchField
-		title="Unlock with fingerprint / face"
-		description="Use your device's biometrics to unlock instead of typing the PIN each time."
-		disabled={biometricBusy}
-		bind:checked={
-			() => biometricValue,
-			(v: boolean) => {
-				biometricValue = v;
-				void toggleBiometric(v);
-			}
+<SwitchField
+	title="Unlock with fingerprint / face"
+	description={isPinEnabled()
+		? "Unlock with your device's biometrics instead of typing the PIN each time."
+		: "Require your fingerprint or face to open GrindrX (no PIN needed). Your device PIN/pattern is the fallback."}
+	disabled={biometricBusy}
+	bind:checked={
+		() => biometricValue,
+		(v: boolean) => {
+			biometricValue = v;
+			void toggleBiometric(v);
 		}
-	/>
-{/if}
+	}
+/>
 
 <AlertDialog.Root
 	open={dialogOpen}
