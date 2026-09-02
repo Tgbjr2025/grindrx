@@ -1,28 +1,34 @@
-# Touch-up job: deepen crest / compass / banner for legibility
+# Touch-up job — SINGLE TOOL: 1/16" tapered spiral, no bit change
 
-Two G-code files (GRBL/gSender dialect, mm, absolute). They cut ONLY the
-Tigers crest detail, the compass rose, and the DAVID banner — nothing else.
+**Use `touchup_taper16_all.nc` — it replaces the older two-file pair.**
+One bit, one file, one run (~75–85 min). GRBL/gSender dialect, mm, absolute.
 
-**Zeroing: identical to the original carve — XY zero at the front-left
-corner of the 400×330 stock, Z zero on the ORIGINAL top face.** If the board
-never left the spoilboard, just re-zero Z on an untouched surface spot (the
-frame rim is at original height). If it was re-mounted, get the same corner
-and orientation back before running.
+**Zeroing: XY zero = same front-left corner as the original carve
+(persists in the controller even across power cycles — don't re-set it).
+Z zero = ORIGINAL top face: touch off on the frame rim (untouched surface).**
 
-1. `touchup_1_vbit60.nc` — 60° V-bit. Re-traces every engraved line in the
-   three zones down its centerline to 2.3 mm below the local surface (was
-   1.3–1.5). The V self-centers in the existing grooves and widens them as it
-   deepens. ~22 min, F600, deepest point Z−4.30.
-2. `touchup_2_taper16.nc` — 1/16" tapered (flat tip). Deepens the banner face
-   around the raised DAVID letters and the shield field around the D and
-   tiger head from 1.6 → 3.0 mm, in two passes (−2.3 then −3.0).
-   Radius-compensated: it cannot touch the raised letters. ~32 min, F800.
+What it does, in order:
+- **A — Bold re-engrave** (2 depth passes to −2.3 rel): tiger face, DETROIT /
+  TIGERS / MOTOWN, EST. 1989, compass + N/E/S/W, stitches. Lines come out
+  ~2 mm wide and flat-bottomed — bolder than the V-bit version, by design.
+  Tiny dots (pupils, whiskers) are peck-drilled. Thin border-outline grooves
+  are intentionally skipped (2 mm cuts would leave fragile ridge walls).
+- **B — Pocket deepening** (1.6 → 3.0 mm, 2 passes): banner face around the
+  raised DAVID letters and shield field around the D and tiger head.
+  Radius-compensated — cannot touch the raised parts.
+- **C — Roads, city dots, pines** re-cut to ~1.9 mm so they pop. Small map
+  TEXT (city names, lake names, grid) is deliberately untouched: this bit's
+  2 mm stroke would blob 4 mm letters. That text is 60° V-bit work only.
+- **D — Edge smoothing contour pass**: traces the base of every wall
+  (shoreline, terrace steps, plates, pockets) 0.75 mm off the wall, shaving
+  raster fuzz. The taper leaves a slight chamfer on wall tops — that's the
+  smoothing. Deepest move: Z −10.80 (bottom terrace edges).
 
-Run order doesn't matter. Both verified by simulation: zero cuts outside the
-three zones, Z bounds −4.30 / −3.00.
+The file only travels where work exists — rapids between features, no
+full-board raster.
 
-**Dry-run check before cutting:** with the spindle OFF and Z at safe height,
-run the first few lines — the first V-bit move should park over the crest /
-banner / compass area, nowhere else. Crest center is at X96 Y98.
+**Dry-run first:** spindle off, run the opening lines — first stop is the
+banner/crest area. Feeds: 550–800 mm/min, plunges 220–300, S11000.
+Verified by simulation: zero cuts outside the touch-up zones.
 
-Afterwards: dark wax in the deepened lines is what really makes them read.
+Afterwards: dark wax into all the deepened detail.
