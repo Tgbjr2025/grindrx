@@ -6,6 +6,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { getProfiles } from "$lib/api/profile";
+	import { isLocked } from "$lib/app-data/app-lock.svelte";
 	import FeatureTour from "$lib/components/FeatureTour.svelte";
 	import PinLockGate from "$lib/components/PinLockGate.svelte";
 	import WhatsNewDialog from "$lib/components/WhatsNewDialog.svelte";
@@ -20,6 +21,15 @@
 	let { data, children }: import("./$types").LayoutProps = $props();
 
 	const conversations = getOrCreateConversationsState(data.ourProfileId);
+
+	// A real gate, not an overlay.
+	//
+	// `PinLockGate` used to be layered ON TOP of a fully rendered tree, so while
+	// "locked" every protected node — chat text, names, photos — was still in the
+	// DOM and reachable from JS, and the layout kept its WebSocket live and
+	// raised a toast containing up to 60 characters of an incoming message on the
+	// lock screen. Rendering nothing until unlocked removes all of that.
+	const locked = $derived(isLocked());
 
 	// First-run tour + per-version "What's new" card.
 	let tourOpen = $state(false);
@@ -49,6 +59,10 @@
 		chatV1MessageSentEventSchema,
 		(event) => {
 			const message = event.payload;
+			// Never surface message content on the lock screen, and never while
+			// locked at all — the toast preview is up to 60 characters of
+			// someone's message.
+			if (isLocked()) return;
 
 			// Only show for incoming messages
 			if (message.senderId === conversations.ourProfileId) return;
@@ -130,9 +144,14 @@
 	});
 </script>
 
-{@render children?.()}
+{#if locked}
+	<!-- Nothing protected is rendered while locked. See the `locked` note above. -->
+	<PinLockGate />
+{:else}
+	{@render children?.()}
 
-<PinLockGate />
+	<PinLockGate />
 
-<WhatsNewDialog bind:open={whatsNewOpen} version={appVersion} onTour={() => (tourOpen = true)} />
-<FeatureTour bind:open={tourOpen} />
+	<WhatsNewDialog bind:open={whatsNewOpen} version={appVersion} onTour={() => (tourOpen = true)} />
+	<FeatureTour bind:open={tourOpen} />
+{/if}

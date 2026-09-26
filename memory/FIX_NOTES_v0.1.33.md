@@ -290,3 +290,58 @@ still leaks an undeletable chat-media copy per attempt, and
 
 **Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
 eslint clean on changed files · vitest 198 passed. Rust: **not compiled**.
+
+---
+
+## Batch 4 (same version, fourth commit) — app-lock hardening
+
+Four real holes in the PIN/biometric lock.
+
+- **H11 — the KDF was a single SHA-256.** `hashPin` was
+  `SHA-256(salt:pin)` with the salt stored beside the hash in the same
+  unencrypted WebView localStorage. A 4-digit PIN is 10,000 candidates and that
+  many single SHA-256 evaluations take well under a second on a GPU, so anyone
+  who could read app storage (adb backup, rooted device) could brute-force it
+  offline. Now **PBKDF2-SHA-256 at 200,000 iterations**. The iteration count is
+  stored next to the hash, so an existing install still verifies (its stored
+  count is read back and the PIN re-derived at that cost) and is
+  **transparently upgraded** to the current cost on the next successful unlock.
+  The PIN is imported via `TextEncoder` bytes rather than as a raw key string, so
+  a short PIN isn't zero-padded into a fixed-length key.
+- **H10 — unlimited attempts.** `unlock()` could be called forever, so a PIN was
+  recoverable unattended. Now 5 free attempts, then a cooldown that doubles per
+  further miss (30s → 30min cap), persisted to localStorage so killing the app
+  does not clear it. The unlock screen shows a live countdown and disables the
+  button. `setPin` also now validates the 4-8 digit shape.
+  Deliberate non-behaviour: failed attempts against an **already-unlocked** app
+  do not re-lock it, because that is a trivial DoS (tap 5 times while walking
+  past and the phone locks itself). Covered by a test.
+- **H8 — the lock never re-engaged.** `lockNow()` existed but nothing called it
+  (only the definition and a test referenced it), `locked` was only ever set
+  `false`, and there was no focus/visibility handler — so pressing Home and
+  returning left the app unlocked indefinitely and the gate only came back on a
+  full process restart. Now wired to `visibilitychange` in the root layout, with
+  a 30s grace period so a brief app switch (notification shade, a permission
+  dialog) does not demand the PIN again.
+- **H9 — the lock was an overlay, not a gate.** `PinLockGate` was layered on top
+  of a fully rendered tree at `z-100`, so while "locked" every protected node —
+  chat text, names, photos — was still in the DOM and reachable from JS, nothing
+  blocked data fetches, and the layout's WebSocket handler raised a toast
+  containing **up to 60 characters of an incoming message** on the lock screen.
+  The protected layout now renders **nothing** while locked, and the WS toast
+  handler returns early. (No `FLAG_SECURE` yet — see below.)
+
+Also: `PinLockGate` snapshotted `pinOn`/`biometricOn` into `const`s at module
+init, so toggling the PIN in Settings would have left a stale PIN-only screen
+whose Unlock button could never succeed. Both are `$derived` now, and the
+biometric auto-prompt re-runs on re-lock rather than only on first mount.
+
+**Still open:** `FLAG_SECURE` is not set anywhere in `src-tauri/`, so the Android
+recents-thumbnail still captures whatever was last on screen. That needs a
+native change (or accepting the risk) and is not done here.
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
+eslint clean on changed files · vitest 198 → **208** (10 new: lockout threshold,
+cooldown refusal, counter reset, persistence across a simulated restart, PIN
+validation, no-trivial-DoS, plus PBKDF2 salt-sensitivity / determinism /
+not-a-plain-SHA256 / iteration-count portability).

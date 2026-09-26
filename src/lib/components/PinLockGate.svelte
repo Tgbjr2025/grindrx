@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { FingerprintIcon, LockKeyIcon } from "phosphor-svelte";
-	import { onMount } from "svelte";
 
 	import { promptBiometric } from "$lib/api/biometric";
 	import {
 		isBiometricUnlockEnabled,
 		isLocked,
 		isPinEnabled,
+		lockoutRemainingMs,
 		unlock,
 		unlockWithBiometric,
 	} from "$lib/app-data/app-lock.svelte";
@@ -15,9 +15,26 @@
 	let pin = $state("");
 	let error = $state(false);
 	let checking = $state(false);
+	// Live cooldown countdown, re-read on an interval so it ticks down.
+	let lockoutMs = $state(0);
+	$effect(() => {
+		if (!isLocked()) {
+			lockoutMs = 0;
+			return;
+		}
+		lockoutMs = lockoutRemainingMs();
+		const timer = setInterval(() => {
+			lockoutMs = lockoutRemainingMs();
+			if (lockoutMs === 0) clearInterval(timer);
+		}, 1000);
+		return () => clearInterval(timer);
+	});
 
-	const pinOn = isPinEnabled();
-	const biometricOn = isBiometricUnlockEnabled();
+	// Reactive, not a one-time snapshot: these used to be `const` reads at
+	// module init, so toggling the PIN in Settings left a stale PIN-only screen
+	// whose Unlock button could never succeed.
+	const pinOn = $derived(isPinEnabled());
+	const biometricOn = $derived(isBiometricUnlockEnabled());
 
 	async function tryBiometric() {
 		if (!isLocked()) return;
@@ -27,13 +44,14 @@
 		if (ok) unlockWithBiometric();
 	}
 
-	onMount(() => {
-		// Auto-prompt the fingerprint/face scan when the app opens locked.
-		if (biometricOn && isLocked()) void tryBiometric();
+	$effect(() => {
+		// Auto-prompt the fingerprint/face scan when the app opens locked, and
+		// again whenever a re-lock happens while biometrics are enabled.
+		if (isLocked() && biometricOn) void tryBiometric();
 	});
 
 	async function submit() {
-		if (pin === "" || checking) return;
+		if (pin === "" || checking || lockoutMs > 0) return;
 		checking = true;
 		error = false;
 		try {
@@ -41,6 +59,7 @@
 			if (!ok) {
 				error = true;
 				pin = "";
+				lockoutMs = lockoutRemainingMs();
 			}
 		} finally {
 			checking = false;
@@ -82,9 +101,20 @@
 					]}
 				/>
 				{#if error}
-					<p class="text-center text-sm text-destructive">Incorrect PIN. Try again.</p>
+					<p class="text-center text-sm text-destructive">
+						{#if lockoutMs > 0}
+							Too many attempts. Try again in
+							{Math.ceil(lockoutMs / 1000)}s.
+						{:else}
+							Incorrect PIN. Try again.
+						{/if}
+					</p>
 				{/if}
-				<Button type="submit" class="w-full cursor-pointer" disabled={pin === "" || checking}>
+				<Button
+					type="submit"
+					class="w-full cursor-pointer"
+					disabled={pin === "" || checking || lockoutMs > 0}
+				>
 					Unlock
 				</Button>
 				{#if biometricOn}

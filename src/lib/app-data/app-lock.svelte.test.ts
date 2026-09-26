@@ -153,3 +153,78 @@ describe("app-lock store", () => {
 		expect(localStorage.getItem("grindrx-pinlock-biometric")).toBeNull();
 	});
 });
+
+// The PIN had no attempt limit at all, so a 4-digit PIN (10,000 candidates)
+// could be recovered unattended by calling unlock() repeatedly.
+describe("PIN attempt backoff", () => {
+	it("allows attempts up to the threshold, then imposes a cooldown", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await lock.setPin("1234");
+
+		// Threshold is 5, so the first 4 misses must NOT lock us out.
+		for (let i = 0; i < 4; i++) {
+			expect(await lock.unlock("9999")).toBe(false);
+			expect(lock.lockoutRemainingMs()).toBe(0);
+		}
+		// The 5th miss trips the backoff.
+		expect(await lock.unlock("9999")).toBe(false);
+		expect(lock.lockoutRemainingMs()).toBeGreaterThan(0);
+	});
+
+	it("refuses further attempts while a cooldown is active", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await lock.setPin("1234");
+		// Re-lock first: the backoff exists to slow down guessing at the lock
+		// screen. Failed attempts against an already-unlocked app deliberately do
+		// NOT re-lock it (that would be a trivial DoS — tap 5 times while walking
+		// past and the phone locks itself).
+		lock.lockNow();
+		expect(lock.isLocked()).toBe(true);
+
+		for (let i = 0; i < 5; i++) await lock.unlock("9999");
+		expect(lock.lockoutRemainingMs()).toBeGreaterThan(0);
+
+		// Even the CORRECT pin is refused during the cooldown, and must not
+		// consume a KDF round-trip.
+		expect(await lock.unlock("1234")).toBe(false);
+		expect(lock.isLocked()).toBe(true);
+	});
+
+	it("does not re-lock an unlocked app on failed attempts (no trivial DoS)", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await lock.setPin("1234");
+		expect(lock.isLocked()).toBe(false);
+		for (let i = 0; i < 6; i++) await lock.unlock("9999");
+		expect(lock.isLocked()).toBe(false);
+	});
+
+	it("clears the counter and cooldown after a correct PIN", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await lock.setPin("1234");
+		for (let i = 0; i < 3; i++) await lock.unlock("9999");
+
+		expect(await lock.unlock("1234")).toBe(true);
+		expect(lock.lockoutRemainingMs()).toBe(0);
+		expect(lock.isLocked()).toBe(false);
+	});
+
+	it("persists the failure count and cooldown so a restart cannot clear them", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await lock.setPin("1234");
+		for (let i = 0; i < 5; i++) await lock.unlock("9999");
+
+		// Simulate an app kill + relaunch: fresh module, same localStorage.
+		vi.resetModules();
+		const after = await import("$lib/app-data/app-lock.svelte");
+		expect(after.isLocked()).toBe(true);
+		expect(after.lockoutRemainingMs()).toBeGreaterThan(0);
+		expect(await after.unlock("1234")).toBe(false);
+	});
+
+	it("rejects a PIN that is not 4-8 digits", async () => {
+		const lock = await import("$lib/app-data/app-lock.svelte");
+		await expect(lock.setPin("12")).rejects.toThrow(/4-8 digits/);
+		await expect(lock.setPin("abcdefgh")).rejects.toThrow(/4-8 digits/);
+		expect(lock.isPinEnabled()).toBe(false);
+	});
+});
