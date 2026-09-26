@@ -840,3 +840,43 @@ was working.
 **Verification:** `cargo test --lib` **17 passed** (was 3) ·
 `cargo check --all-targets` **0 errors, 0 warnings** · vitest 244 ·
 svelte-check 0 errors.
+
+---
+
+## The CSP `unsafe-inline` question — resolved (the answer is: it is required)
+
+Batch 5 deliberately left `'unsafe-inline'` on `script-src` and deferred the
+question, because getting it wrong "blanks the app at launch". That is now
+settled with evidence rather than caution. Inspecting the **actually built**
+`index.html` on the M1 (not the source template):
+
+```
+$ grep -o "<script[^>]*>" build/index.html
+<script>            <- inline, no src=, no nonce
+$ grep -c nonce build/index.html
+0
+```
+
+There is exactly **one** script tag, it is **inline**, and it carries **no
+nonce**. It is SvelteKit's hydration script. So `script-src 'self'` alone would
+block it and the app would fail to boot — batch 5's caution was correct, and
+`'unsafe-inline'` is load-bearing **today**.
+
+**Why it cannot simply be removed.** The two halves want different things:
+Tauri owns the CSP (`app.security.csp` in `tauri.conf.json`) and nonces the
+scripts *it* injects, while the nonced-by-nobody inline script is emitted by
+**SvelteKit** as part of the built asset. SvelteKit's own nonce support
+(`kit.csp.mode: 'nonce'`) makes *SvelteKit* generate a CSP header, which Tauri
+then overrides. Making these cooperate means letting SvelteKit emit the policy
+and folding Tauri's directives into it — or hashing the inline script. Both are
+real changes, and either one that is subtly wrong produces a **blank app at
+launch**, so it needs a device to confirm, not a static check.
+
+Also note `dangerousDisableAssetCspModification: ['style-src']`, which is why
+`style-src 'unsafe-inline'` is likewise expected. That flag is load-bearing for
+the same reason and should not be flipped casually.
+
+**Status: the open question is closed, the hardening is not done.** The next
+step is a device-verified attempt at `kit.csp.mode: 'nonce'`, and it must ship
+as its own batch so it can be reverted independently — a failed attempt blanks
+the app, which is the worst possible regression to bisect into a security batch.
