@@ -431,3 +431,34 @@ None — docs-only reconciliation. Doc files edited this pass (#3): `memory/SESS
   `~/.claude/settings.json.bak.pre_gitpush.*`). Deferred: voice-message SENDING, notification-
   settings subpage, attaching APK assets to Forgejo releases (Forgejo download counts read 0 until
   then). No signed APK build / device install this session (code + infra only). — agent, operator Tom.
+
+- **2026-09-26 13:38 UTC — v0.1.33 audit remediation, batches 1-4 (code complete, unbuilt).** Operator Tom.
+  Full line-by-line audit of Forgejo `dominus/grindrx` @ `ec7e9a3` (30k lines, Svelte 5 + Tauri 2).
+  Baseline: 194 tests, 0 type errors, eslint clean. Four commits on top of `ec7e9a3`:
+  `c581d33`, `768f84f`, `1874498`, `58f4c80`. **NOT built, NOT installed, NOT pushed** (R11).
+  **Shipped:** (1) last user-visible "Open Grind" string removed (webview title); package id,
+  crate name, LICENSE/GOVERNANCE/KEYS and the keystore alias deliberately untouched — see FIX_NOTES.
+  (2) **Incognito implemented for real** — was a label with no effect (local flag only); now writes
+  server-side `incognito` + `locationSearchOptOut`. (3) **Grid black-screen root-caused and fixed**
+  (4 compounding defects: one-shot scroll latch firing before measurement, hardcoded 120px row-height
+  fallback, the restore's own scroll event clobbering the saved offset, and recomputeVisible
+  collapsing to {0} on a transiently-empty hitCount). **Needs on-device confirmation.**
+  (4) Album-share duplicate bubble fixed via a stable `pendingKey`; `shareAlbum` no longer
+  fabricates a messageId. (5) Voice recorder no longer survives navigation (mic was staying live and
+  still SENDING at the 300s cap). (6) Profile-save cluster: 4 ways edits silently failed. (7) Viewers
+  list: killed the `/profile/0` link and dropped rows; masked rows now informative. (8) Explore
+  dead-end: `errorIsExploreGate` was written and never read; now offers reset + a free
+  "Browse from here" path. (9) **Share location** built (was receive-only). (10) **Profile photos:**
+  add / set-main / reorder (endpoints were never called; new Rust upload command added).
+  (11) **App-lock:** PBKDF2 200k (was single SHA-256), attempt backoff, re-lock on background, and a
+  real gate instead of an overlay that leaked chat text onto the lock screen.
+  Tests 194 → 208. svelte-check 0 errors. eslint clean on every touched file (Grid.svelte 13 → 0).
+  **NOT DONE / cannot be done in code:** video calling (no signalling/TURN/WebRTC anywhere; needs
+  infra — `VideoCall` is an explicitly unsupported type; see VIDEO_CALL_FEASIBILITY.md); the Explore
+  XTRA gate (server-side CAS-4001 — the client request is already correct). **Still open:** album
+  photo add/remove (needs a real multipart Rust command — the current JSON-to-multipart path leaks an
+  undeletable CDN copy per attempt), chat HIGH items H1-H7, media C4/H20/M9, Rust MEDIUM (ws_send
+  serde mismatch, uncapped response body, unbounded msgpack depth, lost-wakeup on logout, CSP,
+  capabilities, allowBackup, debug body logging), ~15 frontend MEDIUMs, FLAG_SECURE. **The new Rust
+  command `upload_profile_image` is UNCOMPILED** — no cargo on this host; must be built and
+  device-tested before release. — agent, operator Tom.
