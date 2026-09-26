@@ -462,3 +462,25 @@ None — docs-only reconciliation. Doc files edited this pass (#3): `memory/SESS
   capabilities, allowBackup, debug body logging), ~15 frontend MEDIUMs, FLAG_SECURE. **The new Rust
   command `upload_profile_image` is UNCOMPILED** — no cargo on this host; must be built and
   device-tested before release. — agent, operator Tom.
+
+- **2026-09-26 17:00 UTC — v0.1.33 COMPLETE: 8 batches + signed APK built on the M1.** Operator Tom.
+  Picked up a session that died mid-edit with a broken tree. Batch 8 (`4f022b3`) fixed the
+  `previewFromMessage` type error and the "Preview not available" bug, extracted a tested
+  `day-group` helper, and set FLAG_SECURE. **The critical find: the Rust had never compiled.**
+  Batch 5 shipped three real build breaks (`AtomicU64` never imported, `WebSocketConfig` is
+  `#[non_exhaustive]`, `connect_async_tls_with_config` takes 4 args not 3) — the app could not
+  be built at all. All fixed; `cargo test --lib` 3/3 and `cargo check --all-targets` clean for
+  the first time in this version's history. **Also found the version was never bumped** — eight
+  batches of "v0.1.33" work all said 0.1.32; bumped to 0.1.33/versionCode base 1090 (`9c90409`).
+  **Built on the M1** (OVH cannot: its Nix androidenv can't resolve the Tauri plugin projects).
+  M1 needed NDK 27.0.12077973 + platform-36 + build-tools 35.0.0 + cmake + the 4 Android Rust
+  targets + bun, and **Temurin JDK 21** — its default JDK 25 is rejected by AGP 8.13.2 with the
+  useless one-line error `> 25.0.2`. Rust cross-compiled all 4 ABIs; `BUILD_EXIT=0`.
+  **Signed `GrindrX-v0.1.33.apk`** (universal, 70,909,248 B, sha256 `054576d5…a75d`,
+  versionName 0.1.33, **versionCode 1067**, minSdk 28/targetSdk 36, all 4 ABIs, v2 signature,
+  cert `22d6…4c01` verified on BOTH hosts). `~/grindrx-artifacts/` + M1 build output.
+  ⚠️ `autoIncrementVersionCode` **overrides** tauri.conf.json (1090 → 1067) and **each build
+  invocation consumes one** — always read it back with `aapt2 dump badging`. 1067 > 1065 (v0.1.32)
+  so it is a valid in-place upgrade. Tests 220 → **244**; svelte-check 0 errors; eslint+prettier clean.
+  **NOT device-tested** — compiling is not running. Needs a real S26 Ultra before wide release.
+  Pushed to Forgejo + GitHub with sources/zip/APK. — agent, operator Tom.

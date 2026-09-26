@@ -718,3 +718,77 @@ made. It is included in the M1 build below; see the build log.
 
 **Not done here:** H19 msgpack depth guard, CSP `unsafe-inline` nonce
 verification, the M1 APK build + signing (separate step, see SESSION_STATE).
+
+---
+
+## The M1 build — v0.1.33 signed and verified
+
+Built on the operator's M1 Mac (arm64, macOS 26.5.2) over Tailscale SSH, because
+the OVH host cannot: its Nix androidenv fails to resolve the Tauri plugin
+projects (`No matching variant of project :tauri-plugin-biometric`), and
+`cargo` was not on `PATH` at all.
+
+**Toolchain (all newly provisioned on the M1):**
+- Rust **1.95.0** via the existing rustup — the exact pinned version; added the
+  four Android targets (`aarch64-linux-android`, `armv7-linux-androideabi`,
+  `i686-linux-android`, `x86_64-linux-android`).
+- Android SDK: NDK **27.0.12077973** (exact pin), platform-36, build-tools
+  35.0.0, cmake 3.22.1.
+- **Temurin JDK 21** — see below.
+- bun 1.3.x, `bun install` 293 packages.
+
+**The JDK 25 rejection is real and reproducible.** The M1's default JDK is
+Temurin 25, and AGP 8.13.2 refuses it at configuration time with a bare,
+very unhelpful message:
+
+```
+A problem occurred configuring project ':buildSrc'.
+> 25.0.2
+```
+
+That is the entire error. Temurin 21 is installed at `~/jdks/jdk-21.0.12.1+1`
+and `JAVA_HOME` must point at it or the build cannot start. `build.gradle.kts`
+already targets `sourceCompatibility/targetCompatibility = 17`, so 21 is the
+right ceiling.
+
+### Artifact
+
+| | |
+|---|---|
+| File | `GrindrX-v0.1.33.apk` (universal release, **70,909,248 B**) |
+| SHA-256 | `054576d5e081096a2aff4a2106f3e6d7fb468ad4ce7cdc997fee26d01956a75d` |
+| versionName / versionCode | **0.1.33** / **1067** |
+| minSdk / targetSdk | 28 / 36 |
+| ABIs | arm64-v8a, armeabi-v7a, x86, x86_64 |
+| Signature | v2 scheme, 1 signer, CN=GrindX |
+| Cert SHA-256 | `22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01` |
+
+⚠️ **On `versionCode`.** `autoIncrementVersionCode: true` **overrides** the
+`versionCode` in `tauri.conf.json` — setting it to 1090 produced **1067**. The
+published history increments by exactly 1 per release (0.1.26→1059 …
+0.1.32→**1065**), and 1067 is higher, so this is a valid in-place upgrade. But
+**each `tauri android build` invocation consumes a versionCode**: the first run
+(drowned by the JDK failure) burned 1066. Do not assume the config value is what
+ships — read it back with `aapt2 dump badging` and compare against the last
+release before installing.
+
+**The cert is unchanged (`22d6…4c01`)**, so this installs over v0.1.32 without a
+uninstall — verified on both hosts, not just the build host (R22).
+
+### FLAG_SECURE is now compiled
+
+The batch-8 note flagged the Kotlin as UNVERIFIED. It no longer is:
+`build/tmp/kotlin-classes/universalRelease/org/opengrind/MainActivity.class`
+exists in the build output, and `setFlags` is present in the APK's dex string
+table. A Kotlin syntax or type error would have failed the build; it did not.
+
+### Still not verified
+
+**None of this is device-tested.** The APK builds, is signed by the right key
+and carries the right version — that is a compile-time claim, not a behavioural
+one. Everything in batches 5-7 that was "structurally checked only" is now
+*compiled*, which is strictly better and still not the same as *run*. The Rust
+security fixes (WS logout epoch, `ws_send` serde key, response cap, i64 error
+code, keyring off the async runtime), the album multipart upload, the
+notification `prefs_loaded` gate and the `allowBackup`/data-extraction rules all
+need a real device before release.
