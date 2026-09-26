@@ -60,13 +60,19 @@ export async function getMyAlbums() {
  * and the album renders locked. Going through `/shares` is what actually entitles
  * the recipient to unlock it.
  *
- * The endpoint returns an empty body (no messageId). Because the share auto-sends
- * the album to chat, the real chat message arrives over the WebSocket
- * `chat.v1.message_sent` event and is reconciled by ConversationState. We return a
- * synthetic id purely to satisfy the existing `{ messageId }` caller contract in
- * conversation-state without having to touch that out-of-scope file; the optimistic
- * pending message it created is upgraded/deduped by the WS event and the poll
- * reconcile, not by this id.
+ * The endpoint returns an empty body — there is no `messageId` to adopt. That is
+ * fine because the share auto-sends the album to chat, so the real chat message
+ * arrives over the WebSocket `chat.v1.message_sent` event and is reconciled by
+ * ConversationState.
+ *
+ * This function previously returned a *synthetic* id
+ * (`album-share-${albumId}-${profileId}-${Date.now()}`) to satisfy the old
+ * `{ messageId }` caller contract. That was actively harmful: ConversationState
+ * wrote the fake id onto the optimistic bubble, which broke every dedup path
+ * (the WS echo could not match it, and `removeDuplicateMessages` keys on
+ * `messageId`) and left a permanent duplicate album bubble that could not be
+ * unsent. Callers now keep the bubble `pending` and adopt the real message via
+ * `pendingKey` — see `OptimisticMessage.pendingKey`.
  */
 export async function shareAlbum({
 	albumId,
@@ -76,7 +82,7 @@ export async function shareAlbum({
 	albumId: number;
 	profileId: number;
 	expirationType: AlbumExpirationType;
-}): Promise<{ messageId: string }> {
+}): Promise<void> {
 	const res = await fetchRest(`/v4/albums/${albumId}/shares`, {
 		method: "POST",
 		body: {
@@ -86,9 +92,8 @@ export async function shareAlbum({
 	if (res.status >= 400) {
 		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
 	}
-	// Response body is empty; the chat message is delivered via the share itself
-	// and reconciled through the WebSocket message_sent event.
-	return { messageId: `album-share-${albumId}-${profileId}-${Date.now()}` };
+	// Intentionally returns nothing: the real chat message is delivered via the
+	// share itself and reconciled through the WebSocket message_sent event.
 }
 
 // ---------------------------------------------------------------------------

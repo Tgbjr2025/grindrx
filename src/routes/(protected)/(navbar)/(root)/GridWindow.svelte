@@ -82,7 +82,6 @@
 	let visible = $state(new Set<number>([0]));
 
 	function recomputeVisible() {
-		const next = new Set<number>([0]);
 		let min = Infinity;
 		let max = -Infinity;
 		for (const [index, count] of hitCount) {
@@ -90,14 +89,25 @@
 			if (index < min) min = index;
 			if (index > max) max = index;
 		}
-		if (min !== Infinity) {
-			for (
-				let i = Math.max(0, min - OVERSCAN_CHUNKS);
-				i <= max + OVERSCAN_CHUNKS;
-				i++
-			)
-				next.add(i);
+		if (min === Infinity) {
+			// Nothing is intersecting right now. Returning early is deliberate:
+			// collapsing back to a bare chunk 0 here used to blank the grid on
+			// back-navigation. Right after a scroll restore, the observers for
+			// the chunks under the viewport have not reported yet, so hitCount is
+			// transiently empty — and resetting to `{0}` shrank the page below
+			// the current scroll offset, leaving the viewport past the end of the
+			// content (a black screen). Keep whatever is mounted and let the
+			// observers catch up; they are the only thing that knows what is
+			// genuinely off-screen.
+			return;
 		}
+		const next = new Set<number>();
+		for (
+			let i = Math.max(0, min - OVERSCAN_CHUNKS);
+			i <= max + OVERSCAN_CHUNKS;
+			i++
+		)
+			next.add(i);
 		visible = next;
 	}
 
@@ -154,9 +164,10 @@
 	}
 
 	function chunkPx(rows: number): number {
-		// Fallback row height before the parent has measured the grid.
-		const h = rowHeight > 0 ? rowHeight : 120;
-		return rows * h + Math.max(0, rows - 1) * ROW_GAP;
+		// No magic-number fallback: the parent measures the real cell height and
+		// sizes spacers from it, so a collapsed chunk is exactly as tall as the
+		// rows it stands in for and the page height never shifts.
+		return rows * rowHeight + Math.max(0, rows - 1) * ROW_GAP;
 	}
 </script>
 

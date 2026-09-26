@@ -44,6 +44,30 @@
 	let recordStartMs = 0;
 	let recordTimer: ReturnType<typeof setInterval> | null = null;
 	let cancelledRecording = false;
+	// Set when the component is torn down (navigation, conversation switch,
+	// app background). Without it, a recording started before the user left
+	// kept the microphone live and the 5-minute cap still fired `onstop`,
+	// which uploaded and SENT a voice message into a conversation the user had
+	// already left — silently, with no UI.
+	let destroyed = false;
+
+	// Stop the mic and drop the recording when this component goes away.
+	// `cancelledRecording` covers the explicit Cancel button; this covers every
+	// other exit path (back gesture, conversation switch, app close).
+	$effect(() => {
+		return () => {
+			destroyed = true;
+			cancelledRecording = true;
+			if (mediaRecorder && mediaRecorder.state !== "inactive") {
+				try {
+					mediaRecorder.stop();
+				} catch {
+					// Already stopped / errored — teardown below is enough.
+				}
+			}
+			teardownRecording();
+		};
+	});
 
 	function teardownRecording() {
 		if (recordTimer) {
@@ -59,6 +83,7 @@
 	}
 
 	async function startRecording() {
+		if (destroyed) return;
 		if (recording || sendingAudio || recipientProfileId === null) return;
 		if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
 			toast.error("Voice recording isn't available on this device.");
@@ -116,6 +141,8 @@
 	async function uploadAndSendAudio(blob: Blob, lengthMs: number) {
 		// Too short to be intentional — drop it.
 		if (lengthMs < 500) return;
+		// The conversation may have been closed while we were recording.
+		if (destroyed || cancelledRecording) return;
 		sendingAudio = true;
 		try {
 			const media = await uploadAudioBlob(blob, lengthMs);

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { toast } from "svelte-sonner";
 
-	import { fetchRest } from "$lib/api";
+	import { ApiHttpError, fetchRest } from "$lib/api";
 	import { getGenders } from "$lib/api/genders";
 	import { fetchPronouns } from "$lib/api/pronouns";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
@@ -252,17 +252,42 @@
 	// stored centimeters. A feet-only or inches-only entry is treated as the
 	// other half being 0 (e.g. "5" ft with inches left blank == 5'0"); both
 	// blank clears the height, matching the previous single-input behavior.
+	//
+	// NOTE: these inputs are `type="number"`, and Svelte coerces number bindings
+	// with `to_number`, which returns `null` (not `""`) for an empty field. The
+	// previous `heightFeet.trim()` therefore threw a TypeError as soon as the
+	// user cleared either box, and `weight !== ""` was true for `null` so
+	// clearing weight sent `weight: 0`. Normalise once, here.
+	const numText = (value: string | number | null | undefined): string =>
+		String(value ?? "").trim();
+
 	function resolveHeightCm(): number | null {
 		if (isImperialHeight) {
-			const feetStr = heightFeet.trim();
-			const inchesStr = heightInches.trim();
+			const feetStr = numText(heightFeet);
+			const inchesStr = numText(heightInches);
 			if (feetStr === "" && inchesStr === "") return null;
-			const totalInches =
-				(feetStr !== "" ? Number(feetStr) : 0) * INCHES_PER_FOOT +
-				(inchesStr !== "" ? Number(inchesStr) : 0);
+			const feet = feetStr === "" ? 0 : Number(feetStr);
+			const inches = inchesStr === "" ? 0 : Number(inchesStr);
+			// A non-finite value (e.g. "1e999" -> Infinity) would be encoded as a
+			// msgpack float that the Tauri bridge refuses to decode, failing the
+			// ENTIRE PATCH and silently discarding every other field. Drop it.
+			const totalInches = feet * INCHES_PER_FOOT + inches;
+			if (!Number.isFinite(totalInches)) return null;
 			return heightFromInput(totalInches, getDistanceUnit());
 		}
-		return height !== "" ? heightFromInput(Number(height), getDistanceUnit()) : null;
+		const cmStr = numText(height);
+		if (cmStr === "") return null;
+		const cm = Number(cmStr);
+		if (!Number.isFinite(cm)) return null;
+		return heightFromInput(cm, getDistanceUnit());
+	}
+
+	/** `null` for an empty/invalid field, else the converted value. */
+	function resolveWeight(): number | null {
+		const raw = numText(weight);
+		if (raw === "") return null;
+		const value = weightFromInput(Number(raw), getDistanceUnit());
+		return Number.isFinite(value) ? value : null;
 	}
 
 	async function handleSave() {
@@ -274,8 +299,7 @@
 				sexualPosition: sexualPosition !== "" ? sexualPosition : null,
 				bodyType: bodyType !== "" ? bodyType : null,
 				height: resolveHeightCm(),
-				weight:
-					weight !== "" ? weightFromInput(Number(weight), getDistanceUnit()) : null,
+				weight: resolveWeight(),
 				ethnicity: ethnicity !== "" ? ethnicity : null,
 				relationshipStatus: relationshipStatus !== "" ? relationshipStatus : null,
 				lookingFor: Array.from(selectedLookingFor),
@@ -294,10 +318,17 @@
 				pronouns: Array.from(selectedPronouns),
 			};
 
-			await fetchRest("/v4/me/profile", {
+			// `fetchRest` only rejects on an IPC/bridge failure — an HTTP 4xx/5xx
+			// comes back as a normal response. The result was never inspected, so
+			// a rejected save showed "Profile updated" and closed the sheet while
+			// nothing had changed.
+			const res = await fetchRest("/v4/me/profile", {
 				method: "PATCH",
 				body,
 			});
+			if (res.status >= 400) {
+				throw new ApiHttpError(res.status, res.text(), "/v4/me/profile");
+			}
 
 			toast.success("Profile updated");
 			open = false;
@@ -305,7 +336,11 @@
 		} catch (err) {
 			console.error("Failed to update profile", err);
 			const message =
-				err instanceof Error ? err.message : "Failed to update profile. Please try again.";
+				err instanceof ApiHttpError && (err.status === 402 || err.status === 403)
+					? "Grindr rejected that change. Some profile fields require a Grindr XTRA subscription."
+					: err instanceof Error
+						? err.message
+						: "Failed to update profile. Please try again.";
 			toast.error(message);
 		} finally {
 			saving = false;
