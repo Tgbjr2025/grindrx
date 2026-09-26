@@ -70,6 +70,7 @@ pub fn run() {
             api::rest::request,
             api::rest::request_public,
             api::rest::upload_image,
+            api::rest::upload_profile_image,
             api::rest::fetch_authed_bytes,
             api::rest::fetch_media_bytes,
             api::rest::fetch_latest_release,

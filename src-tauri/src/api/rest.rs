@@ -287,6 +287,85 @@ pub async fn upload_image(
     Ok(UploadImageResult { status, body })
 }
 
+/// Upload bytes to the LEGACY profile-media endpoint so they can be referenced
+/// by `primaryImageHash` / `secondaryImageHashes` on
+/// `PUT /v3/me/profile/images`.
+///
+/// Why this exists: `upload_image` targets `POST /v5/chat/media/upload`, the
+/// only endpoint that mints a numeric `mediaId`, but it returns a **signed /
+/// private** 64-char hash. The profile-photos endpoint documents its hashes as
+/// **public** 40-char CDN files, so a chat-media hash is not a valid
+/// `primaryImageHash`. This command hits `POST /v4/media/upload`, which returns
+/// the public `hash`.
+///
+/// `thumbCoords` is a RectF serialised as `y2,x1,x2,y1` in the query string and
+/// MUST describe a square region (`y2-y1 == x2-x1`): the server accepts a
+/// non-square crop without complaint but then SILENTLY DROPS the image when it
+/// is later referenced from `PUT /v3/me/profile/images`. We therefore pass the
+/// largest centred square inside the image's real dimensions, computed by the
+/// caller, so the crop is square by construction.
+///
+/// Returns the raw response body — the caller validates the `hash` shape.
+#[tauri::command]
+pub async fn upload_profile_image(
+    state: tauri::State<'_, AppState>,
+    image_base64: String,
+    mime_type: String,
+    width: u32,
+    height: u32,
+) -> Result<UploadImageResult, AppError> {
+    // Same inbound cap as `upload_image` (~22 MB binary) so a hostile WebView
+    // payload cannot OOM the process through STANDARD.decode.
+    const MAX_IMAGE_BASE64: usize = 30 * 1024 * 1024;
+    if image_base64.len() > MAX_IMAGE_BASE64 {
+        return Err(AppError::Http("Image payload too large".to_owned()));
+    }
+    if width == 0 || height == 0 {
+        return Err(AppError::Http(
+            "Image dimensions are required to compute a square thumbnail crop".to_owned(),
+        ));
+    }
+    let bytes = STANDARD
+        .decode(&image_base64)
+        .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
+
+    // Largest centred square that fits inside the image.
+    let side = width.min(height);
+    let x1 = (width - side) / 2;
+    let y1 = (height - side) / 2;
+    let x2 = x1 + side;
+    let y2 = y1 + side;
+    // RectF order is y2,x1,x2,y1 (see docs/content/grindr-api/users/profiles.md#RectF).
+    let thumb_coords = format!("{y2},{x1},{x2},{y1}");
+
+    let authorization = state
+        .client()?
+        .authorization_header()
+        .await
+        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
+
+    let http = state.client()?.http.read().await.clone();
+
+    // `takenOnGrindr` is documented for the v4 endpoint. Query values are
+    // numeric-only by construction, so no escaping concern.
+    let url = format!(
+        "{BASE_URL}/v4/media/upload?thumbCoords={thumb_coords}&takenOnGrindr=false"
+    );
+    let response = http
+        .post(url)
+        .header("Authorization", authorization)
+        .header("L-Grindr-Roles", grindr_roles_header_value())
+        .header("Content-Type", &mime_type)
+        .body(bytes)
+        .send()
+        .await?;
+
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+
+    Ok(UploadImageResult { status, body })
+}
+
 // FIX 3: stream the body with a running counter so chunked responses with no
 // Content-Length are also capped. `response.bytes()` would buffer everything
 // before we could check the size. Shared by `fetch_authed_bytes` and
