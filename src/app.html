@@ -3,7 +3,24 @@
 
 <head>
 	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+	<!--
+		`interactive-widget=resizes-content` is REQUIRED on Android, not optional.
+
+		Without it Chromium defaults to `resizes-visual`: the *visual* viewport
+		shrinks when the keyboard opens but the *layout* viewport does not. The chat
+		layout sizes itself with `h-dvh` (which is derived from the layout viewport)
+		and the message list is `flex-1 min-h-0 overflow-auto`, so `dvh` never
+		changes and the composer stays behind the keyboard — you could read messages
+		but not type a reply.
+
+		`resizes-content` makes the layout viewport shrink instead, so `dvh` follows
+		the keyboard. Ignored on iOS, which handles this via its own keyboard
+		avoidance, so it is safe to set unconditionally.
+	-->
+	<meta
+		name="viewport"
+		content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+	/>
 	<style>
 		:root {
 			color-scheme: dark;

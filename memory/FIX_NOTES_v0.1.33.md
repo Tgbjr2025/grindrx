@@ -489,3 +489,78 @@ two things to verify first against a live endpoint.
 eslint clean on every changed file · vitest 207 passed. Rust: structural checks
 only (brace/paren balance verified unchanged against HEAD for all 7 touched
 files; JSON and XML parse) — **not compiled**.
+
+---
+
+## Batch 6 (same version, sixth commit) — chat HIGH cluster + media
+
+- **H5 — the Android keyboard covered the composer.** `app.html` set
+  `viewport-fit=cover` with **no `interactive-widget`**, so Chromium defaulted to
+  `resizes-visual`: the *visual* viewport shrank but the *layout* viewport did
+  not. The chat layout sizes itself with `h-dvh` (derived from the layout
+  viewport) and the message list is `flex-1 min-h-0 overflow-auto`, so `dvh`
+  never changed and the composer stayed behind the keyboard — you could read
+  messages but not type a reply. Now `interactive-widget=resizes-content`.
+- **H20 — voice messages never played.** `AudioMessage` did
+  `<audio src={message.url}>` with **no `Authorization` header**, unlike every
+  other media component (all of which go through `resolveAuthedImage`). For a
+  bearer-gated `cdns.grindr.com` URL that is a silent 403: the bubble rendered,
+  showed a duration, and pressing play did nothing, forever. Now resolved through
+  the authenticated path (signed CloudFront URLs still pass through untouched),
+  with a "Loading voice message…" / "Couldn't load audio" state instead of a dead
+  player. Also dropped the empty `<track kind="captions" />`, which added a dead
+  captions entry to the native player.
+- **H1 — every inbound message yanked you to the bottom.** The effect
+  smooth-scrolled on ANY change to `messages[0].messageId`. With
+  `overflow-anchor: none` on the container, reading history and then receiving a
+  message lost your place with no way back. Now tracks proximity to the bottom
+  and only auto-follows when you were already there (or sent the message
+  yourself); otherwise a sticky **"N new messages ↓"** pill appears and is
+  cleared when you scroll back down.
+- **H2 — `loadMore` could loop forever.** `messages.ts` synthesises the cursor as
+  `messages.at(-1)?.messageId` when the server omits `pageKey`, which is only the
+  OLDEST message if the server returns newest-first. If the order differed, or the
+  server repeated a page, the same cursor came back indefinitely — an unbounded
+  request loop with a permanent spinner. Now stops when a page adds no messages
+  or returns the same cursor.
+- **H3 — `reactTo` mutated an orphaned object.** It closed over `msg` across an
+  `await`; if the WS echo landed in that window the array slot was replaced with
+  a NEW object, so the failure path spliced a detached object and the visible
+  reaction was never removed — leaving a reaction the server had rejected. Now
+  re-finds by `messageId`, with a fallback match, and de-dupes so a double-tap
+  before the first request resolves cannot inflate the count.
+- **H4 — reactions were effectively write-once and un-removable.**
+  `reactionAvailable` was `reactions.length === 0 && !isOut`, so you could not
+  react to your own message, could not add a second reaction, and could **never**
+  remove one. `MessageContextMenu` rendered a "Double tap to 🔥" hint and no
+  reaction buttons at all; the only path was an `ondblclick` hardcoding id 1.
+  Now: a real 6-emoji reaction picker in the context menu (works on touch, where
+  a double-tap is ambiguous), own messages are reactable, and `Reaction` takes a
+  `mine` flag so a badge shows which reaction is yours.
+- **H15 (frontend) — double-tap stole text selection.** The old `ondblclick` called
+  `preventDefault()` and `getSelection().removeAllRanges()` on every double-tap, so
+  double-tapping to *select and copy a word* fired a 🔥. Removed with the picker.
+- **H6 — phones ≥424dp got the desktop split-pane.** `new MediaQuery("(width <
+  424px)")` put iPhone 15/16 Pro Max (430/440pt) and Pixel 8 Pro (448dp) into the
+  two-pane layout. Because the pane group is keyed on that value, rotating
+  mid-conversation **destroyed and re-created the `[conversationId]` page**,
+  tearing down its `ConversationState` — losing scroll, pagination and in-flight
+  sends. Now gates on `(max-width: 767px), ((hover: none) and (pointer: coarse))`.
+- **H7 — `send()` silently discarded the message.** `if (!this.profile) return;`
+  with no UI. The composer's field and submit button are not disabled while the
+  conversation's profile resolves, so a user who typed and hit send immediately
+  watched the field clear with no bubble, no toast, no error. Now toasts.
+- A failed conversation load had **no retry affordance** — the only recovery was
+  the navbar refresh, which only renders while the WebSocket is disconnected. Now
+  has a Retry button.
+
+### Lint: `MessageContextMenu.svelte` 9 errors -> 0
+`placement` (the `children` snippet param) arrived as `any` through the
+`ComponentProps<typeof ContextMenu>` intersection, and `props.onClose()` was
+untyped. Fixed by annotating `placement: Placement` and giving `onClose` a
+concrete type via `Omit<ComponentProps<...>, "onClose">` + an optional
+re-declaration (with a no-op fallback at the call site, since `ContextMenu`
+requires it).
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
+eslint clean on every changed file · vitest 207 passed.

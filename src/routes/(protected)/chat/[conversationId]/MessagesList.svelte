@@ -1,8 +1,10 @@
 <script lang="ts">
+	import { ArrowDownIcon } from "phosphor-svelte";
 	import { tick, untrack } from "svelte";
 	import { toast } from "svelte-sonner";
 
 	import { deleteMessageForMe, unsendMessage } from "$lib/api/messages";
+	import { Button } from "$lib/components/ui/button";
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import { Spinner } from "$lib/components/ui/spinner";
 	import type { ConversationState } from "./conversation-state.svelte";
@@ -47,6 +49,21 @@
 	});
 
 	let lastFirstId = "";
+	// Track proximity to the bottom so an inbound message does not yank the view
+	// away from history the user is reading.
+	//
+	// The old effect smooth-scrolled to the bottom on ANY change to
+	// `messages[0].messageId`. Combined with `overflow-anchor: none` on the
+	// container, scrolling up to read old messages and then receiving an inbound
+	// message snapped the user to the newest one and lost their place with no way
+	// back (the list is virtualisation-free, so there was no anchor to restore).
+	let atBottom = $state(true);
+
+	/** True when the container is scrolled to (or near) the newest message. */
+	function isNearBottom(el: HTMLDivElement): boolean {
+		return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+	}
+
 	$effect(() => {
 		const firstId = conversationState.messages.at(0)?.messageId ?? "";
 		if (
@@ -55,10 +72,28 @@
 			firstId !== lastFirstId &&
 			lastFirstId !== ""
 		) {
-			if (container) void scrollToBottom(container, "smooth");
+			// Only follow the conversation if the user was already at the bottom
+			// (or is the one who sent it — their own message should always be
+			// visible). Otherwise leave them where they are and show a pill.
+			const ownMessage =
+				conversationState.messages[0]?.senderId ===
+				conversationState.ourProfileId;
+			if (container && (atBottom || ownMessage)) {
+				void scrollToBottom(container, "smooth");
+			} else {
+				newArrivals += 1;
+			}
 		}
 		lastFirstId = firstId;
 	});
+
+	// "N new messages" pill, so a user reading history is never left guessing
+	// whether something arrived.
+	let newArrivals = $state(0);
+	function jumpToNewest() {
+		newArrivals = 0;
+		if (container) void scrollToBottom(container, "smooth");
+	}
 
 	async function loadMore() {
 		if (
@@ -67,8 +102,25 @@
 			conversationState.pageKey === null
 		)
 			return;
+		// Stop paginating when a page makes no progress. `messages.ts`
+		// synthesises the cursor as `messages.at(-1)?.messageId` when the server
+		// omits `pageKey`, which is only the OLDEST message if the server returns
+		// newest-first. If the order ever differs, or the server repeats a page,
+		// the same cursor comes back forever and this observer keeps firing — an
+		// unbounded request loop with a spinner that never ends.
+		const previousPageKey = conversationState.pageKey;
+		const previousCount = conversationState.messages.length;
 		const prevScrollHeight = container.scrollHeight;
 		await conversationState.loadMore();
+		// Guard: same cursor, or a page that added nothing, means we are done.
+		if (
+			conversationState.pageKey === previousPageKey ||
+			conversationState.messages.length === previousCount
+		) {
+			conversationState.pageKey = null;
+			return;
+		}
+		newArrivals = 0;
 		await tick();
 		container.scrollTop += container.scrollHeight - prevScrollHeight;
 	}
@@ -94,6 +146,13 @@
 	class="flex-1 flex flex-col min-h-0 overflow-auto gap-1 p-2 max-w-full pt-20 *:first:mt-auto"
 	bind:this={container}
 	style:overflow-anchor="none"
+	onscroll={() => {
+		if (!container) return;
+		const near = isNearBottom(container);
+		// Only clear the pill when the user actually goes back to the bottom.
+		if (near) newArrivals = 0;
+		atBottom = near;
+	}}
 >
 	{#if conversationState.loading}
 		{#each skeletonShapes as shape}
@@ -106,12 +165,36 @@
 			/>
 		{/each}
 	{:else if conversationState.error}
-		<p
-			class="flex-1 m-auto whitespace-pre bg-card ring ring-card-foreground/10 rounded-lg p-2 select-text overflow-x-auto w-full font-mono"
-		>
-			{conversationState.error.message}
-		</p>
+		<div class="flex-1 m-auto flex flex-col items-center gap-3 p-4 text-center">
+			<p class="text-sm text-muted-foreground select-text">
+				{conversationState.error.message}
+			</p>
+			<!-- Previously the only recovery was the navbar refresh, which only
+			     renders while the WebSocket is disconnected — so a failed load
+			     while connected left a dead end. -->
+			<Button size="sm" variant="outline" onclick={() => void conversationState.refresh()}>
+				Retry
+			</Button>
+		</div>
 	{:else}
+		<!--
+			Sticky so it stays visible while scrolling. Rendered only when the user
+			is NOT at the bottom, which is exactly when the auto-follow above was
+			suppressed — so this is the "something arrived, come back when you're
+			ready" affordance that was missing.
+		-->
+		{#if newArrivals > 0}
+			<div class="sticky top-0 z-10 flex justify-center pt-1 shrink-0">
+				<button
+					type="button"
+					class="inline-flex items-center gap-1.5 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground shadow-lg"
+					onclick={jumpToNewest}
+				>
+					{newArrivals} new {newArrivals === 1 ? "message" : "messages"}
+					<ArrowDownIcon weight="bold" class="size-3" />
+				</button>
+			</div>
+		{/if}
 		{#if conversationState.loadingMore}
 			<Spinner class="mt-25 shrink-0 self-center" />
 		{/if}
@@ -123,6 +206,7 @@
 			<Message
 				{message}
 				{isOut}
+				ourProfileId={conversationState.ourProfileId}
 				indexInStack={message.indexInStack}
 				stackLength={message.stackLength}
 				dayStart={message.dayStart}

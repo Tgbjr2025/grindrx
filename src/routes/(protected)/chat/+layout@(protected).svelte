@@ -38,7 +38,27 @@
 
 	const isChatSelected = $derived(page.params.conversationId !== undefined);
 
-	const mobile = new MediaQuery("(width < 424px)");
+	// Which layout to use.
+	//
+	// This used to be `(width < 424px)`, which is far too narrow a cut-off: an
+	// iPhone 15/16 Pro Max (430pt), an iPhone 16 Pro Max (440pt) and a Pixel 8 Pro
+	// (448dp) are all >= 424, so those phones got the resizable two-pane
+	// inbox+chat layout instead of the single-pane mobile flow.
+	//
+	// That is not merely cosmetic. The pane group is keyed on this value, so
+	// flipping it (a rotation, a browser zoom change, a foldable unfolding)
+	// DESTROYS and re-creates the `[conversationId]` page, which tears down its
+	// `ConversationState` — losing scroll position, pagination state and any
+	// in-flight optimistic sends.
+	//
+	// Gate on pointer type instead of width: a coarse pointer with no hover is a
+	// touch device, which is the actual distinction that matters. The width term
+	// is a floor for narrow desktop windows, and `768px` is the conventional
+	// tablet breakpoint — below that there is not enough room for two panes of
+	// 200px + 280px plus a resizable divider.
+	const mobile = new MediaQuery(
+		"(max-width: 767px), ((hover: none) and (pointer: coarse))",
+	);
 </script>
 
 <main
