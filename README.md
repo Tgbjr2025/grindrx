@@ -42,7 +42,7 @@ GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https:/
 
 - **Voice messages** — record and send audio in chat (receiving voice notes, GIFs, videos, and gaymoji all render too)
 - **Saved phrases** — a reusable phrase library with type-ahead autocomplete as you type
-- **Photo sending** — send saved, profile, or private-album photos in chat; re-send without re-uploading
+- **Photo sending** — send your Grindr **profile** photos or private-album photos in chat, and re-send them without re-uploading. ⚠️ There is **no local photo library** — GrindrX cannot store your own pictures. Every photo you send comes from your Grindr profile, an album, or the album picker in chat. If you were looking for a place to keep your own images in the app, it does not exist.
 - **Share multiple albums at once**, with per-share expiry
 - **Send a location**, and see locations shared with you
 - **Reactions** — a proper reaction picker, on your own messages too, and removable
