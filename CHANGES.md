@@ -5,6 +5,119 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.33 — audit remediation: 9 batches, and a build that was broken (2026-09-26)
+
+A full line-by-line audit of the codebase, remediated in nine batches. The
+headline item is not a feature: **the Rust had never been compiled**, and three
+of the previous session's fixes were hard build breaks. Details and the reasoning
+behind each change are in `memory/FIX_NOTES_v0.1.33.md`.
+
+### The build was broken
+
+- `AtomicU64` was used but never imported — a logout-race fix did not compile.
+- The WebSocket frame cap could not be written: `WebSocketConfig` is
+  `#[non_exhaustive]`, so a struct literal is illegal even with
+  `..Default::default()`.
+- `connect_async_tls_with_config` takes **4** arguments, not 3 — and the config
+  was being passed in the wrong slot, so the frame cap never applied.
+- The version was never actually bumped: eight batches of "v0.1.33" work all
+  still said 0.1.32.
+
+### Chat
+
+- **The keyboard covered the composer** — no `interactive-widget` in the viewport,
+  so the layout viewport never shrank. You could read messages but not reply.
+- **Voice messages never played** — a bare `<audio src>` with no `Authorization`
+  header was a silent 403 against bearer-gated CDN URLs.
+- **Every inbound message scrolled you to the bottom**, losing your place
+  irrecoverably. Now only follows when you were already at the bottom; otherwise
+  a "N new messages" pill.
+- **Pagination could loop forever** when the server omitted a cursor.
+- **Reactions were write-once and un-removable**, own messages were not
+  reactable, and the only path was a double-tap that also destroyed text
+  selection. Now a real reaction picker.
+- A **failed reaction update left a rejected reaction on screen** (rollback
+  spliced an orphaned object when the socket had replaced the array slot).
+- **Rotating the device could destroy the conversation** — a `(width < 424px)`
+  query put modern phones in the two-pane desktop layout, and the pane group is
+  keyed on that value.
+- Sending could **silently discard a message**; failed loads had no retry.
+
+### Albums
+
+- Photo add/remove **now works**: the endpoint is `multipart/form-data` but the
+  generic request bridge re-encodes every body as JSON, so it was unreachable.
+  The old workaround uploaded to the _chat_ store and POSTed a JSON reference,
+  failing and **orphaning an undeletable CDN copy on every attempt**.
+- `removeAlbumContent` finally had a caller — only `content[0]` ever rendered, so
+  **photos 2..N of every album were invisible**.
+- Multi-select; uploads reuse the downscale + EXIF-strip path so a camera photo no
+  longer leaks GPS to a second endpoint.
+
+### Media
+
+- The object-URL cache held **96 full-resolution** entries (a hard OOM on a
+  mid-range WebView). Now 32.
+- **Eviction revoked a blob URL a mounted `<img>` was still displaying**, causing
+  a flash-and-refetch storm. Now refcounted via `retainAuthedImage()`.
+- **HEIC and AVIF photos were mislabelled as video** — the MP4 sniff checked only
+  `ftyp`, which is present in every ISO-BMFF container. Now reads the major brand.
+
+### Interface
+
+- **"Preview not available" for every photo, album, GIF and voice message** in
+  the conversation list — every non-Text branch returned a null preview.
+- **The day separator could show a bare weekday for a date that had not happened
+  yet** (no lower bound on the 7-day check) and used a fixed 168-hour window that
+  is wrong across daylight saving.
+- Black screen on back-navigation from a profile — four compounding defects.
+- Incognito was a **label with no effect**; now written to the server.
+- Profile edits failed silently in four different ways.
+- The voice recorder **survived navigation** — the mic stayed live and was still
+  sending at the 300-second cap.
+- Explore no longer dead-ends; viewers list explains masked rows; share-location
+  can send; profile photos can be added, set main and reordered.
+- App lock: PBKDF2 200k iterations (was one SHA-256), attempt backoff, re-lock on
+  background, and a real gate instead of an overlay that leaked chat text.
+
+### Privacy / hardening
+
+- **`FLAG_SECURE`** — the recents thumbnail no longer captures the screen, and
+  screenshots/screen recording are blocked.
+- **Android backups disabled**, with data-extraction rules excluding every domain
+  (this was exposing the precision-12 geohash, the app-lock hash, and the media
+  cache to `adb backup`).
+- WebView capabilities narrowed: no clipboard **read**, no self-posted
+  notifications, no unused filesystem grants.
+- **A logout during the 15s WebSocket handshake could be silently lost**, leaving
+  the socket on the _previous_ account's token. Now a monotonic session epoch.
+- **`ws_send` could never succeed** (serde key mismatch) and could hang forever.
+- **Uncapped API responses** on the generic bridge (3–4× peak after encoding).
+- **A server error code truncating `i64`→`i32`** could wrap to `401` and delete
+  the stored session.
+- **Debug builds logged every request body**, including account passwords.
+- A **msgpack nesting-depth guard** (new): a byte cap does not bound nesting, and
+  deep nesting _aborts the process_ rather than erroring.
+- Blocking keyring calls moved off the async runtime; heartbeat `select!` biased so
+  a queued `Pong` wins; backoff jittered; WS frames capped at 1 MiB;
+  notifications default **off** and gated until real preferences load.
+
+### Tests
+
+**194 → 244** frontend, **3 → 17** Rust. New coverage for the object-URL cache
+(13), conversation previews (21), and day-group labelling (6, with the DST case
+run under a real DST timezone). The msgpack depth guard is **mutation-tested**:
+stubbing it out fails 9 of its 14 tests, and reverting it to the
+container-counting version that made the first attempt unusable fails the test
+written for exactly that mistake.
+
+### Release
+
+Signed `GrindrX-v0.1.33.apk` — universal, 70,950,792 B, `versionCode` 1068,
+same certificate as every previous release. Built on an M1 Mac; the Linux build
+host cannot resolve the Tauri Android plugin projects. **Not yet tested on a
+physical device.**
+
 ## v0.1.32 — open the app with your fingerprint (no PIN needed) (2026-08-30)
 
 **Fingerprint/face can now lock the app on its own** — Previously biometric unlock was only an
@@ -188,7 +301,7 @@ keyboard/ARIA; imperial height as feet+inches; tightened CSP `connect-src`; drop
 **Tests** — 112 unit tests (was 52) incl. regression tests for both known issues; new
 `shared_client_does_not_follow_redirects` Rust test.
 
-Deferred (see FIX_NOTES): auth-endpoint divergence (needs live verification), voice-message *sending*,
+Deferred (see `FIX_NOTES`): auth-endpoint divergence (needs live verification), voice-message _sending_,
 PIN lock, notification-settings subpage, native notification deep-link.
 
 ---
@@ -198,6 +311,7 @@ PIN lock, notification-settings subpage, native notification deep-link.
 Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
 
 **Notifications split across categories (#6)**
+
 - `NotificationService.kt`: register the `grindx_messages` channel (IMPORTANCE_HIGH)
   in `onCreate()`, not only in `MainActivity`. The Rust WebSocket loop posts message
   notifications from the sticky foreground service's process, which can be alive after
@@ -206,6 +320,7 @@ Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
   "suggestions", splitting a conversation across categories.
 
 **Chat photo picker showed public profile pics, not private ones (#5)**
+
 - `AlbumPicker.svelte`: added a **Private** tab sourced from the user's album content
   (signed-CDN media via `/v1/albums`); the old public-profile-photos source is kept
   under a **Profile** tab. Private photos are sent by re-uploading their bytes through
@@ -213,6 +328,7 @@ Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
   `profile.ts`).
 
 **Explore/map `CAS-4001 is not valid JSON` (#3)**
+
 - `api/index.ts`: the cascade/explore endpoint can answer **HTTP 200 with a bare code**
   (e.g. `CAS-4001`) instead of JSON. `json()` now routes a short/non-JSON success body
   into `ApiHttpError` (which decodes the bare code), so the grid shows an actionable
@@ -220,6 +336,7 @@ Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
   `[GrindrX-API]` logcat probe now that this is root-caused.
 
 **App crash on changing filters/settings until restart (#3)**
+
 - `app-data/preferences.svelte.ts`: `getPreferences()` degrades to defaults on any
   read/decode/parse failure instead of rejecting. A non-atomic write racing a read (or
   a half-written file from an app kill) previously threw, and the home route's
@@ -231,6 +348,7 @@ Fixes for the issues reported on `git.dominusaxis.com/dominus/grindrx`.
   `preferencesSchema.parse`.
 
 **Account creation error toasts (#1)**
+
 - `rest.rs` / `lib.rs`: added an unauthenticated `request_public` bridge (mirrors
   `request` but sends no Authorization header). Registration and password-reset are
   pre-session actions; routing them through the authed bridge failed at the auth guard
@@ -256,6 +374,7 @@ behavioural changes to the happy path; everything here makes the client tolerate
 Grindr server-side drift and fixes media rendering.
 
 **Schema robustness (stop one bad record blanking the screen)**
+
 - `grid/cascade/response/v3.ts`: parse each cascade item independently; an
   unrecognised item `type` or a single malformed profile is dropped + logged
   instead of throwing the whole response and blanking the grid. Cosmetic
@@ -267,6 +386,7 @@ Grindr server-side drift and fixes media rendering.
 - Added `v3.test.ts` covering the tolerant cascade parsing.
 
 **Authenticated media — fix black-box photos & albums**
+
 - New `utils/authed-image.ts` (`resolveAuthedImage`): resolve an authed
   `cdns.grindr.com` URL to a `data:` URL via the Rust `fetch_authed_bytes` command.
 - `ImageMessage.svelte`: pre-resolve the image to a `data:` URL for BOTH the inline
@@ -277,12 +397,14 @@ Grindr server-side drift and fixes media rendering.
 - `AuthedImage.svelte`: refactored onto the shared `resolveAuthedImage` helper.
 
 **Rust / backend**
+
 - `headers.rs`: bump the spoofed Grindr app version `26.7.0.159416` -> `26.9.1.163471`
   to keep the client accepted by current API.
 - `ws.rs`: `maybe_notify` now compares `senderId` whether it arrives as a JSON
   string OR number, so your own sent messages never trigger a self-notification.
 
 **Branding / DX**
+
 - `GrindX` -> `GrindrX` in the notification title, channel description, and log
   tags (the internal channel id `grindx_messages` is left unchanged — it is shared
   with `MainActivity.kt` and is not user-visible).
@@ -298,35 +420,36 @@ Grindr server-side drift and fixes media rendering.
 
 ## Commits (newest first)
 
-| SHA | Description |
-|-----|-------------|
-| `c7ac231` | Implement Views, Right Now, and Interest tabs with live data |
-| `fd29c8c` | Revert gradle.properties to upstream values |
+| SHA       | Description                                                                        |
+| --------- | ---------------------------------------------------------------------------------- |
+| `c7ac231` | Implement Views, Right Now, and Interest tabs with live data                       |
+| `fd29c8c` | Revert gradle.properties to upstream values                                        |
 | `233e4de` | Fix faceOnly filter bug, albumName schema, profile error state, and add test suite |
-| `166c8fa` | Fix nullable conversation preview crashing inbox load |
-| `149e52f` | Add Views tab to navbar and fix inbox infinite loading skeleton |
-| `b43397f` | Show in-app toast banners for new messages from other conversations |
-| `59c62c6` | Auto-refresh geolocation on grid load and add profile editing |
-| `7baf509` | Add polling fallback and manual refresh when WebSocket disconnects |
-| `34269b4` | Add favorite/unfavorite toggle button to profile page |
-| `a8a3854` | Implement Views tab showing who viewed your profile |
-| `ebd0f0d` | Implement features, fix stubs, and modernize UI |
-| `9f6c85f` | Add album sharing to chat composer |
-| `1d52dde` | Re-enable @typescript-eslint/no-unsafe-* rules globally |
-| `4844f02` | Fix race conditions, bounds check, memory leak, and cache over-clearing |
-| `8bf381c` | Replace Rust panics with graceful error handling |
-| `85c9fa9` | Fix build crash, document insecure JWT decode, surface ws.send errors |
-| `42cbe7e` | Replace randomized languages in headers with en_US |
-| `82f420e` | Improve reconnection data fetching |
-| `fcb7556` | Increase size of foreground icon |
-| `78cc99d` | Refetch data from server on websocket reconnection/foreground wake |
-| `096eb61` | Fix stale messages cache |
+| `166c8fa` | Fix nullable conversation preview crashing inbox load                              |
+| `149e52f` | Add Views tab to navbar and fix inbox infinite loading skeleton                    |
+| `b43397f` | Show in-app toast banners for new messages from other conversations                |
+| `59c62c6` | Auto-refresh geolocation on grid load and add profile editing                      |
+| `7baf509` | Add polling fallback and manual refresh when WebSocket disconnects                 |
+| `34269b4` | Add favorite/unfavorite toggle button to profile page                              |
+| `a8a3854` | Implement Views tab showing who viewed your profile                                |
+| `ebd0f0d` | Implement features, fix stubs, and modernize UI                                    |
+| `9f6c85f` | Add album sharing to chat composer                                                 |
+| `1d52dde` | Re-enable @typescript-eslint/no-unsafe-\* rules globally                           |
+| `4844f02` | Fix race conditions, bounds check, memory leak, and cache over-clearing            |
+| `8bf381c` | Replace Rust panics with graceful error handling                                   |
+| `85c9fa9` | Fix build crash, document insecure JWT decode, surface ws.send errors              |
+| `42cbe7e` | Replace randomized languages in headers with en_US                                 |
+| `82f420e` | Improve reconnection data fetching                                                 |
+| `fcb7556` | Increase size of foreground icon                                                   |
+| `78cc99d` | Refetch data from server on websocket reconnection/foreground wake                 |
+| `096eb61` | Fix stale messages cache                                                           |
 
 ---
 
 ## Bug Fixes
 
 ### Inbox crashes on load — nullable conversation preview
+
 **File:** `src/lib/model/conversation.ts`
 
 The `preview` field was typed as a required object (`z.object({...})`). The Grindr
@@ -340,6 +463,7 @@ conversation with a null preview, making the entire inbox list fail to render.
 ---
 
 ### faceOnly filter always sends false
+
 **File:** `src/routes/(protected)/(navbar)/(root)/grid-state.svelte.ts`
 
 The "Has Face Pics" filter never worked. The condition checked for
@@ -353,6 +477,7 @@ string never matched, `faceOnly` was never included in the API query.
 ---
 
 ### albumMinSchema rejects albums with a real name
+
 **File:** `src/lib/model/album.ts`
 
 `albumMinSchema.albumName` was typed as `z.null()` — meaning it only accepted
@@ -364,6 +489,7 @@ returns the album name as a string when the user has named their album.
 ---
 
 ### Profile page stuck on infinite skeleton on network failure
+
 **File:** `src/routes/(protected)/(navbar)/profile/[profileId]/+page.svelte`
 
 The `{#await profile}` block had no `{:catch}` handler. If the network request
@@ -374,6 +500,7 @@ failed, the page silently stayed on the loading skeleton indefinitely.
 ---
 
 ### Build crash in svelte.config.js
+
 **File:** `svelte.config.js`
 
 `APP_VERSION` and `BUILD_NUMBER` regex matches could return `null`, causing a
@@ -384,6 +511,7 @@ crash at build time when optional chaining was missing.
 ---
 
 ### Rust panics on keyring initialisation failure
+
 **File:** `src-tauri/src/storage.rs`
 
 Five `.expect()` calls on keyring entry creation across all platforms (iOS,
@@ -396,6 +524,7 @@ and continues gracefully.
 ---
 
 ### msgpack encoding panic
+
 **File:** `src-tauri/src/api/auth.rs`
 
 Session encoding used `.unwrap()` on msgpack serialisation. Any encoding failure
@@ -406,6 +535,7 @@ would panic the Rust thread.
 ---
 
 ### WebSocket race condition on destroyed component
+
 **File:** `src/routes/(protected)/chat/conversations.svelte.ts`
 
 WebSocket listeners could fire after the conversation state was destroyed (e.g.
@@ -416,6 +546,7 @@ on logout), causing state mutations on a dead object.
 ---
 
 ### Array bounds crash in grid batch loading
+
 **File:** `src/routes/(protected)/(navbar)/(root)/grid-state.svelte.ts`
 
 `partialBatches[batchIndex]` was accessed without checking whether the index was
@@ -426,6 +557,7 @@ valid, crashing if the batch was already removed.
 ---
 
 ### Memory leak in AlbumMessage.svelte
+
 **File:** `src/routes/(protected)/chat/[conversationId]/AlbumMessage.svelte`
 
 Video and image DOM nodes were created inside a Promise but not cleaned up if the
@@ -436,6 +568,7 @@ Promise rejected, leaking nodes into memory.
 ---
 
 ### Over-aggressive message cache clearing
+
 **File:** `src/routes/(protected)/chat/conversations.svelte.ts`
 
 On reconciliation after reconnect, the message cache was cleared for all
@@ -449,12 +582,14 @@ refreshed list.
 ## Features Implemented
 
 ### Views tab — who viewed your profile
+
 **File:** `src/routes/(protected)/(navbar)/views/+page.svelte`
 
 Implemented live data from `GET /v7/views/list`. Shows each viewer's avatar,
 display name, time since they viewed, and distance. Displays total viewer count.
 
 API notes discovered during implementation:
+
 - Response key is `profiles`, not `views`
 - `profileId` comes as a string, coerced to number
 - `seen` is a unix timestamp in ms, not a boolean
@@ -462,30 +597,35 @@ API notes discovered during implementation:
 ---
 
 ### Interest/Taps tab — who tapped you
+
 **File:** `src/routes/(protected)/(navbar)/interest/+page.svelte`
 
 Implemented live data from `GET /v2/taps/received`. Shows each tapper's avatar,
 display name, tap emoji (👋😊🔥😈 by tap type), mutual badge, and distance.
 
 API notes discovered during implementation:
+
 - Response key is `profiles`, not `taps`
 - Field is `profileId`, not `senderId`
 
 ---
 
 ### Right Now tab — people currently available nearby
+
 **File:** `src/routes/(protected)/(navbar)/right-now/+page.svelte`
 
 Implemented using the cascade grid with `rightNow=true&onlineOnly=true` query
 params. Shows profile cards with name, photo, and distance.
 
 API notes discovered during implementation:
+
 - `/v4/browse/right-now` returns binary (not JSON) — wrong endpoint
 - The real Right Now feed uses `GET /v3/cascade?rightNow=true&onlineOnly=true&nearbyGeoHash=...`
 
 ---
 
 ### Album sharing in chat composer
+
 **Files:** `src/routes/(protected)/chat/[conversationId]/MessageComposer.svelte`,
 `AlbumPicker.svelte` (new)
 
@@ -497,6 +637,7 @@ conversation via `POST /v4/albums/{albumId}/shares`.
 ---
 
 ### Profile editing
+
 **File:** `src/routes/(protected)/(navbar)/profile/[profileId]/EditProfileSheet.svelte` (new)
 
 Full profile edit sheet accessible from the user's own profile page. Editable
@@ -507,6 +648,7 @@ ethnicity, relationship status, looking for, tribes. Sends a PATCH to
 ---
 
 ### Favorite / unfavorite toggle
+
 **File:** `src/routes/(protected)/(navbar)/profile/[profileId]/+page.svelte`
 
 Heart button on profile page. Sends `POST /v1/favorites/{profileId}` to favorite
@@ -516,6 +658,7 @@ on failure.
 ---
 
 ### In-app message toast banners
+
 **File:** `src/routes/(protected)/+layout.svelte`
 
 When a new chat message arrives via WebSocket while the user is on a different
@@ -525,6 +668,7 @@ Tapping the banner navigates to the conversation.
 ---
 
 ### Geolocation auto-update on grid load
+
 **File:** `src/routes/(protected)/(navbar)/(root)/+page.svelte`
 
 On app mount, silently requests the current GPS position (if permission already
@@ -535,6 +679,7 @@ No permission prompts if location was already granted.
 ---
 
 ### WebSocket polling fallback and manual refresh
+
 **File:** `src/lib/ws.svelte.ts`
 
 When the WebSocket fails to connect (e.g. on Android when network is flaky), the
@@ -544,6 +689,7 @@ refresh button is shown in the conversation list header when offline.
 ---
 
 ### Registration form
+
 **File:** `src/routes/(auth)/register/+page.svelte`
 
 Wired up full account creation form. Validates email, password strength, and
@@ -552,6 +698,7 @@ submits to the registration endpoint.
 ---
 
 ### Forgot password
+
 **File:** `src/routes/(auth)/forgot-password/+page.svelte`
 
 Wired up the password reset flow with email input and success state.
@@ -559,6 +706,7 @@ Wired up the password reset flow with email input and success state.
 ---
 
 ### Report message
+
 **Files:** `src/routes/(protected)/chat/[conversationId]/ReportDialog.svelte` (new),
 `MessageContextMenu.svelte`
 
@@ -568,6 +716,7 @@ Report dialog with 6 reason options and an optional comment field. Submits to
 ---
 
 ### Voice message button — graceful stub
+
 Shows a "coming soon" toast instead of crashing or doing nothing.
 
 ---
@@ -589,13 +738,13 @@ Shows a "coming soon" toast instead of crashing or doing nothing.
 
 **38 new frontend unit tests across 5 new files, all passing:**
 
-| File | What it tests |
-|------|---------------|
-| `src/lib/model/conversation.test.ts` | Null preview, image/album/text previews, participants length constraint, rightNow enum values |
-| `src/lib/model/album.test.ts` | albumName string / null / missing, content with empty URL |
-| `src/lib/model/right-now.test.ts` | Valid status values; documents narrow-enum risk if Grindr adds values |
-| `src/lib/model/profile.test.ts` | socialNetworks object-vs-array mismatch; viewSourceEnumSchema narrow-enum risk |
-| `src/lib/components/filters/filters.test.ts` | Confirms `"has-profile-pic"` is invalid, `"has-face-pics"` is correct |
+| File                                         | What it tests                                                                                 |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `src/lib/model/conversation.test.ts`         | Null preview, image/album/text previews, participants length constraint, rightNow enum values |
+| `src/lib/model/album.test.ts`                | albumName string / null / missing, content with empty URL                                     |
+| `src/lib/model/right-now.test.ts`            | Valid status values; documents narrow-enum risk if Grindr adds values                         |
+| `src/lib/model/profile.test.ts`              | socialNetworks object-vs-array mismatch; viewSourceEnumSchema narrow-enum risk                |
+| `src/lib/components/filters/filters.test.ts` | Confirms `"has-profile-pic"` is invalid, `"has-face-pics"` is correct                         |
 
 ---
 
