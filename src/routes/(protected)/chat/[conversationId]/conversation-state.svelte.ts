@@ -24,8 +24,49 @@ import { getConversation } from "./messages";
 
 const POLL_INTERVAL_MS = 10_000;
 
+/** Slow reconcile cadence used while the WebSocket is connected. */
+const SAFETY_NET_INTERVAL_MS = 60_000;
+
+/**
+ * Stable identity for an album-share optimistic message. The share endpoint
+ * returns an empty body, so there is no real `messageId` to adopt — see
+ * `OptimisticMessage.pendingKey`. Exported so tests can assert the same key.
+ */
+export function albumPendingKey(albumId: number): string {
+	return `album:${albumId}`;
+}
+
+/**
+ * The `pendingKey` an inbound `chat.v1.message_sent` payload should match, or
+ * `null` for message types that always carry a real id. Album shares are the
+ * only type whose send call gives us nothing back.
+ */
+function pendingKeyForPayload(payload: {
+	type: string;
+	body?: unknown;
+}): string | null {
+	if (payload.type !== "Album" && payload.type !== "ExpiringAlbumV2") return null;
+	const albumId = (payload.body as { albumId?: unknown } | null)?.albumId;
+	return typeof albumId === "number" ? albumPendingKey(albumId) : null;
+}
+
 export type OptimisticMessage = ApiResponseMessage & {
 	status: "sent" | "pending" | "error";
+	/**
+	 * Stable identity for an optimistic message whose real `messageId` the
+	 * server never hands back.
+	 *
+	 * `POST /v4/albums/{id}/shares` answers with an EMPTY body, so there is no
+	 * real id to adopt. The previous code invented one
+	 * (`album-share-…-${Date.now()}`) and wrote it onto the optimistic bubble,
+	 * which broke every dedup path at once: the WS echo matched neither the
+	 * exact id nor the single-pending fallback, so a second album bubble was
+	 * prepended, and `removeDuplicateMessages` cannot collapse it because it
+	 * keys on `messageId`. Instead we keep the message `pending` and tag it with
+	 * a `pendingKey` derived from the album, which the WS handler and `reconcile`
+	 * both match on. Cleared once the message is adopted.
+	 */
+	pendingKey?: string;
 };
 
 type Profile = Awaited<ReturnType<typeof getConversation>>["profile"];
@@ -61,6 +102,11 @@ export class ConversationState {
 	#readTimer: ReturnType<typeof setTimeout> | null = null;
 	#typingTimer: ReturnType<typeof setTimeout> | null = null;
 	#pollTimer: ReturnType<typeof setInterval> | null = null;
+	#safetyTimer: ReturnType<typeof setInterval> | null = null;
+	// Guards against overlapping reconciles: `loading`/`loadingMore` only cover
+	// the first page and pagination, so on a slow/hanging network N poll
+	// callbacks could pile up concurrent full-page fetches.
+	#reconcileInFlight = false;
 	#removeReconcileListener: () => void;
 	// Store the *promises* (not the resolved unlisten fns). Storing only the
 	// resolved fn leaked the listener when destroy() ran before the listen()
@@ -101,12 +147,15 @@ export class ConversationState {
 		if (ws.status === "disconnected") {
 			this.#startPolling();
 		}
+		// Always run the slow safety net, connected or not.
+		this.#startSafetyNet();
 
 		// Listen for WS connect / disconnect to toggle polling. Keep the promises so
 		// destroy() can await + unlisten even if it runs before listen() resolves.
 		this.#removeWsConnectedListener = ws.onConnected(() => {
 			if (this.#destroyed) return;
-			this.#stopPolling();
+		this.#stopPolling();
+		this.#stopSafetyNet();
 			// Catch up the open thread on anything that arrived while the socket was
 			// down. The disconnect-time poll was just stopped and the WS replays
 			// nothing, so without this a message received during a brief drop never
@@ -139,8 +188,23 @@ export class ConversationState {
 					const exact = this.messages.find(
 						(m) => m.status === "pending" && m.messageId === event.payload.messageId,
 					);
+					// Album shares get no messageId back from the send call, so match
+					// the pending bubble by `pendingKey` (album id) instead. Without
+					// this the echo fell through to the prepend below and the user saw
+					// the album twice, permanently.
+					const echoKey = pendingKeyForPayload(event.payload);
+					const byKey =
+						echoKey === null
+							? undefined
+							: this.messages.find(
+									(m) =>
+										m.status === "pending" && m.pendingKey === echoKey,
+								);
 					const pendings = this.messages.filter((m) => m.status === "pending");
-					const pending = exact ?? (pendings.length === 1 ? pendings[0] : undefined);
+					const pending =
+						exact ??
+						byKey ??
+						(pendings.length === 1 ? pendings[0] : undefined);
 					if (pending) {
 						// Replace pending with full server data in-place (avoids array replacement
 						// during Drawer close animation which would freeze the UI on Android).
@@ -150,6 +214,8 @@ export class ConversationState {
 						} else {
 							pending.status = "sent";
 							pending.messageId = event.payload.messageId;
+							// Adopted: the synthetic identity is no longer needed.
+							delete pending.pendingKey;
 						}
 						this.#syncCache();
 						return;
@@ -280,6 +346,29 @@ export class ConversationState {
 		}
 	}
 
+	/**
+	 * Slow safety-net reconcile that runs even while the WebSocket is healthy.
+	 *
+	 * The 10s poll only runs when the socket is DOWN, so anything that relies
+	 * solely on a WS event (an album share, whose send call returns no id) had
+	 * no recovery path: if the echo was missed, the optimistic bubble stayed
+	 * pending for the whole session. This closes that hole without paying for a
+	 * full page fetch every 10s.
+	 */
+	#startSafetyNet(): void {
+		if (this.#safetyTimer !== null) return;
+		this.#safetyTimer = setInterval(() => {
+			if (ws.status === "connected") void this.#reconcileMessages();
+		}, SAFETY_NET_INTERVAL_MS);
+	}
+
+	#stopSafetyNet(): void {
+		if (this.#safetyTimer !== null) {
+			clearInterval(this.#safetyTimer);
+			this.#safetyTimer = null;
+		}
+	}
+
 	/** Immediately fetch the latest messages. Useful for a manual refresh button. */
 	async refresh(): Promise<void> {
 		await this.#reconcileMessages();
@@ -287,6 +376,9 @@ export class ConversationState {
 
 	async #reconcileMessages(): Promise<void> {
 		if (this.loading || this.loadingMore || this.#destroyed) return;
+		// Don't stack concurrent full-page fetches on a slow/hanging network.
+		if (this.#reconcileInFlight) return;
+		this.#reconcileInFlight = true;
 		try {
 			const result = await getConversation({
 				conversationId: this.conversationId,
@@ -323,6 +415,8 @@ export class ConversationState {
 			}
 		} catch (error) {
 			console.error("Failed to reconcile messages", error);
+		} finally {
+			this.#reconcileInFlight = false;
 		}
 	}
 
@@ -458,29 +552,32 @@ export class ConversationState {
 			unsent: false,
 			reactions: [] as Array<{ profileId: number; reactionType: number }>,
 			status: "pending" as const,
+			// The share endpoint returns no messageId, so identify this bubble by
+			// the album it carries instead (see OptimisticMessage.pendingKey).
+			pendingKey: albumPendingKey(albumId),
 		} satisfies OptimisticMessage;
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
 		try {
-			const { messageId } = await shareAlbum({ albumId, profileId: this.profile.profileId, expirationType });
-			// Update the pending message with the real messageId from the HTTP response.
-			// This mirrors #resolveMessage so the WS dedup check finds it and returns without
-			// mutating the array — preventing the scroll trigger that freezes the UI on Android.
-			const msg = this.messages.find((m) => m.messageId === tempId);
-			if (msg) {
-				msg.status = "sent";
-				msg.messageId = messageId;
-			}
-			// A WS echo (chat.v1.message_sent) can arrive before this HTTP
-			// response and, with 2+ concurrent pending sends, create a second
-			// entry with the same real messageId — collapse it immediately
-			// rather than waiting for the next poll reconcile.
+			// Fire-and-await the share. The real chat message (and its real id)
+			// arrives over the `chat.v1.message_sent` WebSocket event, or is picked
+			// up by the reconcile poll; either path adopts it onto this entry via
+			// `pendingKey`. Deliberately NOT flipping to "sent" with a synthetic
+			// id — that produced a permanent duplicate bubble.
+			await shareAlbum({
+				albumId,
+				profileId: this.profile.profileId,
+				expirationType,
+			});
+			// A WS echo can arrive before this HTTP response returns. Collapse any
+			// duplicate the echo may already have produced rather than waiting for
+			// the next reconcile.
 			this.messages = removeDuplicateMessages(this.messages);
 			this.#syncCache();
-			const latestMsg = this.messages[0] ?? this.messages.at(-1);
-			if (latestMsg) this.#updatePreview(latestMsg);
 		} catch (err) {
-			const msg = this.messages.find((m) => m.messageId === tempId);
+			const msg = this.messages.find(
+				(m) => m.messageId === tempId || m.pendingKey === albumPendingKey(albumId),
+			);
 			if (msg) {
 				msg.status = "error";
 				this.#updatePreview(this.messages.find((m) => m.status === "sent"));
@@ -908,11 +1005,17 @@ export function reconcile(
 		// Adopt the server id/data onto the pending entry in place so the user
 		// never sees the message twice. Each pending is matched at most once.
 		if (sv.senderId === ourProfileId) {
-			const mineIdx = pendingMine.findIndex(
-				(p) =>
-					p.type === sv.type &&
-					Math.abs(p.timestamp - sv.timestamp) < 60_000,
-			);
+			// Prefer an exact `pendingKey` match (album shares have no id to match
+			// on), then fall back to type + near-identical timestamp.
+			const svKey = pendingKeyForPayload(sv);
+			const mineIdx =
+				svKey !== null
+					? pendingMine.findIndex((p) => p.pendingKey === svKey)
+					: pendingMine.findIndex(
+							(p) =>
+								p.type === sv.type &&
+								Math.abs(p.timestamp - sv.timestamp) < 60_000,
+						);
 			if (mineIdx >= 0) {
 				const pending = pendingMine[mineIdx];
 				pendingMine.splice(mineIdx, 1);
@@ -921,6 +1024,8 @@ export function reconcile(
 				pending.reactions = sv.reactions;
 				pending.unsent = sv.unsent;
 				pending.status = "sent";
+				// Adopted: drop the synthetic identity.
+				delete pending.pendingKey;
 				continue;
 			}
 		}

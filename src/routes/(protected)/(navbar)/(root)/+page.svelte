@@ -52,7 +52,7 @@
 </script>
 
 <svelte:head>
-	<title>Open Grind</title>
+	<title>GrindrX</title>
 </svelte:head>
 {#await preferences then { geohash: deviceGeohash, incognito }}
 	<!--

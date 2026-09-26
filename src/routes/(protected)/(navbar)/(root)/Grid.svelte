@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { uniqBy } from "lodash-es";
-	import { onMount } from "svelte";
+	import { onMount, tick } from "svelte";
 
 	import { ArrowsClockwiseIcon, UsersFourIcon } from "phosphor-svelte";
 
@@ -43,19 +43,59 @@
 		setGridOrder(gridProfiles.map((item) => item.id));
 	});
 
+	// --- Scroll restoration ------------------------------------------------
+	// Declared before the scroll listener below so the listener's `restoring`
+	// guard never reads a `let` that is still in its temporal dead zone.
+	let restored = $state(false);
+	let restoring = false;
+
 	onMount(() => {
 		const saveScroll = () => {
+			// Never record the offset produced by our own restore: the browser
+			// clamps a scroll past a not-yet-correct document height, and writing
+			// that clamped value back would destroy the real offset for good
+			// (gridState.scrollY is only cleared by refresh()).
+			if (restoring) return;
 			gridState.scrollY = window.scrollY;
 		};
 		window.addEventListener("scroll", saveScroll, { passive: true });
 		return () => window.removeEventListener("scroll", saveScroll);
 	});
 
-	let scrolled = $state(false);
-	$effect(() => {
-		if (!scrolled && !gridState.loading && gridState.errorMessage === null) {
-			scrolled = true;
+	async function restoreScroll() {
+		// Nothing to do at the top of the grid; skip the frame delay.
+		if (gridState.scrollY <= 0) {
+			restored = true;
+			return;
+		}
+		restoring = true;
+		try {
+			// Frame 1: grid lays out. Frame 2: GridWindow sizes its spacers
+			// from the measured row height.
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+			measureGrid();
+			await tick();
 			window.scrollTo({ top: gridState.scrollY, behavior: "instant" });
+			restored = true;
+		} catch (error) {
+			console.error("Failed to restore grid scroll position", error);
+		} finally {
+			restoring = false;
+		}
+	}
+
+	$effect(() => {
+		// Depend on the measured height so the restore only runs once the
+		// document is tall enough to actually hold the target offset.
+		void rowHeight;
+		if (
+			!restored &&
+			rowHeight > 0 &&
+			!gridState.loading &&
+			gridState.errorMessage === null
+		) {
+			void restoreScroll();
 		}
 	});
 
@@ -76,9 +116,18 @@
 			.split(" ")
 			.filter((t) => t && t !== "0px");
 		if (tracks.length > 0) columns = tracks.length;
-		// Square cells: row height == column track width. Parse the first track.
+		// Square cells: row height == column track width. Prefer the resolved
+		// track, but fall back to an equal split of the element's own width so
+		// a spacer is never sized from a magic number (the old hardcoded 120px
+		// fallback made the pre-measurement document ~35% too short on a
+		// 2-column phone, which is what a scroll restore used to land inside).
 		const firstTrack = parseFloat(tracks[0] ?? "");
-		if (Number.isFinite(firstTrack) && firstTrack > 0) rowHeight = firstTrack;
+		if (Number.isFinite(firstTrack) && firstTrack > 0) {
+			rowHeight = firstTrack;
+			return;
+		}
+		const split = gridEl.clientWidth / Math.max(1, columns);
+		if (split > 0) rowHeight = split;
 	}
 
 	$effect(() => {
