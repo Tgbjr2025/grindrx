@@ -564,3 +564,46 @@ requires it).
 
 **Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
 eslint clean on every changed file · vitest 207 passed.
+
+---
+
+## Batch 7 (same version, seventh commit) — media memory + first tests for authed-image
+
+### The object-URL cache no longer revokes URLs that are on screen
+`src/lib/utils/authed-image.ts`
+
+- `MAX_ENTRIES` was **96 full-resolution** entries. Inline bubbles are at most
+  240 px wide but the full-resolution bytes were fetched and decoded anyway, so
+  96 multi-MB decoded bitmaps is a hard OOM on a mid-range WebView. Now 32.
+- **Eviction revoked a blob URL that a MOUNTED `<img>` was still displaying.**
+  There was no refcount, so scrolling past the cache size blanked the visible
+  image, whose `onerror` handler then re-ran the entire IPC byte fetch — a
+  flash-and-refetch storm. Evicted-but-referenced URLs are now *parked* in a
+  `retired` map and revoked only when the last consumer releases them, via a new
+  `retainAuthedImage()` that hands back a release function for an `$effect`
+  teardown.
+- **HEIC/AVIF photos were mislabelled as video.** The MP4 sniff checked only
+  `ftyp` at bytes 4..8, but `ftyp` sits there in *every* ISO-BMFF container —
+  including HEIC and AVIF, which are images. A photo was wrapped in a
+  `video/mp4` blob and an `<img>` could refuse to decode it. Now reads the
+  **major brand** at bytes 8..12 and checks it against explicit `VIDEO_BRANDS` /
+  `IMAGE_BRANDS` sets, falling through rather than guessing for an unknown
+  brand.
+
+### `authed-image.ts` finally has tests (13, was zero)
+This module is what every image, album slide and now voice message depends on,
+and it had no coverage at all. Added: host classification, cache reuse,
+concurrent-resolve dedup (asserts exactly one fetch), null-on-failure rather than
+throw, bounded live-URL count, eviction actually frees, and MIME sniffing for
+JPEG/PNG/MP4/HEIC/AVIF.
+
+**The HEIC and AVIF tests were verified to actually catch the bug**: reverting
+the sniff to the old `ftyp`-only check fails exactly those two and nothing else.
+
+One testing gotcha worth recording: stubbing the global `URL` with a plain object
+silently breaks `classifyHost`, which does `new URL(url).hostname` — the host
+tests failed for a reason that had nothing to do with the code under test. The
+stub subclasses `URL` instead.
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
+eslint clean on changed files · vitest 207 → **220** (25 files).
