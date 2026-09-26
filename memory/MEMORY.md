@@ -30,14 +30,27 @@ This is the index. Read it first, then the file the task points you to.
 - `KEYS.md` / `KEYS.md.asc` — PGP + APK signing keys.
 
 ## One-line state
+**SHIPPED v0.1.33** (`e155a35` + release commits). Full 8-batch audit remediation,
+built, signed and published. Branch `claude/grindrx-freeze-json-audit-gp4lnk` and
+Forgejo `main` both at `e155a35`; tag `v0.1.33` on Forgejo + GitHub. Signed
+`GrindrX-v0.1.33.apk` (universal, 70,950,792 B, versionName 0.1.33, versionCode
+**1068**, sha256 `b0fe1204…f098af`, cert `22d6…4c01`) released on **both** hosts
+with `grindrx-v0.1.33-sources.zip`; both APKs downloaded back and sha256-verified
+identical. GitHub `main` still `a547f8e` (diverged, anchor/ history — PR #49 is the
+merge path). Tests **244** frontend + **17** Rust; svelte-check 0 errors.
 
-BUILD TREE, version **0.1.13** (committed; package.json / tauri.conf.json / Cargo.toml agree), working
-tree **CLEAN** at HEAD `b112cb3` (2026-06-20) — a temp `[GrindrX-API]` logcat diagnostic for CAS-4001.
-The prior handoff's "dirty tree" audit fixes (`rest.rs` token-leak, `album.ts` share-unlock,
-`messages.ts`, `grid-state` Explore, `conversation-state` WS-leak) are now **committed** (`17d47f3`);
-the old `[diag-mediaid]` probe is **gone** (saved-photo 400 fixed in `a6fed16`). No running app
-service. Re-probe `git status`/`git log`/`git diff` before trusting state (R7); on a build host the 2
-gradle autogen files stay dirty on purpose. Goal: a working **signed Android build**. Open issues:
-**CAS-4001 cascade bare-error codes** (surfaced + logged, server cause under investigation, temp probe
-to remove); image-memory / WebView compositor freezes (multiple fixes landed — verify on-device); WS
-DNS flaky on cellular + phone keeps dropping off Tailscale.
+**The M1 (`mac`, 100.92.26.108) is the build host** — the OVH host cannot build
+Android (its Nix androidenv cannot resolve the Tauri plugin projects). Provisioned
+there: NDK 27.0.12077973, platform-36, build-tools 35.0.0, cmake 3.22.1, the four
+Android Rust targets, bun, and **Temurin JDK 21 at `~/jdks/jdk-21.0.12.1+1`** —
+AGP 8.13.2 rejects the machine's default JDK 25 with the useless error
+`> 25.0.2`. Rust 1.95.0 and the signing keystore were already present.
+`~/open-grind` is a stale v0.1.10 checkout; build in `~/grindrx-work`.
+Build: `PATH=~/.bun/bin:~/.cargo/bin`, `JAVA_HOME=~/jdks/jdk-21.0.12.1+1/Contents/Home`,
+`ANDROID_HOME=~/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973`,
+then `bun run tauri android build --apk`.
+
+**Read `memory/FIX_NOTES_v0.1.33.md` before touching this code** — it records
+three shipped compile breaks, the `autoIncrementVersionCode` trap, and the CSP
+`unsafe-inline` constraint. Not device-tested: everything is compiled, nothing is
+verified on hardware.
