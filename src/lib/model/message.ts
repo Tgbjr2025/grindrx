@@ -171,7 +171,9 @@ const imageBaseMessageSchema = messageBaseSchema.safeExtend({
 		url: z.url(),
 		width: z.number().int().nonnegative().nullable(),
 		height: z.number().int().nonnegative().nullable(),
-		imageHash: z.union([mediaHashPrivateSchema, mediaHashPublicSchema]).nullable(),
+		imageHash: z
+			.union([mediaHashPrivateSchema, mediaHashPublicSchema])
+			.nullable(),
 	}),
 });
 
@@ -327,13 +329,103 @@ export function previewFromMessage(message: ApiResponseMessage | undefined): {
 				imageHash: null,
 			};
 		case "Location":
-			return { type: "Location", text: "📍 Location", albumId: null, imageHash: null };
+			return {
+				type: "Location",
+				text: "📍 Location",
+				albumId: null,
+				imageHash: null,
+			};
 		case "Image":
 		case "ExpiringImage":
+			// Every non-Text branch used to return `text: null`, so the conversation
+			// list rendered "Preview not available" for every photo, album, GIF and
+			// voice message in every chat — and the `preview.imageHash` branch in
+			// `Conversation.svelte` was unreachable.
+			return {
+				type: message.type,
+				text: "📷 Photo",
+				albumId: null,
+				imageHash: message.body.imageHash ?? null,
+			};
+		case "Audio":
+			return {
+				type: "Audio",
+				text: "🎤 Voice message",
+				albumId: null,
+				imageHash: null,
+			};
+		case "Giphy":
+			return {
+				type: "Giphy",
+				text: "GIF",
+				albumId: null,
+				imageHash: message.body.imageHash,
+			};
+		case "Gaymoji":
+			return {
+				type: "Gaymoji",
+				text: "😈",
+				albumId: null,
+				imageHash: message.body.imageHash,
+			};
+		case "ProfilePhotoReply":
+			return {
+				type: "ProfilePhotoReply",
+				text: "📷 Photo reply",
+				albumId: null,
+				imageHash: message.body.imageHash,
+			};
 		case "Album":
 		case "ExpiringAlbum":
 		case "ExpiringAlbumV2":
+			return {
+				type: message.type,
+				text: "🖼 Album",
+				albumId: message.body.albumId,
+				imageHash: null,
+			};
+		case "AlbumContentReaction":
+			return {
+				type: "AlbumContentReaction",
+				text: "❤️ Album reaction",
+				albumId: message.body.albumId,
+				imageHash: null,
+			};
+		case "AlbumContentReply":
+			return {
+				type: "AlbumContentReply",
+				text: message.body.albumContentReply,
+				albumId: message.body.albumId,
+				imageHash: null,
+			};
+		case "Video":
+		case "PrivateVideo":
+		case "NonExpiringVideo":
+			return {
+				type: message.type,
+				text: "🎥 Video",
+				albumId: null,
+				imageHash: null,
+			};
+		// `ProfileLink` / `VideoCall` bodies are `z.unknown()` — the server sends no
+		// name or duration we can rely on, so label from the type name only rather
+		// than inventing detail.
+		case "ProfileLink":
+			return {
+				type: "ProfileLink",
+				text: "👤 Profile",
+				albumId: null,
+				imageHash: null,
+			};
+		case "VideoCall":
+			return {
+				type: "VideoCall",
+				text: "📞 Video call",
+				albumId: null,
+				imageHash: null,
+			};
 		default:
+			// `Retract`, `Unknown` and `Generative` carry no renderable preview.
 			return {
 				type: message.type,
 				text: null,

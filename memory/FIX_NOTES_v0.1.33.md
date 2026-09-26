@@ -607,3 +607,114 @@ stub subclasses `URL` instead.
 
 **Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
 eslint clean on changed files · vitest 207 → **220** (25 files).
+
+---
+
+## Batch 8 (same version, eighth commit) — conversation previews, date grouping, and THE RUST NOW COMPILES
+
+This batch exists because **batch 7 ended mid-edit and the tree was left broken**
+(`svelte-check` 1 error) with three user prompts unanswered. It also closes the
+single largest gap in the whole v0.1.33 effort: **the Rust had never been compiled.**
+
+### The app did not compile. Three real errors, all shipped in batch 5.
+
+Batch 5 added `upload_profile_image` / `upload_album_content`, the `ws_epoch`
+logout fix, the API response cap, and a 1 MiB WS frame cap — and verified none of
+it, because there was no cargo on the host. With a toolchain obtained, all three
+are genuine build breaks:
+
+- **`AtomicU64` was never imported** (`lib.rs:62`). Batch 5 added
+  `ws_epoch: Arc<AtomicU64>` to `AppState` but only `AtomicBool` was imported.
+- **`WebSocketConfig` is `#[non_exhaustive]`**, so the frame cap could not be
+  written as a struct literal — not even with `..Default::default()`. Now built
+  from `default()` and assigned field-by-field.
+- **`connect_async_tls_with_config` takes 4 arguments**, not 3:
+  `(request, config, disable_nagle, connector)`. The batch-5 call passed
+  `(request, None, Some(ws_config))` — which not only had the wrong arity, it had
+  the config in the *wrong slot*. Now `Some(ws_config), false, None`, where
+  `false` is the `disable_nagle` that plain `connect_async` used before, so the
+  only behaviour change is the intended frame cap.
+
+**Verified for the first time: `cargo test --lib` 3/3 pass, `cargo check
+--all-targets` clean (0 errors, 0 unused warnings).** Three of the seven batches
+of "fixes" in this version were unverifiable Rust; they now at least compile.
+**They are still not device-tested** — compilation is not correctness.
+
+### Conversation list: "Preview not available" for every photo, album and voice message
+`src/lib/model/message.ts`
+
+`previewFromMessage` returned `text: null` from *every* non-`Text` branch, so
+`Conversation.svelte` fell through to its italic "Preview not available" for all
+of them, and its `preview.imageHash` / `preview.albumId` branches were dead code.
+Now every renderable type gets a real label, and the two types that genuinely
+have no preview (`Retract`, `Unknown`, `Generative`) still return `null` rather
+than an invented string.
+
+The interrupted edit also added `case "Tap"`, which is **not a member of the
+message union** — it was the 1 type error. Removed; labelling is derived from
+the type name and the schema body, not invented. `ProfileLink` / `VideoCall`
+bodies are `z.unknown()`, so those are labelled from the type name only.
+
+**21 tests** (was 0 for this function), built by parsing through
+`apiResponseMessageSchema` so they also pin the body shapes the switch reads.
+**Verified to catch the bug**: restoring the old all-`null` behaviour fails 11 of
+them and nothing else.
+
+### The day separator could show a bare weekday for a date that has not happened
+`src/lib/utils/day-group.ts` (new) + `MessageDateGroup.svelte`
+
+```js
+startOfToday().getTime() - dayStart < 7 * 24 * 60 * 60 * 1000 ? weekday : date
+```
+
+Two defects: a **future** `dayStart` makes the difference negative, and negative
+is `< 7 days`, so a future day rendered as a bare weekday with no date; and
+168 fixed hours is the wrong width across a DST change. Now
+`differenceInCalendarDays`, which is calendar-based and has a natural lower
+bound.
+
+The DST test stubs `TZ=America/New_York` (via `vi.stubEnv`, not `process.env`,
+which this tsconfig does not type) because **this host is UTC and the defect is
+unobservable here** — the test asserts the real 157h/181h spans so the
+transition is genuinely exercised. **Verified to catch the bug**: the old logic
+fails 2 of 6.
+
+> Caught while writing it: `startOfToday(x)` in date-fns v4 **ignores its
+> argument** and always returns the real current day. The first version of the
+> helper passed `now` to it, making the parameter a silent no-op.
+
+### Stale comment, and a deliberate decision left alone
+`preferences.svelte.ts` claimed the file was "written non-atomically (truncate +
+write)". That stopped being true in v0.1.28 — `writeAppDataFile` is temp+rename.
+The comment is corrected. The `unreadable → skip write` guard it justifies is
+**left as-is, with its trade-off now stated**: because writes are atomic, an
+unreadable file is not a transient race, so that guard is *sticky* — while the
+file stays undecodable, **every** `setPreferences` call is dropped and settings
+never persist again. That is a real trade-off, protected by a deliberate
+REGRESSION test; changing it is a product call, not a cleanup. **Flagged, not
+changed.**
+
+### FLAG_SECURE — the recents thumbnail no longer captures the screen
+`src-tauri/gen/android/.../MainActivity.kt`
+
+Set `FLAG_SECURE` on the window in `onCreate`. Without it the OS captures the
+current screen into the recents/multitasker thumbnail and permits screenshots
+and screen recording; this app shows chat text, profile photos, album photos and
+precise location by design. On the window, so it also covers the WebView
+surface and cannot be sidestepped by the page rendering its own canvas.
+
+⚠️ **UNVERIFIED — the Kotlin was not compiled on the M1 in this batch.** It is a
+5-line, API-stable change, but "not compiled" is exactly the mistake batch 5
+made. It is included in the M1 build below; see the build log.
+
+### Verification
+
+- `svelte-check` **0 errors** / 30 warnings (baseline)
+- `eslint` clean on every changed file
+- `prettier --check` clean on every changed file
+- `vitest` **220 → 244** (25 → 26 files)
+- `cargo test --lib` **3/3** (first successful run in this version's history)
+- `cargo check --all-targets` **0 errors, 0 warnings**
+
+**Not done here:** H19 msgpack depth guard, CSP `unsafe-inline` nonce
+verification, the M1 APK build + signing (separate step, see SESSION_STATE).
