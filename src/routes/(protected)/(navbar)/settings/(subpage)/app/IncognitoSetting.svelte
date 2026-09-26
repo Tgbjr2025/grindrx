@@ -3,11 +3,11 @@
 	import { toast } from "svelte-sonner";
 
 	import { ApiHttpError } from "$lib/api";
+	import { getPrefsSettings, setPrefsSettings } from "$lib/api/prefs";
 	import {
 		getPreferences,
 		setPreferences,
 	} from "$lib/app-data/preferences.svelte";
-	import { getPrefsSettings, setPrefsSettings } from "$lib/api/prefs";
 	import SwitchField from "$lib/components/ui/switch-field/SwitchField.svelte";
 
 	// Real incognito, not just a badge.

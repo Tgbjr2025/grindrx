@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { checkPermissions, getCurrentPosition } from "@tauri-apps/plugin-geolocation";
 	import { platform } from "@tauri-apps/plugin-os";
-	import { onMount } from "svelte";
 	import { ArrowCounterClockwiseIcon, CompassIcon, EyeSlashIcon } from "phosphor-svelte";
+	import { onMount } from "svelte";
 
 	import { getPreferences, setPreferences } from "$lib/app-data/preferences.svelte";
 	import { encodeGeohash } from "$lib/model/geohash";
@@ -10,8 +10,8 @@
 		clearExploreLocation,
 		getExploreLocation,
 	} from "$lib/stores/explore-location.svelte";
-	import Grid from "./Grid.svelte";
 	import { gridState } from "./grid-state.svelte";
+	import Grid from "./Grid.svelte";
 	import LocationChooser from "./LocationEmpty.svelte";
 	import TopBar from "./top-bar/TopBar.svelte";
 

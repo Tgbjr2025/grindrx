@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { uniqBy } from "lodash-es";
-	import { onMount, tick } from "svelte";
-
 	import { ArrowsClockwiseIcon, UsersFourIcon } from "phosphor-svelte";
+	import { onMount, tick } from "svelte";
 
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
+	import { clearExploreLocation } from "$lib/stores/explore-location.svelte";
 	import { setGridOrder } from "$lib/stores/grid-order.svelte";
+	import type { GridProfile, PartialGridProfile } from "./grid";
 	import { gridState } from "./grid-state.svelte";
 	import GridWindow from "./GridWindow.svelte";
 	import ProfileMiniCard from "./ProfileMiniCard.svelte";
@@ -207,8 +208,14 @@
 		};
 	}
 
-	function observePartial(node: HTMLElement, params: { batchIndex: number }) {
-		const observer = new IntersectionObserver(
+	function resetToRealLocation() {
+		clearExploreLocation();
+		// gridState caches the failing explore hash, so a plain re-render would
+		// rebuild the identical request. Force a real refetch of the local area.
+		gridState.refresh();
+	}
+
+	function observePartial(node: HTMLElement, params: { batchIndex: number }) {		const observer = new IntersectionObserver(
 			(entries) => {
 				if (entries[0].isIntersecting) {
 					gridState
@@ -274,11 +281,21 @@
 		{/each}
 	{:else if gridState.errorMessage}
 		<div class="p-4 flex col-span-full">
-			<div class="m-auto flex flex-col gap-4">
+			<div class="m-auto flex flex-col gap-4 max-w-100 text-center">
 				<p class="text-center text-red-400 font-medium select-text">
 					{gridState.errorMessage}
 				</p>
-				<Button onclick={() => gridState.refresh()}>Retry</Button>
+				{#if gridState.errorIsExploreGate}
+					<!--
+						The server gates remote-area browsing behind a paid tier
+						(CAS-4001), so "Retry" here can only ever fail again. Offer
+						the one action that actually works: go back to your own area.
+						This flag existed for exactly this and was never read.
+					-->
+					<Button onclick={resetToRealLocation}>Back to my location</Button>
+				{:else}
+					<Button onclick={() => gridState.refresh()}>Retry</Button>
+				{/if}
 			</div>
 		</div>
 	{:else if gridProfiles.length === 0}
@@ -296,7 +313,7 @@
 		</div>
 	{:else}
 		<GridWindow items={gridProfiles} {columns} {rowHeight}>
-			{#snippet children(item)}
+			{#snippet children(item: GridProfile)}
 				{#if item.type === "full"}
 					<ProfileMiniCard
 						id={item.id}
@@ -309,9 +326,10 @@
 						onlineUntil={item.onlineUntil}
 					/>
 				{:else}
+					{@const partial = item as PartialGridProfile}
 					<div
 						class="aspect-square bg-muted animate-pulse rounded-sm"
-						use:observePartial={{ batchIndex: item.batchIndex }}
+						use:observePartial={{ batchIndex: partial.batchIndex }}
 					></div>
 				{/if}
 			{/snippet}

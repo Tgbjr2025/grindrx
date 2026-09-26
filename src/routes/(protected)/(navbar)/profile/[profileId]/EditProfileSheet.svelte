@@ -10,30 +10,29 @@
 	import Label from "$lib/components/ui/label/label.svelte";
 	import * as Sheet from "$lib/components/ui/sheet";
 	import Textarea from "$lib/components/ui/textarea/textarea.svelte";
-	import type { DistanceUnit } from "$lib/utils/distance";
 	import {
-		acceptNSFWPics as acceptNsfwPicsLabels,
 		type AcceptNSFWPicsId,
+		acceptNSFWPics as acceptNsfwPicsLabels,
 		type BodyTypeId,
 		bodyTypes,
 		ethnicities,
 		type EthnicityId,
-		healthPractices,
 		type HealthPracticeId,
+		healthPractices,
 		hivStatuses,
 		type HivStatusId,
 		type LookingForId,
 		lookingFor as lookingForLabels,
-		meetAt as meetAtLabels,
 		type MeetAtId,
+		meetAt as meetAtLabels,
 		relationshipStatuses,
 		type RelationshipStatusId,
 		type SexualPositionId,
 		sexualPositions,
 		type TribeId,
 		tribes as tribeLabels,
-		vaccines as vaccineLabels,
 		type VaccineId,
+		vaccines as vaccineLabels,
 	} from "$lib/model/profile";
 	import {
 		heightFromInput,
@@ -43,6 +42,7 @@
 		weightToInput,
 		weightUnitLabel,
 	} from "$lib/utils/measurements";
+	import type { DistanceUnit } from "$lib/utils/distance";
 
 	let {
 		open = $bindable(false),

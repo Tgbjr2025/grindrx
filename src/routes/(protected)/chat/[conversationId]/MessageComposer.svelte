@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { CameraIcon, ChatTextIcon, ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon, TrashIcon } from "phosphor-svelte";
+	import { CameraIcon, ChatTextIcon, ImagesIcon, MapPinIcon, MicrophoneIcon, PaperPlaneRightIcon, TrashIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
@@ -12,6 +12,7 @@
 	import type { AlbumExpirationType } from "$lib/model/album";
 	import type { Message } from "$lib/model/message";
 	import AlbumPicker from "./AlbumPicker.svelte";
+	import LocationShareSheet from "./LocationShareSheet.svelte";
 	import SavedPhrasesDrawer from "./SavedPhrasesDrawer.svelte";
 
 	let {
@@ -27,6 +28,20 @@
 		onSendAudio: (params: { mediaId: number; mediaHash: string; url: string; contentType: string; length: number }) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
+
+	// --- Share a location ---------------------------------------------------
+	// The `Location` message type could be received and rendered but never sent.
+	// `LocationShareSheet` reuses the existing map picker to choose a point, then
+	// confirms before sending — sharing a location is a real disclosure, so the
+	// user always sees the exact coordinates before it leaves the device.
+	let locationShareOpen = $state(false);
+
+	function sendSharedLocation(lat: number, lon: number, label: string | null) {
+		// `onSend` may be sync or async; the optimistic bubble is created
+		// synchronously, so there is nothing to await here.
+		void onSend({ type: "Location", body: { lat, lon } });
+		toast.success(label ? `Sent ${label}.` : "Location sent.");
+	}
 
 	let textContent = $state("");
 	let albumPickerOpen = $state(false);
@@ -323,6 +338,19 @@
 		/>
 	</Button>
 
+	<!-- Share a location -->
+	<Button
+		type="button"
+		variant="ghost"
+		size="icon"
+		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Share a location"
+		disabled={recipientProfileId === null}
+		onclick={() => (locationShareOpen = true)}
+	>
+		<MapPinIcon weight="fill" color="var(--muted-foreground)" class="size-4.5" />
+	</Button>
+
 	<!-- Camera / device gallery upload -->
 	<label
 		class="size-9.5 shrink-0 flex items-center justify-center rounded-full cursor-pointer p-2 transition-colors hover:bg-accent"
@@ -409,6 +437,8 @@
 <AlbumPicker bind:open={albumPickerOpen} onShare={onShareAlbum} {onSendPhoto} />
 
 <SavedPhrasesDrawer bind:open={savedPhrasesOpen} onInsert={insertPhrase} />
+
+<LocationShareSheet bind:open={locationShareOpen} onSend={sendSharedLocation} />
 
 <style lang="postcss">
 	@reference "$layout";
