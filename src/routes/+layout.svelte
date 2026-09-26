@@ -17,6 +17,7 @@
 	} from "$lib/android-native-bridge";
 	import { syncNotificationPrefs } from "$lib/api/notifications";
 	import { sendUsagePing } from "$lib/api/usage";
+	import { isLockEnabled, lockNow } from "$lib/app-data/app-lock.svelte";
 
 	// Analytics is OFF by default: this is a privacy-focused client and the route
 	// path carries sensitive ids (which profiles you view, which chats you open).
@@ -72,11 +73,34 @@
 		applyAndroidInsets();
 		applyBackGestureHandler();
 
-		// Track foreground/background so Rust knows when to fire OS notifications
+		// Track foreground/background so Rust knows when to fire OS notifications,
+		// and re-engage the app lock when the app comes back to the foreground.
+		//
+		// The lock previously only ever cleared: `lockNow()` existed but nothing
+		// called it, so pressing Home and returning left the app unlocked
+		// indefinitely and the gate only reappeared on a full process restart.
+		// Re-lock on any backgrounding, plus after a short grace period in the
+		// background so a brief app switch (notification shade, permission dialog)
+		// does not demand the PIN again.
+		let backgroundedAt: number | null = null;
+		const RELOCK_GRACE_MS = 30_000;
+
 		const syncForeground = () => {
-			invoke("set_foreground", { foreground: document.visibilityState === "visible" }).catch(
-				() => {},
-			);
+			const foreground = document.visibilityState === "visible";
+			invoke("set_foreground", { foreground }).catch(() => {});
+
+			if (isLockEnabled()) {
+				if (foreground) {
+					const away =
+						backgroundedAt === null ? 0 : Date.now() - backgroundedAt;
+					if (backgroundedAt !== null && away >= RELOCK_GRACE_MS) {
+						lockNow();
+					}
+					backgroundedAt = null;
+				} else {
+					backgroundedAt = Date.now();
+				}
+			}
 		};
 		document.addEventListener("visibilitychange", syncForeground);
 
