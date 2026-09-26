@@ -45,9 +45,9 @@
       "signingIdentity": "tauri-dev"
     },
     "android": {
-      "autoIncrementVersionCode": true,
+      "autoIncrementVersionCode": false,
       "minSdkVersion": 28,
-      "versionCode": 1090
+      "versionCode": 1068
     }
   }
 }
