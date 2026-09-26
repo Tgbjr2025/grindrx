@@ -345,3 +345,147 @@ eslint clean on changed files · vitest 198 → **208** (10 new: lockout thresho
 cooldown refusal, counter reset, persistence across a simulated restart, PIN
 validation, no-trivial-DoS, plus PBKDF2 salt-sensitivity / determinism /
 not-a-plain-SHA256 / iteration-count portability).
+
+---
+
+## Batch 5 (same version, fifth commit) — album multipart + Rust hardening
+
+### Album photo add/remove now actually work
+This was the last broken feature from the audit.
+
+- **New Rust command `upload_album_content`** (`rest.rs`, registered in `lib.rs`).
+  Builds a real `multipart/form-data` body for `POST /v1/albums/{albumId}/content`
+  with the raw file under the field `content`. This had to be a dedicated command
+  because the generic `request` bridge msgpack-decodes every body and re-sends it
+  as JSON, so a multipart endpoint was unreachable from the WebView.
+  - Content-Type is forced to `image/*` (defaults to `image/jpeg`) so an opaque
+    blob is never posted to a multipart endpoint.
+  - The multipart boundary is a fixed constant and the filename is fixed, so
+    neither can be influenced by user input and inject a header.
+- **Frontend**: `addAlbumContent` (the broken by-reference path) is replaced by
+  `addAlbumContentFromBytes`. It goes through the new `prepareImageForUpload`
+  helper, so album uploads get the same downscale + EXIF stripping as the profile
+  and chat paths — a camera photo no longer leaks its GPS to a second endpoint.
+- **Multi-select**: the file input now takes `multiple` and uploads sequentially
+  (the old code read only `files[0]` and silently dropped the rest). Per-photo
+  failures are reported individually rather than aborting the batch.
+- **`removeAlbumContent` finally has a caller.** A "Manage" toggle reveals the
+  full content grid with a per-item delete. Previously only `content[0]` (the
+  cover) was ever rendered, so photos 2..N of every album were invisible and
+  unmanageable.
+
+⚠️ **The two new Rust commands are UNCOMPILED.** No cargo on this host. The
+multipart boundary/field name and the `thumbCoords` square-crop query are the
+two things to verify first against a live endpoint.
+
+### Rust security / robustness
+- **Logout during the WS handshake could be silently lost (H15).** The reset used
+  `Notify::notify_waiters()`, which only wakes waiters registered *at that
+  instant* and stores no permit. The only waiter is the `select!` arm inside
+  `run_message_loop`, which is not registered during the backoff sleep or the
+  15s connect handshake — so a logout in that window was dropped, the socket
+  completed with the **pre-logout** token, and it kept delivering the previous
+  account's events and notifications. Replaced with a monotonic
+  `AppState::ws_epoch`, snapshotted before credentials are used and re-checked
+  after the token fetch AND after the handshake, *before* `ws:connected` is
+  emitted. The `Notify` is retained purely as a wakeup hint so the loop still
+  blocks instead of polling.
+- **`ws_send` could never succeed (H16).** `WsCommand.ref_id` carried
+  `#[serde(rename = "ref")]` with no alias, so the IPC deserializer required
+  `ref` while the frontend sends `ref_id` → `InvalidArgs` on every call. Latent
+  only because `ws.send()` had no callers. Now `rename = "ref", alias = "ref_id"`,
+  and the pointless `Serialize` derive is gone (the outgoing frame is hand-built).
+- **`ws_send` could also hang forever.** The channel is bounded at 64 and its
+  receiver lives for the process lifetime, so `send` never returns `Err` (the
+  old "WS not connected" path was unreachable) and the 65th command would await
+  indefinitely, leaving `invoke("ws_send")` unsettled with no error. Now bounded
+  by a 5s timeout with a real error.
+- **Uncapped API responses (H18).** `MAX_FETCH_BYTES` only guarded the media
+  paths; `request_raw`/`request_raw_unauthed` did `response.bytes().await?` with
+  no limit and then msgpack+base64 encoded it, peaking at 3-4x the response. Both
+  now stream through `stream_capped_body` with a new `MAX_API_RESPONSE_BYTES`
+  (32 MB — real API responses are far smaller; media uses its own path).
+- **Server error `code` truncated i64 → i32.** `4294967697` wrapped to `401`,
+  which `authorization_header` classifies as an invalid session and responds to by
+  **deleting the keyring session** — a spurious forced logout from an integer
+  overflow. `AppError::Api.code` is now `i64` end to end.
+- **Debug builds logged every request body.** The `Authorization` header and the
+  query string were correctly redacted, but the body was printed in full — which
+  is where chat text, profile edits, and (via `/v1/accounts` and the password
+  pages) the account password live. `bun dev:android` on a real device wrote all
+  of it to logcat. Now prints `<N bytes redacted>`.
+- **Blocking keyring calls inside `async fn`.** `Entry::get_secret` is
+  synchronous and goes through JNI to the Android Keystore; it was called with no
+  `spawn_blocking`, and `authorization_header` calls it *inside* the refresh
+  critical section, so the stall was paid by every request queued behind the lock.
+  `AuthStorage::get_session` is now async via `spawn_blocking`, with
+  `get_session_blocking` retained for the one genuinely sync caller
+  (`GrindrClient::new`, which runs in Tauri's `setup` hook).
+- **Heartbeat could kill a healthy connection.** `tokio::select!` picks a ready
+  branch at random, so a `Pong` landing in the same poll iteration as the
+  heartbeat tick could be ignored and the connection torn down. The select is now
+  `biased` with the read arm first.
+- **No jitter on the WS backoff.** A deterministic 1→2→4→30s ladder means a fleet
+  disconnected by one blip retries in lockstep. Now scaled by a random factor in
+  [0.8, 1.2).
+- **WS frame size left at tungstenite's defaults** (16 MiB frame / 64 MiB
+  message), with every text frame JSON-parsed and re-emitted to the WebView. Now
+  capped at 1 MiB via `connect_async_tls_with_config`.
+- **A session with no usable `exp` was stored as already-expired.** `f64 as u64`
+  saturates, so a negative/NaN/missing `exp` became `0`, which
+  `authorization_header` reads as expired — every subsequent call did a wasted
+  refresh round-trip, forever. `exp` is now validated at session creation.
+- **A disabled notification could fire at cold start.** `notify_messages` /
+  `notify_taps` defaulted to `true` in Rust and were corrected only after the
+  WebView's async preferences read completed, so a message arriving in that
+  window produced a notification the user had explicitly turned off. They now
+  default to **false** and a new `prefs_loaded` flag gates the notifier until the
+  WebView has pushed the real values.
+- **`GrindrClient::new()` failure was completely silent** (`if let Ok(..)` +
+  `let _ = ..`), leaving the `OnceLock` empty so every command returned
+  "GrindrClient not initialized" with nothing in logcat. Now logged on both
+  failure paths.
+
+### Android / Tauri config
+- **`allowBackup` was unset** (defaults to `true`), so `adb backup` could extract
+  the app data directory: `preferences.data` (which contains the user's
+  **precision-12 geohash**, ~±4 m, plus every grid filter), the WebView
+  localStorage holding the app-lock salt and PIN hash, and the signed-URL
+  mediaId cache. Now `allowBackup="false"` + `fullBackupContent="false"` + a new
+  `res/xml/data_extraction_rules.xml` excluding every domain from both cloud
+  backup and device-to-device transfer.
+- **Capabilities narrowed.** `clipboard-manager:default` granted the WebView
+  **read** access to the system clipboard on Android — a channel for capturing
+  anything the user copied from another app — when the app only ever writes
+  (invite links, copied message text). Reduced to `allow-write-text`.
+  `notification:default` let the WebView post its own notifications, i.e. spoof
+  "new message" alerts; the app posts from Rust, so it is reduced to the two
+  permission-query calls the frontend actually makes. `opener:default` included
+  `allow-open-path` / `reveal-item-in-dir`, which can point the OS at arbitrary
+  filesystem paths and are never used — narrowed to `opener:allow-open-url`
+  (the app *does* use opener for "View location" and social links, so removing
+  the grant outright would have broken those).
+- **CSP hardened additively**: added `object-src 'none'`, `frame-src 'none'`,
+  `base-uri 'self'`, `form-action 'none'`.
+  **`'unsafe-inline'` was deliberately LEFT on `script-src`** — Tauri injects its
+  own bootstrap `<script>` into the document, and whether it self-nonces under v2
+  must be verified against the pinned Tauri version first. Getting that wrong
+  blanks the app at launch, which is a far worse outcome than the hardening
+  gain. Flagged for a follow-up once the nonce behaviour is confirmed.
+
+### Deliberately NOT done
+- **msgpack nesting depth bound (H19).** The payload size cap bounds bytes, not
+  depth, and a deep payload can overflow the stack (which aborts the process,
+  not a catchable `Err`). A correct fix needs a real msgpack structure walker —
+  ~80 lines that must parse element headers and skip payloads. I wrote a
+  first attempt, realised it counted *containers* rather than *nesting depth*
+  (so it would have rejected legitimate payloads with more than 64 elements), and
+  **removed it rather than ship a guard that would break the app**. It needs to
+  be written and unit-tested with real msgpack fixtures.
+- **`FLAG_SECURE`** — the Android recents thumbnail still captures the last
+  screen. Needs a native change.
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
+eslint clean on every changed file · vitest 207 passed. Rust: structural checks
+only (brace/paren balance verified unchanged against HEAD for all 7 touched
+files; JSON and XML parse) — **not compiled**.

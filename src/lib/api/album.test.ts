@@ -10,7 +10,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
 	ALBUM_NAME_MAX_BYTES,
-	buildAddContentBody,
 	buildAlbumNameBody,
 	buildRemoveViewerBody,
 	parseAlbumViewerIds,
@@ -59,14 +58,6 @@ describe("buildAlbumNameBody", () => {
 
 	it("allows an empty name", () => {
 		expect(buildAlbumNameBody("")).toEqual({ albumName: "" });
-	});
-});
-
-describe("buildAddContentBody", () => {
-	it("carries both the numeric mediaId and the mediaHash", () => {
-		expect(
-			buildAddContentBody({ mediaId: 12345, mediaHash: "abc123" }),
-		).toEqual({ mediaId: 12345, mediaHash: "abc123" });
 	});
 });
 

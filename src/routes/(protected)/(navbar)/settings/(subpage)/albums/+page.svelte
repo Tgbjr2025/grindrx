@@ -10,14 +10,15 @@
 	import { toast } from "svelte-sonner";
 
 	import {
-		addAlbumContent,
+		addAlbumContentFromBytes,
 		createAlbum,
 		deleteAlbum,
 		getMyAlbums,
 		type MyAlbum,
+		removeAlbumContent,
 		renameAlbum,
 	} from "$lib/api/album";
-	import { uploadProfileImage } from "$lib/api/profile";
+	import { prepareImageForUpload } from "$lib/api/profile";
 	import AuthedImage from "$lib/components/AuthedImage.svelte";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import { Button } from "$lib/components/ui/button";
@@ -36,6 +37,9 @@
 	// Per-album in-flight markers (spinners / disabled buttons).
 	let deletingId = $state<number | null>(null);
 	let uploadingId = $state<number | null>(null);
+	// Which album's content grid is expanded, and which contentId is mid-delete.
+	let expandedAlbumId = $state<number | null>(null);
+	let removingContentId = $state<number | null>(null);
 
 	// Create dialog.
 	let createOpen = $state(false);
@@ -73,6 +77,25 @@
 
 	function coverUrl(album: MyAlbum): string | null {
 		return album.content[0]?.thumbUrl ?? album.content[0]?.coverUrl ?? null;
+	}
+
+	/**
+	 * Accessors for the template. `album.content`'s type does not survive
+	 * Svelte's template type-resolution at this nesting depth (eslint reports it
+	 * as "a type that cannot be resolved" even though svelte-check is clean), so
+	 * the reads go through the script block exactly like `coverUrl` does.
+	 */
+	function contentCount(album: MyAlbum): number {
+		return album.content.length;
+	}
+
+	function contentIdOf(item: MyAlbum["content"][number]): number {
+		return item.contentId;
+	}
+
+	/** Show/hide the per-album content grid. */
+	function toggleExpanded(album: MyAlbum): void {
+		expandedAlbumId = expandedAlbumId === album.albumId ? null : album.albumId;
 	}
 
 	function contentLabel(album: MyAlbum): string {
@@ -163,27 +186,58 @@
 
 	async function handleFileChosen(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
+		// Support a multi-select: the old code read only `files[0]` and silently
+		// dropped the rest.
+		const files = Array.from(input.files ?? []);
 		const albumId = addPhotoTargetId;
 		// Reset the input so choosing the same file again re-fires `change`.
 		input.value = "";
 		addPhotoTargetId = null;
-		if (!file || albumId == null) return;
+		if (files.length === 0 || albumId == null) return;
 
 		uploadingId = albumId;
+		let added = 0;
 		try {
-			// Upload the picked image to the chat-media endpoint to mint a
-			// { mediaId, mediaHash, url }, then attach that media to the album.
-			const media = await uploadProfileImage(file);
-			await addAlbumContent({ albumId, media });
-			toast.success("Photo added");
+			// Sequential, not parallel: the album-content endpoint is keyed on the
+			// album and we want a clean partial-failure story.
+			for (const file of files) {
+				try {
+					// Same preprocessing as the profile/chat paths: downscaled and
+					// EXIF-stripped, so a camera photo does not leak its GPS.
+					const { base64, mimeType } = await prepareImageForUpload(file);
+					await addAlbumContentFromBytes({ albumId, base64, mimeType });
+					added += 1;
+				} catch (err) {
+					console.error("Failed to add photo to album", err);
+					const detail =
+						err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+					toast.error(`Failed to add a photo${detail}`, { duration: 15000 });
+				}
+			}
+			if (added > 0) {
+				toast.success(
+					added === 1 ? "Photo added" : `${added} photos added`,
+				);
+			}
 			await load();
-		} catch (err) {
-			console.error("Failed to add photo", err);
-			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
-			toast.error(`Failed to add photo${detail}`, { duration: 15000 });
 		} finally {
 			uploadingId = null;
+		}
+	}
+
+	/** Per-item content delete — `removeAlbumContent` previously had no caller. */
+	async function handleRemoveContent(album: MyAlbum, contentId: number) {
+		removingContentId = contentId;
+		try {
+			await removeAlbumContent({ albumId: album.albumId, contentId });
+			toast.success("Photo removed from album");
+			await load();
+		} catch (err) {
+			console.error("Failed to remove album content", err);
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to remove photo${detail}`, { duration: 15000 });
+		} finally {
+			removingContentId = null;
 		}
 	}
 
@@ -198,6 +252,7 @@
 	bind:this={fileInput}
 	type="file"
 	accept="image/*"
+	multiple
 	class="hidden"
 	onchange={(e) => void handleFileChosen(e)}
 />
@@ -247,6 +302,9 @@
 					{@const cover = coverUrl(album)}
 					{@const isUploading = uploadingId === album.albumId}
 					{@const isDeleting = deletingId === album.albumId}
+					<!-- Hoisted into @const (this file's existing idiom) so the type of
+					     `album` resolves inside the handler/branch below. -->
+					{@const isExpanded = expandedAlbumId === album.albumId}
 					<div class="flex flex-col gap-3 rounded-2xl border border-border p-3">
 						<div class="flex items-center gap-3">
 							<div class="size-16 rounded-xl overflow-hidden shrink-0 bg-muted flex items-center justify-center">
@@ -297,6 +355,15 @@
 								Rename
 							</Button>
 							<Button
+								variant="outline"
+								size="sm"
+								disabled={isDeleting}
+								onclick={() => toggleExpanded(album)}
+							>
+								<ImagesIcon class="size-4" />
+								{isExpanded ? "Hide" : "Manage"}
+							</Button>
+							<Button
 								variant="destructive"
 								size="sm"
 								disabled={isDeleting}
@@ -311,6 +378,51 @@
 							</Button>
 						</div>
 					</div>
+
+					<!--
+						Full content list with a per-item delete. Previously only
+						`content[0]` (the cover) was ever rendered, so photos 2..N of
+						every album were invisible and unmanageable, and
+						`removeAlbumContent` had no caller at all.
+					-->
+					{#if isExpanded}
+						<div class="flex flex-col gap-2 border-t border-border pt-3">
+							{#if contentCount(album) === 0}
+								<p class="text-xs text-muted-foreground">
+									This album has no photos yet.
+								</p>
+							{:else}
+								<div class="grid grid-cols-3 gap-1.5">
+									{#each album.content as item (item.contentId)}
+										{@const isRemoving = removingContentId === contentIdOf(item)}
+										{@const removeThis = () =>
+											handleRemoveContent(album, contentIdOf(item))}
+										<div class="relative aspect-square">
+											<AuthedImage
+												src={item.thumbUrl ?? item.coverUrl ?? ""}
+												alt=""
+												class="w-full h-full rounded-xl object-cover bg-muted"
+											/>
+											{#if isRemoving}
+												<div class="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50">
+													<Spinner class="size-5 text-white" />
+												</div>
+											{:else}
+												<button
+													type="button"
+													aria-label="Remove from album"
+													class="absolute top-1 right-1 size-6 rounded-full bg-black/60 flex items-center justify-center"
+													onclick={() => void removeThis()}
+												>
+													<TrashIcon weight="fill" class="size-3 text-white" />
+												</button>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/if}
 				{/each}
 			</div>
 		{/if}

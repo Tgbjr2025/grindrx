@@ -18,7 +18,7 @@ pub fn run() {
 
     let (ws_tx, ws_rx) = mpsc::channel(64);
     let auth_notify = Arc::new(Notify::new());
-    let ws_reset = Arc::new(Notify::new());
+    let ws_reset_notify = Arc::new(Notify::new());
 
     let mut builder = tauri::Builder::default();
 
@@ -40,6 +40,9 @@ pub fn run() {
 
 	#[tauri::command]
     fn set_notification_prefs(state: tauri::State<'_, AppState>, messages: bool, taps: bool) {
+        // Mark loaded BEFORE storing the values, so the notifier never observes
+        // "prefs known" alongside a stale default.
+        state.prefs_loaded.store(true, std::sync::atomic::Ordering::SeqCst);
         state.notify_messages.store(messages, Ordering::Relaxed);
         state.notify_taps.store(taps, Ordering::Relaxed);
     }
@@ -56,10 +59,15 @@ pub fn run() {
             ws_tx,
             ws_rx: tokio::sync::Mutex::new(Some(ws_rx)),
             auth_notify,
-            ws_reset,
+            ws_epoch: Arc::new(AtomicU64::new(0)),
+            ws_reset_notify,
             is_foreground: AtomicBool::new(true),
-            notify_messages: AtomicBool::new(true),
-            notify_taps: AtomicBool::new(true),
+            // Default OFF until the WebView pushes the real values, so a
+            // message arriving during startup cannot fire a notification the
+            // user had explicitly disabled. See AppState::prefs_loaded.
+            notify_messages: AtomicBool::new(false),
+            notify_taps: AtomicBool::new(false),
+            prefs_loaded: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             api::auth::login,
@@ -71,6 +79,7 @@ pub fn run() {
             api::rest::request_public,
             api::rest::upload_image,
             api::rest::upload_profile_image,
+            api::rest::upload_album_content,
             api::rest::fetch_authed_bytes,
             api::rest::fetch_media_bytes,
             api::rest::fetch_latest_release,
@@ -89,8 +98,19 @@ pub fn run() {
 
             storage::init_keyring();
 
-            if let Ok(client) = GrindrClient::new() {
-                let _ = app.state::<AppState>().client.set(client);
+            // A silent failure here is a total, undiagnosable outage: the
+            // OnceLock stays empty and EVERY subsequent command returns
+            // "GrindrClient not initialized" with nothing in logcat. Log both the
+            // construction error and the fact that the store already had a value.
+            match GrindrClient::new() {
+                Ok(client) => {
+                    if app.state::<AppState>().client.set(client).is_err() {
+                        eprintln!("[lib] GrindrClient already initialised; keeping existing client.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[lib] GrindrClient init FAILED: {e} - every API call will fail until relaunch.");
+                }
             }
 
             #[cfg(all(target_os = "macos", not(feature = "keychain")))]

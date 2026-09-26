@@ -358,6 +358,19 @@ async function downscaleImage(
 	}
 }
 
+/**
+ * Prepare a picked image for upload: downscaled, EXIF-stripped, base64.
+ *
+ * Exported so the album path reuses exactly the same preprocessing as the
+ * profile/chat paths rather than uploading raw camera bytes (and raw EXIF,
+ * including GPS) to a different endpoint.
+ */
+export async function prepareImageForUpload(
+	file: File,
+): Promise<{ base64: string; mimeType: string; width: number; height: number }> {
+	return downscaleImage(file);
+}
+
 export async function uploadProfileImage(file: File): Promise<UploadedMedia> {
 	const { base64, mimeType } = await downscaleImage(file);
 	return uploadImageBytes(base64, mimeType);
