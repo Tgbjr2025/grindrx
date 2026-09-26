@@ -155,6 +155,38 @@ export async function sendProfilePhotoMessage({
 	return res.jsonParsed(sendMessageResponseSchema);
 }
 
+/**
+ * Send a shared location pin.
+ *
+ * The `Location` message type and its `{ lat, lon }` body were already modelled
+ * (`locationMessageSchema` in $lib/model/message) and rendered
+ * (`LocationMessage.svelte`, which opens the point in the device maps app), but
+ * there was no way to CREATE one — so the feature was receive-only. This closes
+ * that gap; `ConversationState.send` already handles arbitrary message types, so
+ * it flows through the same optimistic + WebSocket-echo path as text.
+ */
+export async function sendLocationMessage({
+	toUserId,
+	lat,
+	lon,
+}: {
+	toUserId: number;
+	lat: number;
+	lon: number;
+}) {
+	return await fetchRest("/v4/chat/message/send", {
+		method: "POST",
+		body: {
+			type: "Location",
+			target: {
+				type: "Direct",
+				targetId: toUserId,
+			},
+			body: { lat, lon },
+		},
+	}).then((res) => res.jsonParsed(sendMessageResponseSchema));
+}
+
 export async function reactToMessage({
 	conversationId,
 	messageId,

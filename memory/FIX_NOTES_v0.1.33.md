@@ -156,3 +156,80 @@ Four bugs, all "the save appears to work and nothing changed":
 ## Rollback
 
 `git revert` the batch commit, or reset to `ec7e9a3`.
+
+---
+
+## Batch 2 (same version, second commit)
+
+### Viewers list — masked rows fixed and made informative
+`src/routes/(protected)/(navbar)/views/+page.svelte`
+
+Two real client bugs, plus the honest limit:
+
+- `viewSchema.profileId` was a **required** `z.coerce.number()`. `Number(null)`
+  is `0`, so a masked viewer that leaked into `profiles[]` became a *clickable*
+  row linking to **`/profile/0`**, and a genuinely id-less entry failed
+  `safeParse` and was silently dropped by `dropBad`. Replaced with a
+  `profileIdOf` transform that only yields a **positive integer** id.
+- `seen` was `z.number()`; the docs say unix milliseconds, but a string form
+  failed validation and was `.catch()`-ed to `null`, which silently removed the
+  "Viewed 2 hours ago" line. Now a tolerant numeric-or-string coercion.
+- Both arrays are parsed with one shared schema (`profiles` is documented as
+  "everything from previews" plus `ProfileShort`), and a viewer present in both
+  is de-duplicated so the keyed `{#each}` cannot collide.
+- Masked rows now surface the signals the server *does* send —
+  `viewedCount.totalCount` ("Viewed you 4× recently") and `isSecretAdmirer` —
+  and say plainly that Grindr hides the identity until XTRA, instead of an
+  unexplained "Anonymous".
+
+**Not fixable client-side:** `ProfileMasked` genuinely has no `profileId`
+(docs/content/grindr-api/users/profiles.md#ProfileMasked), so a masked viewer
+cannot be made clickable without a paid tier. The official app behaves the same.
+
+### Explore — the dead end is gone
+`src/routes/(protected)/(navbar)/(root)/Grid.svelte`,
+`.../LocationChange.svelte`
+
+- `errorIsExploreGate` was written and **never read** (its own comment said it
+  existed so a caller could offer "reset to my location" instead of a futile
+  retry). The grid now branches on it and shows **"Back to my location"**
+  instead of a Retry button that can only fail again. The handler also calls
+  `gridState.refresh()`, because `gridState` caches the failing explore hash and
+  a bare re-render would rebuild the identical request.
+- Added a **second route to the same place that is not paywalled**: "Browse from
+  here" moves our own nearby reference point (`preferences.geohash`) instead of
+  using the `exploreGeoHash` param, so a free account can actually browse an
+  area it picked. It clears any explore override first (otherwise the grid
+  would still centre on the old area and it would look like a no-op), and is
+  offered right after a pick with an explicit dismiss.
+
+**Still server-gated:** the `exploreGeoHash` request itself is already correct
+(`model/grid/index.ts:9`, `docs/.../browse/grid.md:8`); Grindr answers CAS-4001
+without a paid tier. That cannot be fixed in the client.
+
+### Share a location in chat — implemented (was receive-only)
+`lib/api/messages.ts`, `chat/[conversationId]/LocationShareSheet.svelte` (new),
+`chat/[conversationId]/MessageComposer.svelte`
+
+`locationMessageSchema` and `LocationMessage.svelte` existed, so the app could
+*receive* and render a shared location but had no way to send one.
+- `sendLocationMessage()` posts `type: "Location"` with `{ lat, lon }`.
+  `ConversationState.send()` already handles arbitrary message types, so it
+  flows through the normal optimistic + WebSocket-echo path.
+- New `LocationShareSheet`: reuses the existing `LocationChooser`/`GeoMapPicker`,
+  offers "Use my location" (device GPS) or a map pick, and **requires an
+  explicit confirm** showing the literal coordinates and geohash that will be
+  transmitted. Sharing a location is a real disclosure, so it never sends on a
+  map tap alone.
+- Composer gets a pin button, disabled until the conversation's profile resolves.
+
+### Lint: Grid.svelte 13 errors -> 0
+`{#snippet children(item)}` left `item` as `any` (11 errors). Annotated it
+`GridProfile` and added an explicit `PartialGridProfile` narrow in the partial
+branch, which the Svelte template checker cannot infer on its own.
+`LocationChange.svelte`'s `locationChooser` used the component as a bare type
+(widening to `any`); replaced with a precise structural type and made the call
+optional, since the handle is undefined before the chooser mounts.
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged) · eslint clean
+on every changed file · vitest 198 passed.

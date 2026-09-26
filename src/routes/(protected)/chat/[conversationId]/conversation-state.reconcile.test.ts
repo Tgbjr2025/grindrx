@@ -12,12 +12,12 @@ vi.mock("@tauri-apps/api/event", () => ({
 	listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
+import type { ApiResponseMessage } from "$lib/model/message";
 import {
 	type OptimisticMessage,
 	reconcile,
 	removeDuplicateMessages,
 } from "./conversation-state.svelte";
-import type { ApiResponseMessage } from "$lib/model/message";
 
 const CONVERSATION_ID = "conversation-1";
 
@@ -294,7 +294,7 @@ describe("album-share optimistic identity (pendingKey)", () => {
 			reactions: [],
 			status: "pending",
 			...overrides,
-		} as OptimisticMessage;
+		};
 	}
 
 	it("adopts the server's real messageId onto the pending bubble", () => {
