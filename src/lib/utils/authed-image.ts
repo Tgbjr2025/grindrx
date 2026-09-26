@@ -47,12 +47,55 @@ export function isAuthedHost(url: string): boolean {
 
 // --- Object-URL cache --------------------------------------------------------
 // Retain a compact `blob:` object URL per source URL. Map insertion order is the
-// LRU recency order; evicting the oldest revokes its blob so total retained
-// image memory stays bounded across a long session. Also dedups: the cover,
+// LRU recency order; evicting the oldest frees its blob so total retained image
+// memory stays bounded across a long session. Also dedups: the cover,
 // thumbnail and lightbox of the same image fetch once.
-const MAX_ENTRIES = 96;
+//
+// `MAX_ENTRIES` was 96, i.e. up to 96 FULL-RESOLUTION photos retained at once
+// (multi-MB each) — a hard OOM on a mid-range WebView. It is now a much smaller
+// working set; full-resolution bytes are only fetched on demand (lightbox), not
+// for inline bubbles.
+const MAX_ENTRIES = 32;
 const objectUrlCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string | null>>();
+// How many live consumers currently hold each object URL. Without this,
+// eviction revoked a blob that a MOUNTED <img> was still displaying, so the
+// element went blank and its onerror handler re-ran the whole IPC byte fetch —
+// a flash-and-refetch storm every time you scrolled past the cache size.
+const refCounts = new Map<string, number>();
+// Evicted-but-still-referenced URLs, revoked once their last consumer releases.
+const retired = new Map<string, string>();
+
+/**
+ * Retain a resolved object URL for as long as the caller needs it, and get a
+ * release function to call from an `$effect`/teardown. Callers MUST release, or
+ * the entry is never revoked (bounded by `MAX_ENTRIES` for the cache, but a
+ * leaked blob is not freed).
+ */
+export function retainAuthedImage(objectUrl: string): () => void {
+	refCounts.set(objectUrl, (refCounts.get(objectUrl) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const next = (refCounts.get(objectUrl) ?? 1) - 1;
+		if (next <= 0) {
+			refCounts.delete(objectUrl);
+			// If it was evicted while still referenced, now is the time to free it.
+			const parked = retired.get(objectUrl);
+			if (parked !== undefined) {
+				retired.delete(objectUrl);
+				try {
+					URL.revokeObjectURL(parked);
+				} catch {
+					// already revoked / not an object URL — nothing to do
+				}
+			}
+		} else {
+			refCounts.set(objectUrl, next);
+		}
+	};
+}
 
 function remember(srcUrl: string, objectUrl: string): void {
 	objectUrlCache.delete(srcUrl);
@@ -62,15 +105,53 @@ function remember(srcUrl: string, objectUrl: string): void {
 		if (oldest === undefined) break;
 		const evicted = objectUrlCache.get(oldest);
 		objectUrlCache.delete(oldest);
-		if (evicted) {
-			try {
-				URL.revokeObjectURL(evicted);
-			} catch {
-				// already revoked / not an object URL — nothing to do
-			}
+		if (evicted === undefined) continue;
+		// Only revoke immediately when nothing is displaying it. Otherwise park
+		// it until the last consumer releases.
+		if ((refCounts.get(evicted) ?? 0) > 0) {
+			retired.set(evicted, evicted);
+			continue;
+		}
+		try {
+			URL.revokeObjectURL(evicted);
+		} catch {
+			// already revoked / not an object URL — nothing to do
 		}
 	}
 }
+
+/** ISO-BMFF major brands that are genuinely video containers. */
+const VIDEO_BRANDS = new Set([
+	"isom",
+	"iso2",
+	"iso4",
+	"iso5",
+	"iso6",
+	"mp41",
+	"mp42",
+	"avc1",
+	"dash",
+	"M4V ",
+	"M4VP",
+	"mmp4",
+	"MSNV",
+	"qt  ",
+]);
+
+/** ISO-BMFF major brands that are IMAGES despite living in the same container. */
+const IMAGE_BRANDS = new Set([
+	"heic",
+	"heix",
+	"hevc",
+	"heim",
+	"heis",
+	"hevm",
+	"hevs",
+	"mif1",
+	"msf1",
+	"avif",
+	"avis",
+]);
 
 /**
  * Sniff an image/video MIME from the leading magic bytes. `<img>` sniffs image
@@ -106,14 +187,21 @@ function sniffMime(b: Uint8Array): string {
 	) {
 		return "image/webp";
 	}
-	if (
-		b.length >= 12 &&
-		b[4] === 0x66 &&
-		b[5] === 0x74 &&
-		b[6] === 0x79 &&
-		b[7] === 0x70
-	) {
-		return "video/mp4";
+	// ISO-BMFF family check. `ftyp` sits at bytes 4..8 of EVERY ISO base-media
+	// container — including HEIC, HEIF and AVIF, which are IMAGES. The previous
+	// check matched on `ftyp` alone, so a HEIC photo was wrapped in a
+	// `video/mp4` blob and an `<img>` could refuse to decode it.
+	//
+	// The MAJOR BRAND lives at bytes 8..12, so check that against the brands that
+	// are actually video.
+	if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+		const majorBrand = String.fromCharCode(b[8], b[9], b[10], b[11]);
+		if (VIDEO_BRANDS.has(majorBrand)) return "video/mp4";
+		// heic/heix/mif1/msf1/avif are still images, not videos.
+		if (IMAGE_BRANDS.has(majorBrand)) {
+			return majorBrand.startsWith("avif") ? "image/avif" : "image/heic";
+		}
+		// Unknown ISO-BMFF brand: fall through rather than guess "video".
 	}
 	if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) {
 		return "video/webm";
