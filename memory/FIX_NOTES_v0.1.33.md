@@ -880,3 +880,20 @@ the same reason and should not be flipped casually.
 step is a device-verified attempt at `kit.csp.mode: 'nonce'`, and it must ship
 as its own batch so it can be reverted independently — a failed attempt blanks
 the app, which is the worst possible regression to bisect into a security batch.
+
+### `autoIncrementVersionCode` is non-monotonic — turned OFF
+
+Rebuilding after the H19 guard produced **versionCode 1066**, one *lower* than
+the 1067 published earlier the same day. So the sequence across three builds was
+`? → 1067 → 1066`: not monotonic. Anyone who installed the first APK (1067)
+would get `INSTALL_FAILED_VERSION_DOWNGRADE` from the second, and the value in
+`tauri.conf.json` was never what shipped either way.
+
+`autoIncrementVersionCode` derives the code from something other than the last
+published value (build-local state, not release history), so it cannot be
+trusted to order releases. **Set to `false` with an explicit `versionCode`.**
+The version code is now something a human sets per release and can reason about,
+which is the only property that actually matters for in-place upgrades.
+
+Verify with `aapt2 dump badging <apk> | grep ^package` after **every** build —
+never assume the value you wrote in the config is the value that shipped.
