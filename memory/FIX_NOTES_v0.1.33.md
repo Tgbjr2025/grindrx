@@ -233,3 +233,60 @@ optional, since the handle is undefined before the chooser mounts.
 
 **Verification:** svelte-check 0 errors / 30 warnings (unchanged) · eslint clean
 on every changed file · vitest 198 passed.
+
+---
+
+## Batch 3 (same version, third commit) — profile photos
+
+### Add / set-main / reorder profile photos
+Previously the app could only **delete** a profile photo. `POST /v3/me/profile/images`
+(upload) and `PUT /v3/me/profile/images` (set primary + secondaries) were never
+called from anywhere in `src/` or `src-tauri/src/`, and `EditProfileSheet` (727
+lines) contained no photo code at all.
+
+- **New Rust command `upload_profile_image`** (`src-tauri/src/api/rest.rs`,
+  registered in `lib.rs`). Posts to the legacy `POST /v4/media/upload`, which
+  returns a **public** 40-char hash. This is a separate path from the existing
+  `upload_image` on purpose: that one targets `POST /v5/chat/media/upload` — the
+  only endpoint that mints a numeric `mediaId` — but it yields a **signed**
+  64-char hash, which is not a valid `primaryImageHash`.
+  `thumbCoords` is a RectF serialised `y2,x1,x2,y1` and **must be square**; the
+  server accepts a non-square crop without error and then **silently drops** the
+  image when it is later referenced. The command therefore computes the largest
+  centred square from the caller-supplied real dimensions, so it is square by
+  construction, and rejects a zero dimension rather than sending a bad crop.
+
+  ⚠️ **THIS RUST IS UNCOMPILED.** There is no cargo/rustc in this environment, so
+  it has not been built, let alone run against the live endpoint. It must be
+  built (`nix run .#build-android`) and tested on device before release. The
+  query-param shape and the hash it returns are the two things to verify first.
+
+- **`setProfilePhotos()`** (`lib/api/profile.ts`) wraps `PUT /v3/me/profile/images`,
+  a plain JSON body, so it goes through `fetchRest` like any other call. Handles
+  both documented traps: `secondaryImageHashes` is sent as `[]` and never `null`
+  (primary + null secondaries is a 400), and the primary is de-duplicated out of
+  the secondaries (repeats are silently dropped server-side).
+
+- **`uploadProfilePhoto()`** validates the response is a 40-char **public** hash,
+  so a signed/chat hash can never reach `primaryImageHash`.
+
+- **Photos page rewritten**: add a photo, promote any photo to "main" (the grid
+  avatar), reorder the extras with arrows, delete. The main photo is tracked
+  separately from the ordered list because the API stores it separately. All
+  mutations are optimistic with rollback, and re-read the server's order after a
+  change. Deleting a photo now **also** re-persists the primary/ordering (it
+  previously left the profile pointing at a deleted hash) and gets a real
+  confirmation dialog, since the delete also purges the CDN copy.
+
+- `downscaleImage()` now reports the true `width`/`height` of the bytes it
+  returns (including the "no downscale needed" and failure paths), because the
+  upload needs them to compute a valid square crop. Previously the small-image
+  path returned early with no dimensions at all.
+
+**Known limitation, unchanged:** album photo add/remove still needs a multipart
+command. `addAlbumContent` still POSTs JSON to a multipart-only endpoint and
+still leaks an undeletable chat-media copy per attempt, and
+`removeAlbumContent` still has no caller. That is the next thing to fix.
+
+**Verification:** svelte-check 0 errors / 30 warnings (unchanged baseline) ·
+eslint clean on changed files · vitest 198 passed. Rust: **not compiled**.
