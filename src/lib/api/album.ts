@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
@@ -205,58 +206,48 @@ export async function deleteAlbum(albumId: number): Promise<void> {
 	throwIfError(res, "delete album");
 }
 
-/**
- * Body sent to add already-uploaded media to an album. Pure + tested.
- *
- * ⚠️ ENDPOINT-SHAPE CAVEAT: the doc
- * (docs/content/grindr-api/messaging/albums.md#upload-media-to-an-album)
- * documents `POST /v1/albums/{albumId}/content` as a **multipart/form-data**
- * upload whose body is the raw file under the field `content` (response
- * `{ contentId, contentUrl }`). This client cannot send multipart: `fetchRest`
- * routes every body through the Tauri `request` bridge, which re-encodes it as
- * JSON (src-tauri/src/api/rest.rs), and there is no album-multipart Tauri
- * command. So — per the task's own instruction — we instead upload the image
- * bytes via the chat-media endpoint (`uploadProfileImage`, which mints
- * `{ mediaId, mediaHash, url }`) and POST that reference as JSON here. The
- * exact JSON field names the album endpoint expects for a by-reference add are
- * NOT documented (the doc only shows the multipart form), so we send BOTH
- * `mediaId` and `mediaHash`; treat this add-by-reference path as best-effort
- * until confirmed against a live server.
- */
-export function buildAddContentBody(media: {
-	mediaId: number;
-	mediaHash: string;
-}): { mediaId: number; mediaHash: string } {
-	return { mediaId: media.mediaId, mediaHash: media.mediaHash };
-}
-
 const addContentResponseSchema = z.object({
 	contentId: z.coerce.number().int().optional(),
 });
 
 /**
- * Add previously-uploaded media to an album. See `buildAddContentBody` for the
- * important caveat about this endpoint's request shape. Returns the new
- * `contentId` when the server provides one.
+ * Upload image bytes into an album: `POST /v1/albums/{albumId}/content`.
+ *
+ * ⚠️ This replaces a broken by-reference implementation. The endpoint is
+ * `multipart/form-data` with the raw file under the field `content`, but the
+ * generic `request` bridge re-encodes every body as JSON
+ * (`src-tauri/src/api/rest.rs`), so the WebView could not reach it. The previous
+ * code therefore uploaded the bytes to the **chat** media store to mint a
+ * `{mediaId, mediaHash}` and POST that as JSON to a multipart-only endpoint. It
+ * failed, and because there is no `chat/media/delete` endpoint wired up, every
+ * attempt orphaned an undeletable copy of the photo in the chat media store.
+ *
+ * `upload_album_content` is a dedicated Tauri command that builds a real
+ * multipart body, so the bytes go straight to the album.
  */
-export async function addAlbumContent({
+export async function addAlbumContentFromBytes({
 	albumId,
-	media,
+	base64,
+	mimeType,
 }: {
 	albumId: number;
-	media: { mediaId: number; mediaHash: string };
+	base64: string;
+	mimeType: string;
 }): Promise<{ contentId: number | null }> {
-	const res = await fetchRest(`/v1/albums/${albumId}/content`, {
-		method: "POST",
-		body: buildAddContentBody(media),
+	const res = await invoke<{ status: number; body: string }>("upload_album_content", {
+		albumId,
+		imageBase64: base64,
+		mimeType,
 	});
-	throwIfError(res, "add photo to album");
-	// The success body for the by-reference add is unconfirmed (see
-	// buildAddContentBody) and may be empty, so parse defensively — an empty or
-	// non-JSON 2xx body is still a success, just without a returned contentId.
+	if (res.status < 200 || res.status >= 300) {
+		throw new Error(`HTTP ${res.status}: ${res.body.slice(0, 200)}`);
+	}
+	// The documented success body is `{ contentId, contentUrl }`, but treat an
+	// empty/non-JSON 2xx as success-without-an-id rather than failing a photo
+	// that did land.
 	let contentId: number | null = null;
 	try {
-		const parsed = addContentResponseSchema.safeParse(JSON.parse(res.text()));
+		const parsed = addContentResponseSchema.safeParse(JSON.parse(res.body));
 		if (parsed.success) contentId = parsed.data.contentId ?? null;
 	} catch {
 		// empty / non-JSON body — treated as a success with no id

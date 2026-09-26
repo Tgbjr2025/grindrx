@@ -1,0 +1,51 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "GrindrX",
+	"version": "0.1.30",
+	"identifier": "org.opengrind",
+	"build": {
+		"beforeDevCommand": "bun run dev:web",
+		"devUrl": "http://localhost:1420",
+		"beforeBuildCommand": "bun run build",
+		"frontendDist": "../build"
+	},
+	"app": {
+		"windows": [
+			{
+				"label": "main",
+				"title": "GrindrX",
+				"width": 1000,
+				"height": 800,
+				"minWidth": 320,
+				"minHeight": 300,
+				"theme": "Dark",
+				"userAgent": "GrindrX/0.1.0 (+https://git.dominusaxis.com/dominus/open-grind)",
+				"titleBarStyle": "Visible",
+				"backgroundColor": "#1e1e1e"
+			}
+		],
+		"security": {
+			"csp": "default-src 'self' tauri: asset:; connect-src 'self' tauri: asset: data: https://analytics.dominusaxis.com; img-src 'self' tauri: asset: data: https://cdns.grindr.com https://*.grindr.com https://*.cloudfront.net https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.tile.openstreetmap.org blob:; media-src 'self' tauri: asset: blob: https://*.grindr.com https://*.cloudfront.net; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'",
+			"dangerousDisableAssetCspModification": ["style-src"]
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		],
+		"macOS": {
+			"signingIdentity": "tauri-dev"
+		},
+		"android": {
+			"autoIncrementVersionCode": true,
+			"minSdkVersion": 28,
+			"versionCode": 1075
+		}
+	}
+}

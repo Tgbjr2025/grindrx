@@ -74,7 +74,9 @@ impl GrindrClient {
         #[cfg(all(target_os = "macos", not(feature = "keychain")))]
         let session = None;
         #[cfg(not(all(target_os = "macos", not(feature = "keychain"))))]
-        let session = match super::auth::AuthStorage::get_session() {
+        // `new()` is sync (Tauri `setup` hook), so use the blocking keystore
+        // read here. Every other caller goes through the async wrapper.
+        let session = match super::auth::AuthStorage::get_session_blocking() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[client] could not load session: {e}");
@@ -111,7 +113,7 @@ impl GrindrClient {
 
     #[allow(dead_code)]
     pub async fn reload_session(&self) {
-        match super::auth::AuthStorage::get_session() {
+        match super::auth::AuthStorage::get_session().await {
             Ok(s) => *self.session.write().await = s,
             Err(e) => eprintln!("[client] reload_session: {e}"),
         }

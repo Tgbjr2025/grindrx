@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ backup/transfer rules.
+
+  `allowBackup="false"` already disables `adb backup` and cloud backup, but
+  device-to-device transfer is controlled separately by these rules, so both are
+  excluded explicitly. Without this the app's data directory could be extracted
+  with `adb backup` or moved to a new device, and it contains:
+    - preferences.data (msgpack) - contains the user's geohash, i.e. their
+      location at roughly +/-4 m, plus every grid filter
+    - WebView localStorage - the app-lock salt and PIN hash
+    - grindrx-mediaid-cache     - signed CloudFront URLs
+  None of that should leave the device the user installed it on.
+-->
+<data-extraction-rules>
+	<cloud-backup>
+		<exclude domain="root" />
+		<exclude domain="file" />
+		<exclude domain="database" />
+		<exclude domain="sharedpref" />
+		<exclude domain="external" />
+	</cloud-backup>
+	<device-transfer>
+		<exclude domain="root" />
+		<exclude domain="file" />
+		<exclude domain="database" />
+		<exclude domain="sharedpref" />
+		<exclude domain="external" />
+	</device-transfer>
+</data-extraction-rules>

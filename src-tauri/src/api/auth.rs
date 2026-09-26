@@ -115,7 +115,25 @@ impl AuthStorage {
     fn get_session_entry() -> Result<Entry, AppError> {
         Entry::new("open-grind", "session").map_err(|e| AppError::Auth(e.to_string()))
     }
-    pub fn get_session() -> Result<Option<Session>, AppError> {
+    /// Read the session from the OS keystore.
+    ///
+    /// The keyring call is SYNCHRONOUS and on Android goes through JNI to the
+    /// Keystore, which takes tens of milliseconds and can spike under load. It
+    /// used to be called directly from `async fn`s with no `spawn_blocking`, so
+    /// it stalled the shared runtime — including the WS loop and every in-flight
+    /// API call. Worse, `authorization_header` calls this INSIDE the refresh
+    /// critical section, so the stall was paid by every request queued behind the
+    /// lock.
+    pub async fn get_session() -> Result<Option<Session>, AppError> {
+        tauri::async_runtime::spawn_blocking(Self::get_session_blocking)
+            .await
+            .map_err(|e| AppError::Auth(format!("Keyring read task failed: {e}")))?
+    }
+
+    /// Synchronous keystore read, for the SYNC startup path only
+    /// (`GrindrClient::new`, which runs in Tauri's `setup` hook). Everywhere
+    /// else use the async `get_session` above.
+    pub fn get_session_blocking() -> Result<Option<Session>, AppError> {
         let entry = Self::get_session_entry()?;
         let session_bytes = match entry.get_secret() {
             Ok(bytes) => bytes,
@@ -162,7 +180,20 @@ impl GrindrClient {
             session_id: session_resp.session_id,
             auth_token: session_resp.auth_token,
             // FIX 6: truncate f64 → u64 (fractional seconds are irrelevant for expiry checks)
-            expires_at: claims.exp as u64,
+            //
+            // But validate first. `f64 as u64` saturates, so a negative, NaN or
+            // missing `exp` becomes 0 — which `authorization_header` reads as
+            // "already expired". Every subsequent API call would then perform a
+            // wasted refresh round-trip, forever. Reject the session at creation
+            // rather than storing a permanently-expired one.
+            expires_at: {
+                if !claims.exp.is_finite() || claims.exp <= 0.0 {
+                    return Err(AppError::Auth(
+                        "Session token has no usable expiry".to_owned(),
+                    ));
+                }
+                claims.exp as u64
+            },
         };
 
         AuthStorage::set_session(&session)?;
@@ -199,7 +230,7 @@ impl GrindrClient {
         if !response.status().is_success() {
             let json: serde_json::Value = response.json().await.unwrap_or_default();
             return Err(AppError::Api {
-                code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0) as i32,
+                code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0),
                 message: json
                     .get("message")
                     .and_then(|m| m.as_str())
@@ -312,7 +343,7 @@ pub async fn login(
     // Force any still-live WS connection (e.g. an account switch that never
     // called `logout`) to drop so it reconnects under the new session
     // instead of continuing to deliver the previous account's events.
-    state.ws_reset.notify_waiters();
+    state.bump_ws_epoch();
     state.auth_notify.notify_one();
     Ok(result)
 }
@@ -344,9 +375,14 @@ pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     AuthStorage::delete_session();
     // Drop any live WS connection immediately — without this the previous
     // account's realtime events/notifications keep flowing until the socket
-    // naturally expires (Grindr session JWTs live up to 30 min). See
-    // `api::ws::run_message_loop`'s `ws_reset` select! arm.
-    state.ws_reset.notify_waiters();
+    // naturally expires (Grindr session JWTs live up to 30 min).
+    //
+    // Bumping the epoch (rather than notifying a `Notify`) is what makes this
+    // reliable: a `Notify` only wakes waiters registered at that instant, and
+    // the connection task is not waiting during its backoff or its handshake,
+    // so a logout in that window used to be silently dropped. See
+    // `AppState::ws_epoch`.
+    state.bump_ws_epoch();
     Ok(())
 }
 

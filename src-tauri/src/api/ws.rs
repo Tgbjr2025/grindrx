@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{
-    connect_async,
+    connect_async_tls_with_config,
     tungstenite::{client::IntoClientRequest, http::HeaderValue, Message},
 };
 
@@ -33,10 +33,18 @@ enum WsOutcome {
     Disconnected(AppError),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct WsCommand {
     pub r#type: String,
-    #[serde(rename = "ref")]
+    /// Incoming commands from the WebView arrive as `ref_id`, but the outgoing
+    /// frame must use `ref`. The previous `#[serde(rename = "ref")]` with no
+    /// alias made the IPC deserializer require `ref`, so EVERY `ws_send` call
+    /// failed with `missing field 'ref'` -> `InvalidArgs`. It was latent only
+    /// because the frontend never called `ws.send()`; it is a landmine for the
+    /// first typing/tap feature. The rename was only ever needed for the
+    /// outgoing frame, which is hand-built with `serde_json::json!` and never
+    /// used this type's `Serialize` impl (hence `Serialize` is now removed).
+    #[serde(rename = "ref", alias = "ref_id")]
     pub ref_id: String,
     pub payload: Value,
 }
@@ -45,6 +53,12 @@ pub fn spawn_ws_task(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         run_ws_loop(app).await;
     });
+}
+
+/// Scale a backoff duration by a random factor in the range 0.8 to 1.2.
+fn jitter(d: Duration) -> Duration {
+    let factor = 0.8 + rand::random::<f64>() * 0.4;
+    d.mul_f64(factor)
 }
 
 async fn run_ws_loop(app: AppHandle) {
@@ -68,7 +82,11 @@ async fn run_ws_loop(app: AppHandle) {
                 eprintln!("[ws] error: {e}");
                 app.emit("ws:disconnected", ()).ok();
                 state.auth_notify.notify_one();
-                sleep(backoff).await;
+                // Jitter the backoff. A deterministic 1->2->4 ladder means a fleet
+                // disconnected by one server blip retries in lockstep and hammers
+                // the server again the instant it recovers. +/-20% randomises it.
+                let jittered = jitter(backoff);
+                sleep(jittered).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
             }
         }
@@ -78,6 +96,14 @@ async fn run_ws_loop(app: AppHandle) {
 async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
     let state = app.state::<AppState>();
 
+    // Snapshot the session epoch BEFORE we start using credentials. Everything
+    // below (token fetch, backoff, the up-to-15s handshake) happens under this
+    // snapshot; if the epoch moves while we are connecting, the token we captured
+    // and the socket we are about to open both belong to a session that no
+    // longer exists, and we must bail rather than emit `ws:connected` and start
+    // delivering another account's events.
+    let connect_epoch = state.ws_epoch();
+
     // --- Build authorization header ---
     let authorization = match state.client() {
         Err(e) => return WsOutcome::Disconnected(e),
@@ -86,6 +112,11 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
             None => return WsOutcome::Disconnected(AppError::Auth("Not logged in".to_owned())),
         },
     };
+
+    // Re-check after the (potentially slow) token fetch/refresh.
+    if state.ws_epoch() != connect_epoch {
+        return WsOutcome::Disconnected(AppError::Auth("Session ended".to_owned()));
+    }
 
     let mut request = match WS_URL.into_client_request() {
         Ok(r) => r,
@@ -123,7 +154,22 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
         headers.insert("User-Agent", ua_hv);
     }
 
-    let (ws_stream, _) = match timeout(CONNECT_TIMEOUT, connect_async(request)).await {
+    // Cap frame/message size. tungstenite's defaults are 16 MiB frame / 64 MiB
+    // message, and every text frame is JSON-parsed into a Value and re-emitted
+    // to the WebView, so a single large frame is a large allocation plus a large
+    // IPC payload. Real chat frames are tiny.
+    let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+        max_message_size: Some(1024 * 1024),
+        max_frame_size: Some(1024 * 1024),
+        ..Default::default()
+    };
+
+    let (ws_stream, _) = match timeout(
+        CONNECT_TIMEOUT,
+        connect_async_tls_with_config(request, None, Some(ws_config)),
+    )
+    .await
+    {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             return WsOutcome::Disconnected(AppError::Http(format!("WS connect failed: {e}")))
@@ -135,6 +181,14 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
             )))
         }
     };
+
+    // The handshake can take up to CONNECT_TIMEOUT (15s). A `logout` or account
+    // switch during that window invalidates the token we just used, so check the
+    // epoch BEFORE announcing the connection and before the message loop starts
+    // emitting frames. This is the case the old `Notify` silently dropped.
+    if state.ws_epoch() != connect_epoch {
+        return WsOutcome::Disconnected(AppError::Auth("Session ended".to_owned()));
+    }
 
     app.emit("ws:connected", ()).ok();
     // FIX (ws-backoff-reset-on-handshake): do NOT reset backoff here. A
@@ -186,13 +240,26 @@ async fn run_message_loop(
     // When true, the next heartbeat tick without a Pong means the connection is dead.
     let mut waiting_for_pong = false;
 
-    // ws-not-torn-down-on-logout: dropped whenever `logout`/`login` fires it,
-    // forcing this loop to give up the socket instead of continuing to
-    // deliver a stale (or now-wrong-account) session's events.
-    let ws_reset = app.state::<AppState>().ws_reset.clone();
+    // ws-not-torn-down-on-logout: the session epoch this connection was opened
+    // under. `logout`/`login` bump it, and any mismatch means this socket is
+    // stale (or belongs to a previous account), so we drop it.
+    //
+    // An epoch rather than a `Notify` because `notify_waiters()` only wakes
+    // waiters registered at that instant and stores no permit — a logout during
+    // the backoff sleep or the 15s connect handshake was silently dropped and
+    // the socket then ran on with the pre-logout token.
+    let state = app.state::<AppState>();
+    let connected_epoch = state.ws_epoch();
+    let ws_reset_notify = state.ws_reset_notify.clone();
 
     loop {
+        // `biased` with the read arm first: a Pong already sitting in the queue
+        // MUST be seen before the heartbeat tick declares the connection dead.
+        // `tokio::select!` otherwise picks a ready branch at RANDOM, so a Pong
+        // landing in the same poll iteration as the tick could be ignored and a
+        // perfectly healthy connection torn down (then fully reconnected).
         tokio::select! {
+            biased;
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(text))) => {
                     // ws-backoff-reset-on-handshake: a real frame from the
@@ -311,15 +378,18 @@ async fn run_message_loop(
                 waiting_for_pong = true;
             }
 
-            // ws-not-torn-down-on-logout: `logout` (or `login`, for an
-            // account switch) fired `ws_reset` — drop this socket now rather
-            // than keep emitting the outgoing session's events. The outer
-            // loop (run_ws_loop) treats AppError::Auth as "wait for the next
-            // login", which is exactly what we want here.
-            _ = ws_reset.notified() => {
-                return WsOutcome::Disconnected(AppError::Auth(
-                    "Session ended".to_owned(),
-                ));
+            // ws-not-torn-down-on-logout: the session changed under us
+            // (`logout`, or `login` for an account switch) — drop this socket
+            // rather than keep emitting the previous session's events. The
+            // outer loop (run_ws_loop) treats AppError::Auth as "wait for the
+            // next login", which is exactly what we want here.
+            _ = ws_reset_notify.notified() => {
+                // Wakeup hint only; the epoch decides. A stale wakeup is a no-op.
+                if state.ws_epoch() != connected_epoch {
+                    return WsOutcome::Disconnected(AppError::Auth(
+                        "Session ended".to_owned(),
+                    ));
+                }
             }
         }
     }
@@ -357,11 +427,15 @@ fn message_preview(val: &Value) -> String {
 /// hidden tail and (more importantly) emitted so the frontend deep-link handler
 /// can route a tap to /chat/{conversationId}.
 fn maybe_notify_message(app: &AppHandle, val: &Value) {
-    if !app
-        .state::<crate::state::AppState>()
-        .notify_messages
-        .load(Ordering::Relaxed)
-    {
+    let state = app.state::<crate::state::AppState>();
+    // Stay silent until the WebView has pushed the real preferences. They used
+    // to default to `true` in Rust and were corrected only after an async file
+    // read, so a message arriving during startup fired a notification the user
+    // had explicitly turned off.
+    if !state.prefs_loaded.load(Ordering::SeqCst) {
+        return;
+    }
+    if !state.notify_messages.load(Ordering::Relaxed) {
         return;
     }
     let body = message_preview(val);
@@ -373,11 +447,11 @@ fn maybe_notify_message(app: &AppHandle, val: &Value) {
 /// Posts a system notification for an incoming tap (`tap.v1.tap_sent`).
 /// The tap payload includes `senderDisplayName`, so we can use it as the title.
 fn maybe_notify_tap(app: &AppHandle, val: &Value) {
-    if !app
-        .state::<crate::state::AppState>()
-        .notify_taps
-        .load(Ordering::Relaxed)
-    {
+    let state = app.state::<crate::state::AppState>();
+    if !state.prefs_loaded.load(Ordering::SeqCst) {
+        return;
+    }
+    if !state.notify_taps.load(Ordering::Relaxed) {
         return;
     }
     let title = val["payload"]["senderDisplayName"]
@@ -441,9 +515,19 @@ pub async fn ws_send(
         .as_ref()
         .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
 
-    state
-        .ws_tx
-        .send(command)
-        .await
-        .map_err(|_| AppError::Http("WS not connected".to_owned()))
+    // The channel is bounded (64) and its receiver lives for the process
+    // lifetime, so `send` never returns Err and the old "WS not connected"
+    // error path was unreachable. With the socket down through a 30s backoff
+    // plus connect attempts, the 65th command would await forever and the
+    // Tauri IPC promise would never settle — a hung `await invoke("ws_send")`
+    // with no error and no timeout. Bound it, and surface the timeout instead
+    // of hanging.
+    const WS_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+    match tokio::time::timeout(WS_SEND_TIMEOUT, state.ws_tx.send(command)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(_)) => Err(AppError::Http("WS not connected".to_owned())),
+        Err(_) => Err(AppError::Http(
+            "WS send timed out — the socket is not accepting commands".to_owned(),
+        )),
+    }
 }

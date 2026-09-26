@@ -111,8 +111,13 @@ impl GrindrClient {
 
         if !response.status().is_success() {
             let json: serde_json::Value = response.json().await.unwrap_or_default();
+            // Keep the field i64 end-to-end. It used to be truncated with
+            // `as i32`, which WRAPS: a server code of 4294967697 became 401,
+            // and `authorization_header` treats 401/403 as "session invalid" and
+            // DELETES the keyring session — a spurious forced logout from a
+            // truncated integer.
             return Err(AppError::Api {
-                code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0) as i32,
+                code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0),
                 message: json
                     .get("message")
                     .and_then(|m| m.as_str())
@@ -180,7 +185,12 @@ impl GrindrClient {
             }
             if let Some(b) = request.body() {
                 match b.as_bytes() {
-                    Some(bytes) => println!("Body: {}", String::from_utf8_lossy(bytes)),
+                    // Bodies carry chat text, profile edits, taps and — via
+                    // /v1/accounts and the password endpoints — the account
+                    // password. `bun dev:android` on a real device wrote all of
+                    // it to logcat while the Authorization header above was
+                    // correctly redacted. Print the shape, not the content.
+                    Some(bytes) => println!("Body: <{} bytes redacted>", bytes.len()),
                     None => println!("Body: <streaming>"),
                 }
             } else {
@@ -191,7 +201,14 @@ impl GrindrClient {
 
         let response = http.execute(request).await?;
         let status = response.status().as_u16();
-        let body = response.bytes().await?.to_vec();
+        // Cap the RESPONSE too. `MAX_FETCH_BYTES` was only applied to the
+        // media paths, so this generic bridge — used for every API call — did
+        // `response.bytes().await?` uncapped and then msgpack+base64 encoded the
+        // result, peaking at 3-4x the response size. One unexpectedly large (or
+        // deliberately inflated) response could OOM the process on a low-RAM
+        // device. The cap is generous: real API responses are far smaller, and
+        // media goes through the dedicated media commands.
+        let body = stream_capped_body(response, MAX_API_RESPONSE_BYTES).await?;
 
         Ok(RawResponse { status, body })
     }
@@ -225,7 +242,14 @@ impl GrindrClient {
         let request = request.build().map_err(|e| AppError::Http(e.to_string()))?;
         let response = http.execute(request).await?;
         let status = response.status().as_u16();
-        let body = response.bytes().await?.to_vec();
+        // Cap the RESPONSE too. `MAX_FETCH_BYTES` was only applied to the
+        // media paths, so this generic bridge — used for every API call — did
+        // `response.bytes().await?` uncapped and then msgpack+base64 encoded the
+        // result, peaking at 3-4x the response size. One unexpectedly large (or
+        // deliberately inflated) response could OOM the process on a low-RAM
+        // device. The cap is generous: real API responses are far smaller, and
+        // media goes through the dedicated media commands.
+        let body = stream_capped_body(response, MAX_API_RESPONSE_BYTES).await?;
 
         Ok(RawResponse { status, body })
     }
@@ -278,6 +302,81 @@ pub async fn upload_image(
         .header("L-Grindr-Roles", grindr_roles_header_value())
         .header("Content-Type", &mime_type)
         .body(bytes)
+        .send()
+        .await?;
+
+    let status = response.status().as_u16();
+    let body = response.text().await.unwrap_or_default();
+
+    Ok(UploadImageResult { status, body })
+}
+
+/// Add raw image bytes to an album: `POST /v1/albums/{albumId}/content`.
+///
+/// This exists because the generic `request` bridge CANNOT do this job. Every
+/// body that crosses `request` is msgpack-decoded and re-sent as
+/// `application/json`, so a `multipart/form-data` endpoint is unreachable from
+/// the WebView. `addAlbumContent` in the frontend therefore had to upload the
+/// bytes to the CHAT media store and then POST a JSON `{mediaId, mediaHash}`
+/// reference to a multipart-only endpoint — which fails, and orphans an
+/// undeletable copy of the photo in the chat media store on every attempt.
+///
+/// The documented shape is multipart with the raw file under the field `content`
+/// (response `{ contentId, contentUrl }`). `boundary` must be unique enough not
+/// to appear in the payload; the bytes are image data, so a fixed
+/// application/octet-stream boundary is safe in practice, and the filename is
+/// fixed rather than derived from user input so it cannot inject a header.
+#[tauri::command]
+pub async fn upload_album_content(
+    state: tauri::State<'_, AppState>,
+    album_id: u64,
+    image_base64: String,
+    mime_type: String,
+) -> Result<UploadImageResult, AppError> {
+    const MAX_IMAGE_BASE64: usize = 30 * 1024 * 1024;
+    if image_base64.len() > MAX_IMAGE_BASE64 {
+        return Err(AppError::Http("Image payload too large".to_owned()));
+    }
+    let bytes = STANDARD
+        .decode(&image_base64)
+        .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
+
+    // Only send an image Content-Type; anything else would be sent to a
+    // multipart endpoint as an opaque blob. Default to JPEG when unknown.
+    let safe_mime = if mime_type.starts_with("image/") {
+        mime_type
+    } else {
+        "image/jpeg".to_owned()
+    };
+
+    let authorization = state
+        .client()?
+        .authorization_header()
+        .await
+        .ok_or_else(|| AppError::Auth("Not logged in".to_owned()))?;
+
+    let http = state.client()?.http.read().await.clone();
+
+    let boundary = "----GrindrXAlbumBoundary7f3a1c9e";
+    let mut body: Vec<u8> = Vec::with_capacity(bytes.len() + 256);
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"content\"; filename=\"photo\"\r\n",
+    );
+    body.extend_from_slice(format!("Content-Type: {safe_mime}\r\n\r\n").as_bytes());
+    body.extend_from_slice(&bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let url = format!("{BASE_URL}/v1/albums/{album_id}/content");
+    let response = http
+        .post(url)
+        .header("Authorization", authorization)
+        .header("L-Grindr-Roles", grindr_roles_header_value())
+        .header(
+            "Content-Type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body)
         .send()
         .await?;
 
@@ -371,6 +470,12 @@ pub async fn upload_profile_image(
 // before we could check the size. Shared by `fetch_authed_bytes` and
 // `fetch_media_bytes`.
 const MAX_FETCH_BYTES: usize = 10 * 1024 * 1024;
+
+/// Cap for a single API response body coming back through the generic
+/// `request` bridge. Large media never travels this path (it uses
+/// `fetch_authed_bytes` / `fetch_media_bytes`, capped at `MAX_FETCH_BYTES`),
+/// so this only needs to accommodate big JSON/msgpack payloads.
+const MAX_API_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 async fn stream_capped_body(
     response: reqwest::Response,

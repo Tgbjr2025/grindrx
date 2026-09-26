@@ -7,7 +7,14 @@ use serde::Serialize;
 pub enum AppError {
     Http(String),
     Auth(String),
-    Api { code: i32, message: String },
+    Api {
+        /// i64, not i32: a server `code` is a 64-bit value and truncating it
+        /// with `as i32` wraps (4294967697 -> 401), which `authorization_header`
+        /// then treats as an invalid session and DELETES the stored credential —
+        /// a spurious forced logout from an integer overflow.
+        code: i64,
+        message: String,
+    },
     NotInitialized,
 }
 
