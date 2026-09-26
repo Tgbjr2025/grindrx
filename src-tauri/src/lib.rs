@@ -3,7 +3,7 @@ mod error;
 mod state;
 mod storage;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 use tokio::sync::{mpsc, Notify};

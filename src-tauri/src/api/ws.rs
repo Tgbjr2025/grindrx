@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
@@ -158,15 +158,19 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
     // message, and every text frame is JSON-parsed into a Value and re-emitted
     // to the WebView, so a single large frame is a large allocation plus a large
     // IPC payload. Real chat frames are tiny.
-    let ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
-        max_message_size: Some(1024 * 1024),
-        max_frame_size: Some(1024 * 1024),
-        ..Default::default()
-    };
+    // `WebSocketConfig` is `#[non_exhaustive]`, so it cannot be built with a
+    // struct literal (not even with `..Default::default()`); start from
+    // `default()` and assign the fields.
+    let mut ws_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default();
+    ws_config.max_message_size = Some(1024 * 1024);
+    ws_config.max_frame_size = Some(1024 * 1024);
 
     let (ws_stream, _) = match timeout(
         CONNECT_TIMEOUT,
-        connect_async_tls_with_config(request, None, Some(ws_config)),
+        // 4 args: (request, config, disable_nagle, connector). `false` matches
+        // the `disable_nagle` that plain `connect_async` used before the frame
+        // cap was added, and `None` keeps the crate's default TLS connector.
+        connect_async_tls_with_config(request, Some(ws_config), false, None),
     )
     .await
     {

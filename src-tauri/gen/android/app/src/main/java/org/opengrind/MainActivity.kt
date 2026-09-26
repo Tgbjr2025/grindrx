@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -136,6 +137,20 @@ class MainActivity : TauriActivity() {
 		enableEdgeToEdge()
 		Keyring.initializeNdkContext(applicationContext)
 		super.onCreate(savedInstanceState)
+
+		// FLAG_SECURE: without it the OS captures the current screen into the
+		// recents/multitasker thumbnail and allows screenshots and screen
+		// recording. This app shows intimate content by design — chat text,
+		// profile photos, album photos and precise location — so any of those
+		// landing in a screenshot the user then shares, or in a thumbnail
+		// visible from the recents switcher, is a real disclosure. Setting it on
+		// the window covers the WebView surface too, so it cannot be bypassed by
+		// the page rendering its own canvas.
+		window.setFlags(
+			WindowManager.LayoutParams.FLAG_SECURE,
+			WindowManager.LayoutParams.FLAG_SECURE
+		)
+
 		createNotificationChannel()
 		requestNotificationPermissionIfNeeded()
 
