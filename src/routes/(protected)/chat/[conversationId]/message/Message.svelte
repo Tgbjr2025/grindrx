@@ -36,8 +36,11 @@
 		onVisible,
 		onUnsend,
 		onRetry,
+		ourProfileId,
 	}: {
 		message: ApiResponseMessage;
+		/** The current user, so a reaction badge can show which one is ours. */
+		ourProfileId?: number;
 		isOut: boolean;
 		indexInStack: number;
 		stackLength: number;
@@ -161,12 +164,22 @@
 				(m, r) => m.set(r.reactionType, (m.get(r.reactionType) ?? 0) + 1),
 				new Map<number, number>(),
 			)}
+			<!-- Which reaction types WE added, so the badge can say so. -->
+			{@const myReactionTypes = new Set(
+				message.reactions
+					.filter((r) => ourProfileId !== undefined && r.profileId === ourProfileId)
+					.map((r) => r.reactionType),
+			)}
 			<div
 				class="flex items-center gap-0.5 mt-1 mr-1"
 				transition:scale={{ duration: 150, easing: expoOut }}
 			>
 				{#each reactionMap.entries() as [type, count]}
-					<Reaction type={Number(type)} {count} />
+					<Reaction
+						type={Number(type)}
+						{count}
+						mine={myReactionTypes.has(Number(type))}
+					/>
 				{/each}
 			</div>
 		{/if}
@@ -232,6 +245,13 @@
 			{@render retractedContent()}
 		</div>
 	{:else}
+		<!--
+			Double-tap reaction removed. The old `ondblclick` called
+			preventDefault() and removeAllRanges() on every double-tap, so a user
+			double-tapping to SELECT and copy a word instead fired a 🔥. The context
+			menu now carries a real reaction picker (see MessageContextMenu), which
+			also works on touch where a double-tap is ambiguous with scroll/zoom.
+		-->
 		<div
 			class={{
 				"*:me-auto *:float-start pe-3": !isOut,
@@ -240,13 +260,6 @@
 			role="button"
 			tabindex="0"
 			aria-label="Message"
-			ondblclick={(event) => {
-				if (!isOut && onReact) {
-					event.preventDefault();
-					onReact(1);
-				}
-				window.getSelection()?.removeAllRanges();
-			}}
 			onkeydown={(event) => {
 				if (event.key === "Enter" || event.key === " ") {
 					if (event.key === " ") event.preventDefault();
@@ -305,7 +318,8 @@
 		onClose={() => (contextMenuOpen = false)}
 		style={inheritedStyles}
 		textContent={message.type === "Text" ? message.body.text : undefined}
-		reactionAvailable={message.reactions.length === 0 && !isOut}
+		reactionAvailable={message.reactions.length < 6}
+		{onReact}
 		reportProfileId={!isOut ? message.senderId : undefined}
 		{onDelete}
 		{onUnsend}

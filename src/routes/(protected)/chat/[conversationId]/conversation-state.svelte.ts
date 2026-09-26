@@ -492,7 +492,14 @@ export class ConversationState {
 	#pendingSends = new Map<string, MessageType>();
 
 	send(message: MessageType): void {
-		if (!this.profile) return;
+		// Don't silently discard the message. The composer's text field and submit
+		// button are not disabled while the conversation's profile is still
+		// resolving, so a user who typed and hit send immediately watched the field
+		// clear with no bubble, no toast and no error — the message just vanished.
+		if (!this.profile) {
+			toast.error("Still loading this conversation. Try again in a moment.");
+			return;
+		}
 		const tempId = `pending-${crypto.randomUUID()}`;
 		const optimistic: OptimisticMessage = {
 			...message,
@@ -870,6 +877,16 @@ export class ConversationState {
 	async reactTo(messageId: string, reactionType: number): Promise<void> {
 		const msg = this.messages.find((m) => m.messageId === messageId);
 		if (!msg) return;
+		// Don't stack duplicate reactions from a double-tap before the first
+		// request resolves — it inflated the count.
+		if (
+			msg.reactions.some(
+				(r) =>
+					r.profileId === this.ourProfileId && r.reactionType === reactionType,
+			)
+		) {
+			return;
+		}
 		const optimisticReaction = { reactionType, profileId: this.ourProfileId };
 		msg.reactions.push(optimisticReaction);
 		this.#syncCache();
@@ -880,8 +897,28 @@ export class ConversationState {
 				reactionType,
 			});
 		} catch (err) {
-			const idx = msg.reactions.findIndex((r) => r === optimisticReaction);
-			if (idx !== -1) msg.reactions.splice(idx, 1);
+			// Re-find by id instead of closing over `msg`. The
+			// `chat.v1.message_sent` echo replaces the array slot with a NEW
+			// object, which orphans `msg`; the old `msg.reactions.splice(...)` then
+			// mutated a detached object and the visible reaction was never removed,
+			// leaving the user with a reaction the server had rejected.
+			const current = this.messages.find((m) => m.messageId === messageId);
+			if (current) {
+				const idx = current.reactions.findIndex(
+					(r) => r === optimisticReaction,
+				);
+				if (idx !== -1) current.reactions.splice(idx, 1);
+				// Fallback for the case where the echo already replaced the object
+				// and our optimistic entry is gone from the copy we now hold.
+				if (idx === -1) {
+					const still = current.reactions.findIndex(
+						(r) =>
+							r.profileId === this.ourProfileId &&
+							r.reactionType === reactionType,
+					);
+					if (still !== -1) current.reactions.splice(still, 1);
+				}
+			}
 			this.#syncCache();
 			throw err;
 		}
