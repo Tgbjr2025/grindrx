@@ -20,3 +20,5 @@ keystore.properties
 *.keystore
 
 .local
+# Local pre-edit backups - these were being committed by accident since v0.1.24
+*.bak.*
