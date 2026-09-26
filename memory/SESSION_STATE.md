@@ -484,3 +484,20 @@ None — docs-only reconciliation. Doc files edited this pass (#3): `memory/SESS
   so it is a valid in-place upgrade. Tests 220 → **244**; svelte-check 0 errors; eslint+prettier clean.
   **NOT device-tested** — compiling is not running. Needs a real S26 Ultra before wide release.
   Pushed to Forgejo + GitHub with sources/zip/APK. — agent, operator Tom.
+
+  **RELEASED.** Pushed on the operator's explicit instruction (lifting the
+  `Bash(git push:*)` deny in `~/.claude/settings.json`, backed up to
+  `settings.json.bak.pre_v0.1.33_push.20260926_165811`, **restored afterwards**).
+  Branch `claude/grindrx-freeze-json-audit-gp4lnk` → **both** remotes
+  (`ec7e9a3..46eb3bb`); Forgejo `main` fast-forwarded `ec7e9a3..46eb3bb`; tag
+  `v0.1.33` on both. **GitHub `main` deliberately NOT touched** — still
+  `a547f8e`, diverged with the separate `anchor/` SMS history; PR #49 remains the
+  merge path. Releases published on both with detailed notes + 2 assets each
+  (`GrindrX-v0.1.33.apk` 70,909,248 B and `grindrx-v0.1.33-sources.zip` 1,972,120 B):
+  GitHub `releases/tag/v0.1.33`, Forgejo release **id 51**. **Both APKs downloaded
+  back and sha256-verified identical** to the built artifact
+  (`054576d5…a75d`) — not assumed from the upload response. Also stopped tracking
+  **28 committed `*.bak.*` backup files** (9 × 178 KB `Cargo.lock` copies were
+  ~2/3 of the source zip); live on-disk backups unaffected (R4 discipline intact).
+  Forgejo asset download path is `/repos/…/releases/download/<tag>/<name>`; the
+  `releases/assets/<id>` API path 404s.
