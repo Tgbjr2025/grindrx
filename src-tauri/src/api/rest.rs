@@ -150,8 +150,14 @@ impl GrindrClient {
             if body.len() > MAX_REQUEST_PAYLOAD_BYTES {
                 return Err(AppError::Http("Request body too large".to_owned()));
             }
+            // Bound NESTING DEPTH, not just byte length: a 1-element array is one
+            // byte, so an 8 MB body can be ~8M levels deep and overflow the
+            // decoder's stack - which aborts the process rather than returning an
+            // Err, so it cannot be handled at the call site. See `msgpack_depth`.
+            crate::api::msgpack_depth::check_depth(&body, crate::api::msgpack_depth::MAX_DEPTH)
+            	.map_err(AppError::Http)?;
             let json_body: serde_json::Value = rmp_serde::from_slice(&body)
-                .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
+            	.map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
             request = request
                 .header("Content-Type", "application/json")
                 .json(&json_body);
@@ -232,8 +238,14 @@ impl GrindrClient {
             if body.len() > MAX_REQUEST_PAYLOAD_BYTES {
                 return Err(AppError::Http("Request body too large".to_owned()));
             }
+            // Bound NESTING DEPTH, not just byte length: a 1-element array is one
+            // byte, so an 8 MB body can be ~8M levels deep and overflow the
+            // decoder's stack - which aborts the process rather than returning an
+            // Err, so it cannot be handled at the call site. See `msgpack_depth`.
+            crate::api::msgpack_depth::check_depth(&body, crate::api::msgpack_depth::MAX_DEPTH)
+            	.map_err(AppError::Http)?;
             let json_body: serde_json::Value = rmp_serde::from_slice(&body)
-                .map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
+            	.map_err(|e| AppError::Http(format!("Failed to decode msgpack body: {e}")))?;
             request = request
                 .header("Content-Type", "application/json")
                 .json(&json_body);
@@ -771,8 +783,12 @@ pub async fn request(
         .decode(&payload)
         .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;
 
+    // Same stack-overflow guard as the request bridges above: the byte cap does
+    // not bound nesting depth.
+    crate::api::msgpack_depth::check_depth(&bytes, crate::api::msgpack_depth::MAX_DEPTH)
+    	.map_err(AppError::Http)?;
     let payload: RequestPayload = rmp_serde::from_slice(&bytes)
-        .map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
+    	.map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
 
     let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
         code: 400,
@@ -814,8 +830,12 @@ pub async fn request_public(
         .decode(&payload)
         .map_err(|e| AppError::Http(format!("Failed to decode base64 payload: {e}")))?;
 
+    // Same stack-overflow guard as the request bridges above: the byte cap does
+    // not bound nesting depth.
+    crate::api::msgpack_depth::check_depth(&bytes, crate::api::msgpack_depth::MAX_DEPTH)
+    	.map_err(AppError::Http)?;
     let payload: RequestPayload = rmp_serde::from_slice(&bytes)
-        .map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
+    	.map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
 
     let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
         code: 400,
