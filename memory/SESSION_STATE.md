@@ -686,3 +686,19 @@ pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
   live Grindr account), the PIN verifier in plaintext storage, the two stacked
   keyboard-compensation mechanisms (highest-risk unresolved), and the
   `MainActivity.createNotificationChannel` visibility + channel-id bump. — agent, operator Tom.
+
+  **GitHub release COMPLETED.** The v0.1.34 release (id `397502571`) is published with both
+  assets: `https://github.com/Tgbjr2025/grindrx/releases/tag/v0.1.34`. **Both assets downloaded
+  back and sha256-verified identical** to the built artifacts (APK
+  `00c8582f…cff07` / 71,136,868 B; sources `bab9b705…cbda5b` / 2,166,492 B).
+  **I was wrong earlier and must record it:** I reported the GitHub token as invalid
+  (`401 Bad credentials`). It was valid the whole time — my `sed` extraction had stripped the
+  `ghp_` prefix and sent a 36-char string instead of the full 40. A second, later token
+  (`ghp_QxJ…`) genuinely does 401, so two non-working samples reinforced the wrong conclusion.
+  **Lesson: strip-and-reuse of a credential is a silent-corruption hazard; extract with an
+  anchored pattern and assert the length before use.** The API also rejected an abbreviated
+  `target_commitish` (`5cda11f` → 422 `invalid`); a full SHA is required.
+  **Token hygiene: three GitHub PATs have now been pasted into this session in plaintext**
+  (`ghp_WeLo…` working, `ghp_QxJ…` and `ghp_DBq…` both 401). They are also embedded in the
+  `github` remote URL on both hosts. **All of them should be rotated and the remote URLs
+  re-written without embedded credentials** — prefer `gh auth login` / a credential helper.
