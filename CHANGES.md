@@ -5,6 +5,53 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.36 — the grid was drawing a placeholder person on top of every photo (2026-09-27)
+
+**versionCode 1071** (was 1070). A **regression I introduced in v0.1.34**, not a pre-existing bug.
+
+### What was wrong
+
+`ProfileMiniCard.svelte` renders a grey `UserIcon` as the "no photo" placeholder behind the
+photo. In v0.1.33 the icon lived in an `{:else}` branch, so it was only ever in the DOM when
+there was no photo to show.
+
+The v0.1.34 remediation pass hoisted the icon out of that branch so it could double as the
+fallback for a new `onerror` handler on the `<img>` (a public thumb can 404 — deleted,
+re-uploaded, or a transient CDN error). That was the right intent, but the implementation
+rendered the icon **unconditionally**:
+
+```svelte
+<div class="absolute w-full h-full bg-muted">
+  <UserIcon class="... absolute" />     <!-- now always present -->
+  {#if medias && profilePicture}
+    <img class="w-full h-full object-cover" />   <!-- static, NOT positioned -->
+  {/if}
+</div>
+```
+
+The icon is `position: absolute`; the `<img>` was not positioned at all. In CSS painting
+order a positioned element paints **above** any non-positioned sibling, so the icon covered
+the photo on **every tile in the grid** — which is exactly what was reported.
+
+Only `ProfileMiniCard` was affected. `Conversation.svelte` and `ChatNavBar.svelte` use
+shadcn's `Avatar.Fallback`, which correctly renders only when the avatar image fails.
+
+### Fix
+
+Give the `<img>` `position: relative`. Both elements are then positioned with `z-index: auto`,
+so DOM order decides: icon first, photo second, photo paints on top. The `onerror` fallback
+still works — when the image fails it is hidden and the icon behind it shows through. Also
+switched that handler from the `hidden` attribute to an explicit `style.display = "none"`, so a
+stylesheet rule cannot beat it.
+
+**No test covers this and none could:** there is no component-test runner in the project
+(`vite.config.mjs` sets `environment: "node"`, no jsdom, no `@testing-library`), so a pure
+CSS stacking regression is invisible to the entire suite. That is the structural gap the audit
+flagged, and this is the concrete cost of it — a one-class change to the main screen passed
+461 tests, a clean type-check and a clean lint.
+
+---
+
 ## v0.1.35 — working download button + a mandatory update gate (2026-09-27)
 
 **versionCode 1070** (was 1069). Universal APK, all 4 ABIs, signed with the same

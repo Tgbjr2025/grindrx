@@ -1,0 +1,1 @@
+Fixed a grey outline person being drawn on top of every photo in the browse grid, so you can see the actual pictures again. This was introduced in v0.1.34.

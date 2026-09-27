@@ -3,6 +3,9 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.36": [
+		"Fixed: a grey outline person was drawn on top of every photo in the grid. You can see the actual pictures again.",
+	],
 	"0.1.35": [
 		"Fixed: the 'Download' button in the update banner did nothing on Android. So did every tappable link in a chat, and the map link.",
 		"New: if your version has a known fault that locks you out, the app now blocks with a full-screen 'Update required' and a working download button, instead of failing quietly.",
