@@ -101,8 +101,16 @@ impl RefreshRequest {
 }
 
 fn decode_session_jwt(token: &str) -> Result<JwtClaims, AppError> {
-    // Signature verification is intentionally skipped — we only read the expiry
-    // claim for local session management; the token is never re-transmitted.
+    // Signature verification is intentionally skipped. The real invariant is
+    // NOT "the token is never re-transmitted" — it IS re-transmitted, as
+    // `Authorization: Grindr3 <jwt>` on every REST call and on the WS
+    // handshake. The actual invariant is that TLS to grindr.mobi is the entire
+    // trust boundary and the token's authenticity was established by the
+    // server that just issued it over that channel; this decode is an
+    // unverified peek at a claim we already had every reason to trust. `exp` is
+    // used only as a LOCAL CACHE HINT (when to refresh), so a forged value can
+    // at worst cause a wasted refresh round-trip — never an auth bypass.
+    // Do not use this to make a security decision.
     let data = jsonwebtoken::dangerous::insecure_decode::<JwtClaims>(token)
         .map_err(|e| AppError::Auth(format!("JWT decode failed: {e}")))?;
 
@@ -151,6 +159,18 @@ impl AuthStorage {
             .set_secret(&session_bytes)
             .map_err(|e| AppError::Auth(e.to_string()))
     }
+    /// Async keystore write, mirroring `get_session` above.
+    ///
+    /// `set_secret` is SYNCHRONOUS and on Android goes through JNI to the
+    /// Keystore — tens of milliseconds, spiking under load. Called directly from
+    /// `async fn`s it stalled the shared runtime, and the worst site was
+    /// `authorization_header`, where it ran while `refresh_lock` was held, so
+    /// every request queued behind that lock paid the stall.
+    pub async fn set_session_async(session: Session) -> Result<(), AppError> {
+        tauri::async_runtime::spawn_blocking(move || Self::set_session(&session))
+            .await
+            .map_err(|e| AppError::Auth(format!("Keyring write task failed: {e}")))?
+    }
     pub fn delete_session() {
         match Self::get_session_entry() {
             Ok(entry) => {
@@ -164,6 +184,18 @@ impl AuthStorage {
                 eprintln!("Warning: failed to create keyring entry for deletion: {e}");
             }
         }
+    }
+    /// Async keystore delete, mirroring `get_session` above.
+    ///
+    /// Best-effort by design, exactly like the synchronous `delete_session` it
+    /// wraps: that one logs and swallows every failure (there is nothing useful
+    /// a caller could do at logout time), so this returns `()` and does not
+    /// start returning `Result` just because it became async. The `JoinError` is
+    /// dropped because the blocking task's own errors are already logged inside
+    /// `delete_session` and a cancelled task also means "not deleted", which is
+    /// the same outcome.
+    pub async fn delete_session_async() {
+        let _ = tauri::async_runtime::spawn_blocking(Self::delete_session).await;
     }
 }
 
@@ -196,7 +228,9 @@ impl GrindrClient {
             },
         };
 
-        AuthStorage::set_session(&session)?;
+        // B4: synchronous JNI keystore write — keep it off the async runtime.
+        // Cloned because the caller still needs to return the session.
+        AuthStorage::set_session_async(session.clone()).await?;
 
         Ok(session)
     }
@@ -228,7 +262,13 @@ impl GrindrClient {
             .await?;
 
         if !response.status().is_success() {
-            let json: serde_json::Value = response.json().await.unwrap_or_default();
+            // B3: the error body was read with `response.json()` and no cap.
+            // Use the same capped reader as every other response path.
+            let bytes =
+                super::rest::stream_capped_body(response, super::rest::MAX_AUTH_RESPONSE_BYTES)
+                    .await
+                    .unwrap_or_default();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
             return Err(AppError::Api {
                 code: json.get("code").and_then(|c| c.as_i64()).unwrap_or(0),
                 message: json
@@ -317,7 +357,10 @@ impl GrindrClient {
                     if auth_class {
                         eprintln!("[GrindrX] Token refresh rejected ({e}); clearing session.");
                         *self.session.write().await = None;
-                        AuthStorage::delete_session();
+                        // B4: this runs while `refresh_lock` is held; a
+                        // synchronous keystore delete here stalls every other
+                        // task queued on that lock.
+                        AuthStorage::delete_session_async().await;
                     } else {
                         eprintln!("[GrindrX] Token refresh failed: {e}. Continuing with potentially expired token.");
                     }
@@ -372,7 +415,7 @@ pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     if let Ok(client) = state.client() {
         client.session.write().await.take();
     }
-    AuthStorage::delete_session();
+    AuthStorage::delete_session_async().await;
     // Drop any live WS connection immediately — without this the previous
     // account's realtime events/notifications keep flowing until the socket
     // naturally expires (Grindr session JWTs live up to 30 min).
@@ -386,13 +429,41 @@ pub async fn logout(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     Ok(())
 }
 
+/// B5: `auth_state`'s return payload.
+///
+/// Was a bare `Option<u64>` profile id, which carried no way to tell "not
+/// logged in" apart from "secure storage is broken and you will never be able
+/// to log in". A keyring that never initialised leaves the app looking normal
+/// while every login fails forever with an opaque `AppError::Auth`.
+///
+/// BREAKING IPC CHANGE: the frontend's `auth_state` response schema is a bare
+/// `z.number().int().nonnegative().nullable()` and three call sites read the
+/// result as a profile id. They must be updated to this object shape.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthStateResponse {
+    /// `Some` when a non-expired session is loaded.
+    pub profile_id: Option<u64>,
+    /// `Some(reason)` when secure storage is unusable. Non-`None` means login
+    /// can never succeed in this process; show the reason and do NOT offer a
+    /// plain "login failed" retry loop.
+    pub keyring_error: Option<String>,
+}
+
 #[tauri::command]
-pub async fn auth_state(state: tauri::State<'_, AppState>) -> Result<Option<u64>, AppError> {
+pub async fn auth_state(state: tauri::State<'_, AppState>) -> Result<AuthStateResponse, AppError> {
+    let keyring_error = state.keyring_error();
     let Ok(client) = state.client() else {
-        return Ok(None);
+        return Ok(AuthStateResponse {
+            profile_id: None,
+            keyring_error,
+        });
     };
     let session = client.session.read().await;
-    Ok(session
-        .as_ref()
-        .and_then(|s| s.profile_id.parse::<u64>().ok()))
+    Ok(AuthStateResponse {
+        profile_id: session
+            .as_ref()
+            .and_then(|s| s.profile_id.parse::<u64>().ok()),
+        keyring_error,
+    })
 }

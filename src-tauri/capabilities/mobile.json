@@ -12,7 +12,6 @@
 		"geolocation:allow-check-permissions",
 		"geolocation:allow-request-permissions",
 		"geolocation:allow-get-current-position",
-		"geolocation:allow-watch-position",
 		"biometric:default",
 		"notification:allow-is-permission-granted",
 		"notification:allow-request-permission"

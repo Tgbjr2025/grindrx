@@ -22,7 +22,14 @@
 		onSendAudio,
 		recipientProfileId,
 	}: {
-		onSend: (params: Message) => void | Promise<void>;
+		/**
+		 * Resolves to whether a bubble was actually created. `ConversationState.send`
+		 * *bails* (rather than throwing) when the conversation's profile has not
+		 * resolved yet, so a `Promise<void>` here made every bail indistinguishable
+		 * from a success — the caller cleared the typed text and (for locations)
+		 * toasted "sent" for a message that was never transmitted.
+		 */
+		onSend: (params: Message) => Promise<boolean>;
 		onSendAlbum: (albumIds: number[], expirationType: AlbumExpirationType) => Promise<void>;
 		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; url?: string; createdAt: number | null }) => Promise<void>;
 		onSendAudio: (params: { mediaId: number; mediaHash: string; url: string; contentType: string; length: number }) => Promise<void>;
@@ -36,17 +43,34 @@
 	// user always sees the exact coordinates before it leaves the device.
 	let locationShareOpen = $state(false);
 
-	function sendSharedLocation(lat: number, lon: number, label: string | null) {
-		// `onSend` may be sync or async; the optimistic bubble is created
-		// synchronously, so there is nothing to await here.
-		void onSend({ type: "Location", body: { lat, lon } });
-		toast.success(label ? `Sent ${label}.` : "Location sent.");
+	async function sendSharedLocation(
+		lat: number,
+		lon: number,
+		label: string | null,
+	) {
+		try {
+			// Sharing a location is the most sensitive disclosure this app makes, so
+			// the success toast must be conditional on a bubble actually appearing.
+			// A bail (profile not resolved) already toasted its own error; saying
+			// "Location sent." on top of that told the user their exact coordinates
+			// were transmitted when they were not.
+			const sent = await onSend({ type: "Location", body: { lat, lon } });
+			if (sent) toast.success(label ? `Sent ${label}.` : "Location sent.");
+		} catch (error) {
+			console.error("Failed to send location", error);
+			toast.error("Failed to send location");
+		}
 	}
 
 	let textContent = $state("");
 	let albumPickerOpen = $state(false);
 	let savedPhrasesOpen = $state(false);
 	let uploading = $state(false);
+	// Guards against a double-tap on Send firing two submits in the same task:
+	// `onSubmit` read `textContent`, awaited, and only then cleared it, so both
+	// submits saw the same non-empty field and both sent. Every other async
+	// action in this component already has such a flag.
+	let sending = $state(false);
 	let fileInputEl = $state<HTMLInputElement | null>(null);
 
 	// --- Voice messages (record → upload → send) ---
@@ -104,12 +128,24 @@
 			toast.error("Voice recording isn't available on this device.");
 			return;
 		}
+		let stream: MediaStream;
 		try {
-			audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 		} catch {
 			toast.error("Microphone permission is needed to record a voice message.");
 			return;
 		}
+		// The `getUserMedia` await is where the Android runtime-permission dialog
+		// blocks. If the user navigates back while it is showing, the teardown above
+		// already ran with `audioStream === null` and had no tracks to stop — so
+		// without this re-check the resolved stream is simply assigned and the mic
+		// stays live for the rest of the process (indicator on, tracks not
+		// collectable). Stop them and drop them on the spot instead.
+		if (destroyed || cancelledRecording) {
+			for (const track of stream.getTracks()) track.stop();
+			return;
+		}
+		audioStream = stream;
 		cancelledRecording = false;
 		audioChunks = [];
 		const mimeType = pickAudioMimeType();
@@ -154,8 +190,13 @@
 	}
 
 	async function uploadAndSendAudio(blob: Blob, lengthMs: number) {
-		// Too short to be intentional — drop it.
-		if (lengthMs < 500) return;
+		// Too short to be intentional. Previously this just `return`ed, so a
+		// mis-tap on the mic followed by a release produced literally nothing —
+		// no bubble, no error, no hint that anything had happened. Say so.
+		if (lengthMs < 500) {
+			toast.error("Recording was too short to send.");
+			return;
+		}
 		// The conversation may have been closed while we were recording.
 		if (destroyed || cancelledRecording) return;
 		sendingAudio = true;
@@ -212,14 +253,26 @@
 	}
 
 	async function onSubmit() {
+		// A second submit in the same task (double-tap) must not start a second
+		// send: `textContent` is only cleared after the first `await` resolves, so
+		// without this both submits read the same field.
+		if (sending) return;
 		const text = textContent.trim();
 		if (text === "") return;
+		sending = true;
 		try {
-			await onSend({ type: "Text", body: { text } });
-			textContent = "";
+			const sent = await onSend({ type: "Text", body: { text } });
+			// Only clear the field when a bubble was actually produced. `send()`
+			// bails (with its own error toast) when the conversation's profile has
+			// not resolved; awaiting a `void` return used to clear the field anyway,
+			// so the user got an error toast AND silently lost what they typed —
+			// reachable on every cold open of a conversation.
+			if (sent) textContent = "";
 		} catch (error) {
 			console.error(error);
 			toast.error("Failed to send message");
+		} finally {
+			sending = false;
 		}
 	}
 
@@ -310,8 +363,9 @@
 		variant="ghost"
 		size="icon"
 		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Share an album"
+		disabled={recipientProfileId === null}
 		onclick={() => {
-			if (recipientProfileId === null) return;
 			albumPickerOpen = true;
 		}}
 	>
@@ -386,7 +440,20 @@
 					currentTarget: EventTarget & HTMLTextAreaElement;
 				},
 			) => {
-				if (event.key === "Enter" && !event.shiftKey) {
+				// IME composition guard. While an IME is composing (Japanese, Korean,
+				// Chinese, Vietnamese, and any other multi-tap keyboard), Enter is
+				// "accept this candidate", not "send". The keydown still reports
+				// `key === "Enter"`, so without this check the commit was cancelled and
+				// the half-finished romaji/pinyin was sent instead. `isComposing` is
+				// the standard signal; `keyCode === 229` is the belt-and-braces form
+				// for older Android WebViews that report `isComposing: false` for the
+				// confirming keydown.
+				if (
+					event.key === "Enter" &&
+					!event.shiftKey &&
+					!event.isComposing &&
+					event.keyCode !== 229
+				) {
 					event.preventDefault();
 					event.currentTarget.form?.requestSubmit();
 				}
@@ -422,12 +489,18 @@
 					variant="ghost"
 					size="icon"
 					class="size-full cursor-pointer p-2"
+					aria-label="Send message"
+					disabled={sending || recipientProfileId === null}
 				>
-					<PaperPlaneRightIcon
-						weight="fill"
-						color="var(--primary)"
-						class="size-4.5"
-					/>
+					{#if sending}
+						<span class="size-4.5 border-2 border-muted-foreground/40 border-t-muted-foreground rounded-full animate-spin"></span>
+					{:else}
+						<PaperPlaneRightIcon
+							weight="fill"
+							color="var(--primary)"
+							class="size-4.5"
+						/>
+					{/if}
 				</Button>
 			</div>
 		{/if}

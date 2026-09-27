@@ -3,11 +3,13 @@
 	import { ArrowsClockwiseIcon, UsersFourIcon } from "phosphor-svelte";
 	import { onMount, tick } from "svelte";
 
+	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
 	import { clearExploreLocation } from "$lib/stores/explore-location.svelte";
 	import { setGridOrder } from "$lib/stores/grid-order.svelte";
+	import { formatDistance } from "$lib/utils/distance";
 	import type { GridProfile, PartialGridProfile } from "./grid";
 	import { gridState } from "./grid-state.svelte";
 	import GridWindow from "./GridWindow.svelte";
@@ -26,6 +28,17 @@
 	} = $props();
 
 	const gridProfiles = $derived(uniqBy(gridState.items, "id"));
+
+	// D18: the text a screen reader announces for a grid profile when its chunk is
+	// collapsed. Mirrors the visible badge: name, then age, then distance.
+	function describeProfile(item: GridProfile): string {
+		if (item.type === "partial") return "Loading profile…";
+		const parts = [item.displayName ?? "Profile"];
+		if (item.age != null) parts.push(String(item.age));
+		if (item.distance != null)
+			parts.push(formatDistance(item.distance, getDistanceUnit()));
+		return parts.join(", ");
+	}
 
 	$effect.pre(() => {
 		// Forward the explore override so it maps to the dedicated exploreGeoHash
@@ -49,6 +62,12 @@
 	// guard never reads a `let` that is still in its temporal dead zone.
 	let restored = $state(false);
 	let restoring = false;
+	// D23: `restoreScroll` awaits two animation frames, so it was still in
+	// flight when the effect re-ran (it depends on `rowHeight`, `loading` and
+	// `errorMessage`, any of which change again during those two frames) and a
+	// second concurrent restore started. Two concurrent `scrollTo` calls to
+	// different targets fight, and the loser decides where the user lands.
+	let restoreInFlight = false;
 
 	onMount(() => {
 		const saveScroll = () => {
@@ -69,6 +88,10 @@
 			restored = true;
 			return;
 		}
+		// D23: single-flight. A second caller returns immediately rather than
+		// starting a competing restore.
+		if (restoreInFlight) return;
+		restoreInFlight = true;
 		restoring = true;
 		try {
 			// Frame 1: grid lays out. Frame 2: GridWindow sizes its spacers
@@ -83,6 +106,7 @@
 			console.error("Failed to restore grid scroll position", error);
 		} finally {
 			restoring = false;
+			restoreInFlight = false;
 		}
 	}
 
@@ -109,14 +133,34 @@
 	let gridEl = $state<HTMLDivElement | null>(null);
 	let columns = $state(2);
 	let rowHeight = $state(0);
+	// Measured from the grid's own computed style, not hardcoded. Exported to
+	// GridWindow so a collapsed chunk's spacer height matches the real gap.
+	let rowGap = $state(2);
 
 	function measureGrid() {
 		if (!gridEl) return;
+		// D23: while the element is not laid out (`display: none`, or a
+		// zero-width container during a rotation) `gridTemplateColumns` resolves
+		// to "none" and every track is "0px", so the old filter dropped ALL of
+		// them, `tracks.length` stayed 0, and `columns` silently kept its previous
+		// value while `rowHeight` was left at whatever it was. Bailing out keeps
+		// both at their last known-good values instead of computing a new
+		// (wrong) pair from a zero-size box.
+		if (gridEl.clientWidth === 0) return;
 		const style = getComputedStyle(gridEl);
 		const tracks = style.gridTemplateColumns
 			.split(" ")
 			.filter((t) => t && t !== "0px");
-		if (tracks.length > 0) columns = tracks.length;
+		if (tracks.length === 0) return;
+		columns = tracks.length;
+		// D23: `rowGap` was hardcoded to 2 to match `gap-0.5` (0.125rem) at the
+		// default font size. An Android font-scale / display-size change makes
+		// 0.125rem resolve to 3px+ while the hardcoded 2 stayed, so every
+		// collapsed spacer was sized wrong and the page height drifted from the
+		// real content. Read it from the same computed style as the tracks so
+		// there is exactly one source of truth (the stylesheet).
+		const parsedGap = parseFloat(style.rowGap);
+		if (Number.isFinite(parsedGap) && parsedGap >= 0) rowGap = parsedGap;
 		// Square cells: row height == column track width. Prefer the resolved
 		// track, but fall back to an equal split of the element's own width so
 		// a spacer is never sized from a magic number (the old hardcoded 120px
@@ -147,14 +191,22 @@
 	// engage when the document is scrolled to the very top and the user drags
 	// downward. `overscroll-behavior: none` disables the native bounce, so we
 	// render our own pull indicator that follows the finger.
-	const PULL_TRIGGER = 80; // px past which a release triggers a refresh
-	const PULL_MAX = 120; // visual clamp so the indicator never runs away
+	// px of RAW finger travel past which a release triggers a refresh.
+	const PULL_TRIGGER = 80;
+	// Visual clamp so the indicator never runs away.
+	const PULL_MAX = 120;
+	// Rubber-band factor, named so the relationship with PULL_TRIGGER below is
+	// arithmetic rather than coincidence.
+	const PULL_DAMPING = 0.5;
+	/** Rubber-banded distance that the user must reach to arm the refresh. */
+	const PULL_ARM_AT = PULL_TRIGGER * PULL_DAMPING;
+
 	let pullStartY = $state<number | null>(null);
 	let pullDistance = $state(0);
 
 	function dampen(distance: number): number {
 		// Rubber-band: ease off as the user pulls further.
-		return Math.min(PULL_MAX, distance * 0.5);
+		return Math.min(PULL_MAX, distance * PULL_DAMPING);
 	}
 
 	function onTouchStart(event: TouchEvent) {
@@ -183,14 +235,18 @@
 
 	function onTouchEnd() {
 		if (pullStartY === null) return;
-		const shouldRefresh = pullDistance >= dampen(PULL_TRIGGER * 2);
+		// D23: this was `dampen(PULL_TRIGGER * 2)`, i.e. 80 * 0.5 = 40px, which
+		// reads as "trigger at twice the trigger distance" but is really just
+		// `PULL_TRIGGER / 2` — an undocumented coincidence. Compare against the
+		// named constant instead.
+		const shouldRefresh = pullDistance >= PULL_ARM_AT;
 		pullStartY = null;
 		pullDistance = 0;
 		if (shouldRefresh) gridState.refresh();
 	}
 
 	const pullActive = $derived(pullDistance > 0);
-	const pullReady = $derived(pullDistance >= dampen(PULL_TRIGGER * 2));
+	const pullReady = $derived(pullDistance >= PULL_ARM_AT);
 
 	function observeSentinel(node: HTMLElement) {
 		const observer = new IntersectionObserver(
@@ -215,14 +271,31 @@
 		gridState.refresh();
 	}
 
-	function observePartial(node: HTMLElement, params: { batchIndex: number }) {		const observer = new IntersectionObserver(
+	/**
+	 * D19 — the observer used to `disconnect()` unconditionally on the first
+	 * intersection. `loadBatch` already removes the batch from `#loadingBatches`
+	 * in its catch, so the state WOULD retry if asked — but nothing asked, and the
+	 * tile kept its `animate-pulse` skeleton for the rest of the session.
+	 *
+	 * Now the observer only disconnects on success; on failure it stays live, so
+	 * scrolling the tile out of and back into the 200px margin re-arms the retry.
+	 * A permanently failing batch therefore still shows a skeleton, but it is a
+	 * RETRYABLE one rather than a dead one, and the state is not lying about it.
+	 */
+	function observePartial(node: HTMLElement, params: { batchIndex: number }) {
+		const observer = new IntersectionObserver(
 			(entries) => {
-				if (entries[0].isIntersecting) {
-					gridState
-						.loadBatch(params.batchIndex)
-						.catch((error) => console.error(error));
-					observer.disconnect();
-				}
+				if (!entries[0].isIntersecting) return;
+				gridState
+					.loadBatch(params.batchIndex)
+					.then((ok) => {
+						if (ok) observer.disconnect();
+					})
+					.catch((error) => {
+						// loadBatch already swallowed + toasted; keep observing so
+						// the sentinel re-fires and the batch is retried.
+						console.error(error);
+					});
 			},
 			{ rootMargin: "200px" },
 		);
@@ -312,7 +385,13 @@
 			</Empty.Root>
 		</div>
 	{:else}
-		<GridWindow items={gridProfiles} {columns} {rowHeight}>
+		<GridWindow
+			items={gridProfiles}
+			{columns}
+			{rowHeight}
+			{rowGap}
+			describe={describeProfile}
+		>
 			{#snippet children(item: GridProfile)}
 				{#if item.type === "full"}
 					<ProfileMiniCard

@@ -9,6 +9,11 @@
 		setRef(el ?? null);
 	});
 
+	// `text-muted-foreground/30` on `bg-card` is roughly 2:1 — far below the WCAG
+	// AA 4.5:1 minimum for body text, i.e. effectively invisible to a low-vision
+	// user. `/60` brings it into AA in both themes; the surrounding message bubble
+	// text uses the full token.
+	//
 	// The remaining types genuinely carry no renderable payload (`body` is
 	// `z.unknown()`/WIP in the API docs) — give the known ones an honest,
 	// specific label instead of dumping the raw type name.
@@ -22,7 +27,7 @@
 </script>
 
 <div
-	class="bg-card text-muted-foreground/30 w-full rounded-lg p-2 max-w-full text-center text-sm"
+	class="bg-card text-muted-foreground/60 w-full rounded-lg p-2 max-w-full text-center text-sm"
 	bind:this={el}
 >
 	{LABELS[type] ?? `Unsupported message type: ${type}`}

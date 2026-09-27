@@ -12,11 +12,12 @@
 	let {
 		socials,
 	}: {
-		socials: SocialNetworks | null;
+		socials: SocialNetworks | null | undefined;
 	} = $props();
 </script>
 
-{#if socials !== null}
+<!-- D7: `socialNetworks` is optional now — loose `!= null` (see NSFWPics). -->
+{#if socials != null}
 	{#each ["instagram", "twitter", "facebook"] as platform}
 		{@const social = socials[platform as keyof SocialNetworks]}
 		{#if social}

@@ -3,6 +3,7 @@
 	import { defaultFilters } from "$lib/components/filters/filters";
 	import { Button, buttonVariants } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
+	import { Label } from "$lib/components/ui/label";
 	import { Switch } from "$lib/components/ui/switch";
 
 	let {
@@ -26,7 +27,11 @@
 
 	$effect(() => {
 		if (open) {
-			filtersChanges.age = value;
+			// D23: `filtersChanges.age = value` ALIASED the parent's live array, even
+			// though the comment above this block claims "Clone the array". A slider
+			// drag in the drawer therefore mutated `filters.age` in the parent before
+			// Apply was ever pressed, and dismissing the drawer did not undo it.
+			filtersChanges.age = [...value];
 			filtersChanges.ageEnabled = enabled;
 		}
 	});
@@ -50,6 +55,10 @@
 			</div>
 			<Drawer.Title>Age</Drawer.Title>
 			<div class="flex-1 flex justify-end">
+				<!-- D23: this Switch had an `id` and no `<label for>`. -->
+				<Label for="age-filter-enabled" class="sr-only">
+					Enable the age filter
+				</Label>
 				<Switch
 					id="age-filter-enabled"
 					bind:checked={filtersChanges.ageEnabled}
@@ -57,8 +66,19 @@
 			</div>
 		</Drawer.Header>
 		<div class="px-4 flex flex-col gap-1.5 mb-2">
-			<div class="w-full text-center mb-2">{label}</div>
+			<!--
+				D23: a range input never announces its own value, and this is the only
+				place the chosen range is shown, so it was silent for assistive tech.
+			-->
+			<div
+				id="age-quick-filter-label"
+				class="w-full text-center mb-2"
+				aria-live="polite"
+			>
+				{label}
+			</div>
 			<AgeFilterSlider
+				labelledBy="age-quick-filter-label"
 				bind:value={
 					() => filtersChanges.age,
 					(v: number[]) => {

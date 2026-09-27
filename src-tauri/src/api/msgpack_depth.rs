@@ -64,9 +64,8 @@ fn read_u8(bytes: &[u8], pos: &mut usize) -> Result<u8, String> {
 
 fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<usize, String> {
     let mut buf = [0u8; 2];
-    for (i, slot) in buf.iter_mut().enumerate() {
+    for slot in buf.iter_mut() {
         *slot = read_u8(bytes, pos)?;
-        let _ = i;
     }
     Ok(u16::from_be_bytes(buf) as usize)
 }

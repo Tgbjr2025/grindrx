@@ -11,28 +11,34 @@
 		weight,
 		bodyType,
 	}: {
-		height: number | null;
-		weight: number | null;
-		bodyType: BodyTypeId | null;
+		height: number | null | undefined;
+		weight: number | null | undefined;
+		bodyType: BodyTypeId | null | undefined;
 	} = $props();
 </script>
 
-{#if height !== null || weight !== null || bodyType !== null}
+<!--
+	D7: `height`/`weight`/`bodyType` are `.optional()` in `profileSchema` now, so a
+	profile that never set them is `undefined` rather than `null`. The checks below
+	are LOOSE (`!= null`) on purpose: a strict `!== null` is true for `undefined`
+	and would render `formatHeight(undefined)` as "NaN cm".
+-->
+{#if height != null || weight != null || bodyType != null}
 	<span class="flex items-center gap-1 leading-3 whitespace-nowrap">
 		<RulerIcon class="rotate-y-180 shrink-0" />
-		{#if height !== null}
+		{#if height != null}
 			{formatHeight(height, getDistanceUnit())}
 		{/if}
-		{#if height !== null && weight !== null}
+		{#if height != null && weight != null}
 			<Separator orientation="vertical" />
 		{/if}
-		{#if weight !== null}
+		{#if weight != null}
 			{formatWeight(weight, getDistanceUnit())}
 		{/if}
 		{#if (height !== null || weight !== null) && bodyType !== null}
 			<Separator orientation="vertical" />
 		{/if}
-		{#if bodyType !== null}
+		{#if bodyType != null}
 			{bodyTypes[bodyType]}
 		{/if}
 	</span>

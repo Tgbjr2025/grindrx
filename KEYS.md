@@ -1,8 +1,31 @@
-# Open Grind Signing Keys
+# Signing keys
 
-See also [BUILDING.md](./BUILDING.md) for reproducable builds. This document (KEYS.md) is signed (KEYS.md.asc) with Open Grind's PGP key below, you can verify it using `gpg --verify KEYS.md.asc KEYS.md`.
+> **⚠️ This file is inherited from upstream Open Grind and only partly applies to
+> GrindrX.** Read the two sections below before trusting anything here.
+>
+> - **PGP Public Key** — this is **upstream Open Grind's** key
+>   (`opengrind.org/pgp`, "Grind Governance"). It is *not* the key used for
+>   GrindrX APKs, and the fork does not use it to sign anything. It is retained
+>   because `KEYS.md.asc` is a signature over this file made with that key.
+>   **Consequence: editing this file invalidates `KEYS.md.asc`.** `gpg --verify
+>   KEYS.md.asc KEYS.md` will now report a *good signature over a different
+>   document* rather than a bad signature. That is expected after the v0.1.33
+>   edit; re-signing with the fork's own key is a DECISION NEEDED (the fork has
+>   no PGP key of its own — see "Governance certification").
+> - **Android APK Signing** — this section has been corrected for GrindrX. It
+>   used to publish the **upstream governance** certificate
+>   (`28:05:FD:D8:…:C3:65:8C`), which no GrindrX APK has ever been signed with.
+>   Following it would produce a spurious "tampered APK" conclusion. The real
+>   certificate is below.
+> - **Governance certification** — upstream text naming `@hloth` as the decision
+>   making authority. That governance structure does not apply to this fork; see
+>   the banner in [GOVERNANCE.md](./GOVERNANCE.md).
 
 ## PGP Public Key
+
+> **Upstream Open Grind's key, not the fork's.** Kept for the `KEYS.md.asc`
+> signature and for verifying upstream open-grind releases. It does **not** sign
+> GrindrX APKs.
 
 Public key: <https://opengrind.org/pgp>
 
@@ -42,15 +65,68 @@ gpg --verify opengrind.apk.asc opengrind.apk
 
 ## Android APK Signing
 
-Certificate's SHA-256 fingerprint:
+> **Corrected in v0.1.33.** This section previously published the *upstream Open
+> Grind* certificate. No GrindrX APK has ever been signed with it.
+
+**This is the certificate every published GrindrX APK is signed with.** It is the
+fork's own Java KeyStore (`~/open-grind-key.jks`, alias `grindx`) — it is **not**
+the upstream governance key. The same certificate is used for every release from
+v0.1.15 onward, which is what lets a new version install as an in-place upgrade
+over an existing install.
+
+SHA-256 certificate fingerprint:
 
 ```
-28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C
+22:D6:88:9E:F0:74:59:A2:09:19:D4:8A:FF:FE:7E:D7:A4:E3:90:30:39:E1:55:42:76:7C:ED:CD:FF:8D:4C:01
 ```
 
-[Guide on verifying release APKs](./BUILDING.md#verifying-a-published-release): apksigner should output `Signer #1 certificate SHA-256 digest: 2805fdd8f0badb9424d3244c5e5b3473cef5b8798ec1117382e89eda45c3658c` matching certificate's SHA-256 above.
+Equivalently, without separators:
+
+```
+22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
+```
+
+Verify a downloaded APK:
+
+```bash
+apksigner verify --print-certs GrindrX-vX.Y.Z.apk
+```
+
+`apksigner` should print, for the signer that signed the APK:
+
+```
+Signer #1 certificate SHA-256 digest: 22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
+```
+
+If it prints `2805fdd8f0badb9424d3244c5e5b3473cef5b8798ec1117382e89eda45c3658c`
+instead, you are looking at an **upstream open-grind** APK (or a different
+application), not a GrindrX release.
+
+Corroborating sources for this value, all of which agree:
+
+| Source | Value |
+| --- | --- |
+| [README.md](./README.md) — "Verify your download" and "Security" | `22:D6:…:8D:4C:01` |
+| [FDROID.md](./FDROID.md) — Notes | "the **APK** key (`~/open-grind-key.jks`, cert `22:D6:88:9E…4C:01`)" |
+| `memory/SESSION_STATE.md` — v0.1.16 signing note | "cert SHA-256 is `22d6889e…4c01` (the fork's own GrindrX key, `~/open-grind-key.jks` alias `grindx`), NOT the `2805fd…c3658c` in `KEYS.md`" |
+| `memory/MEMORY.md` — shipped v0.1.33 | "cert `22d6…4c01`" |
+
+The per-release SHA-256 of the APK itself (a different value — that is the
+file hash, not the certificate hash) is published in [README.md](./README.md)
+under "Verify your download".
+
+For the full reproduction procedure — build the unsigned APK yourself and diff it
+against the published one, signing block excluded — see
+[BUILDING.md → Verifying a published release](./BUILDING.md#verifying-a-published-release).
+That section's release URL was also corrected in v0.1.33; it used to point at the
+**upstream** `git.opengrind.org/open-grind/open-grind` release page.
 
 ## Governance certification
+
+> **Upstream text — does not apply to GrindrX.** This certifies *upstream Open
+> Grind's* PGP key against *upstream's* decision making authority. Neither the key
+> above nor that authority has any role in GrindrX releases. See the banner in
+> [GOVERNANCE.md](./GOVERNANCE.md).
 
 Open Grind's public PGP key is certified by [governance's decision making authority](./GOVERNANCE.md) — Viktor Shchelochkov (https://hloth.dev, [PGP key](https://hloth.dev/pgp)):
 

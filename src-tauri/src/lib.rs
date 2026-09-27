@@ -47,6 +47,16 @@ pub fn run() {
         state.notify_taps.store(taps, Ordering::Relaxed);
     }
 
+	// B2: the Rust WS notifier is the only thing that can suppress a lock-screen
+	// notification, and it has no other way to learn that the app lock is
+	// engaged — the WebView never asks permission. MUST be pushed on launch
+	// and on every lock/unlock; if it is never pushed, `locked` stays false and
+	// chat previews are posted to the shade. See `AppState::locked`.
+	#[tauri::command]
+    fn set_app_locked(state: tauri::State<'_, AppState>, locked: bool) {
+        state.set_locked(locked);
+    }
+
 	builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -68,6 +78,13 @@ pub fn run() {
             notify_messages: AtomicBool::new(false),
             notify_taps: AtomicBool::new(false),
             prefs_loaded: AtomicBool::new(false),
+            // Default UNLOCKED, matching `is_foreground`: the WebView pushes the
+            // real value immediately on launch. Defaulting to `true` would be
+            // fail-safe but would also suppress every notification until the
+            // first push arrives, so the WebView must call `set_app_locked`
+            // during init.
+            locked: AtomicBool::new(false),
+            keyring_error: std::sync::Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             api::auth::login,
@@ -88,6 +105,7 @@ pub fn run() {
             api::rest::send_usage_ping,
             set_foreground,
             set_notification_prefs,
+            set_app_locked,
             api::ws::ws_connect,
             api::ws::ws_send,
             api::client::rotate_api_params,
@@ -104,6 +122,23 @@ pub fn run() {
             // construction error and the fact that the store already had a value.
             match GrindrClient::new() {
                 Ok(client) => {
+                    // B5: a keyring that never initialised does NOT stop the app
+                    // from starting, but it makes every login fail forever at
+                    // `set_session` with an opaque "Auth error". Surface it now,
+                    // at error level with remediation, and record it on AppState
+                    // so `auth_state` can tell the frontend something actionable.
+                    // Read BEFORE `set()` consumes the client.
+                    if let Some(reason) = client.keyring_error.clone() {
+                        eprintln!(
+                            "[lib] KEYRING UNAVAILABLE ({reason}). Secure storage is not \
+                             initialised on this device, so every login will fail and no session \
+                             can be persisted. The app is still starting; `auth_state` now \
+                             reports this to the frontend. Remediation: re-launch, or reinstall if \
+                             it persists (the Android Keystore entry may have been invalidated by \
+                             a lock-screen change or an OS backup restore)."
+                        );
+                        app.state::<AppState>().set_keyring_error(reason);
+                    }
                     if app.state::<AppState>().client.set(client).is_err() {
                         eprintln!("[lib] GrindrClient already initialised; keeping existing client.");
                     }

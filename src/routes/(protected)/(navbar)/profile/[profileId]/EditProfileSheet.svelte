@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import { toast } from "svelte-sonner";
 
 	import { ApiHttpError, fetchRest } from "$lib/api";
@@ -51,28 +52,31 @@
 	}: {
 		open: boolean;
 		profileData: {
-			displayName: string | null;
-			aboutMe: string | null;
+			// Every field is `| undefined`-able: `profileSchema` was made tolerant
+			// (see D7 in $lib/model/profile), so a profile that never set a field
+			// genuinely lacks the key rather than carrying null.
+			displayName: string | null | undefined;
+			aboutMe: string | null | undefined;
 			sexualPosition: SexualPositionId | null | undefined;
-			bodyType: BodyTypeId | null;
-			height: number | null;
-			weight: number | null;
-			ethnicity: EthnicityId | null;
-			relationshipStatus: RelationshipStatusId | null;
-			lookingFor: LookingForId[];
-			grindrTribes: TribeId[];
-			hivStatus: HivStatusId | null;
-			sexualHealth: HealthPracticeId[];
-			meetAt: MeetAtId[];
-			nsfw: AcceptNSFWPicsId | null;
-			vaccines: VaccineId[];
+			bodyType: BodyTypeId | null | undefined;
+			height: number | null | undefined;
+			weight: number | null | undefined;
+			ethnicity: EthnicityId | null | undefined;
+			relationshipStatus: RelationshipStatusId | null | undefined;
+			lookingFor: LookingForId[] | undefined;
+			grindrTribes: TribeId[] | undefined;
+			hivStatus: HivStatusId | null | undefined;
+			sexualHealth: HealthPracticeId[] | undefined;
+			meetAt: MeetAtId[] | undefined;
+			nsfw: AcceptNSFWPicsId | null | undefined;
+			vaccines: VaccineId[] | undefined;
 			socialNetworks: {
 				twitter?: { userId: string | null };
 				facebook?: { userId: string | null };
 				instagram?: { userId: string | null };
 			};
-			genders: number[];
-			pronouns: number[];
+			genders: number[] | undefined;
+			pronouns: number[] | undefined;
 		};
 		onSave: () => void;
 	} = $props();
@@ -80,6 +84,34 @@
 	// Load async data at module level (cached)
 	const gendersList = getGenders();
 	const pronounsList = fetchPronouns();
+
+	// A NEVER-REJECTING mirror of the two lists.
+	//
+	// Svelte 5's `{#await}` rethrows when a branch has no `:catch`
+	// (`node_modules/svelte/src/internal/client/dom/blocks/await.js`:
+	// `if (!catch_fn) { throw error.v; }`), so a failed `getGenders()` used to
+	// surface as an unhandled rejection. These mirrors attach a rejection handler
+	// to the SAME promise at construction time, so the rejection is always
+	// handled no matter when the template subscribes (SSR included), and they
+	// give `handleSave` a synchronous answer to "did this list actually load?".
+	const settled = <T>(p: Promise<T>) =>
+		p.then(
+			() => true,
+			() => false,
+		);
+	const gendersSettled = settled(gendersList);
+	const pronounsSettled = settled(pronounsList);
+
+	let gendersOk = $state(false);
+	let pronounsOk = $state(false);
+	$effect(() => {
+		let alive = true;
+		void gendersSettled.then((ok) => alive && (gendersOk = ok));
+		void pronounsSettled.then((ok) => alive && (pronounsOk = ok));
+		return () => {
+			alive = false;
+		};
+	});
 
 	// Imperial height is edited as two inputs (feet + inches) rather than a
 	// single raw total-inches number — the profile itself always *displays*
@@ -101,82 +133,221 @@
 		};
 	}
 
-	// Form state — initialised each time the sheet opens
-	let displayName = $state<string>(profileData.displayName ?? "");
-	let aboutMe = $state<string>(profileData.aboutMe ?? "");
-	let sexualPosition = $state<SexualPositionId | "">(profileData.sexualPosition ?? "");
-	let bodyType = $state<BodyTypeId | "">(profileData.bodyType ?? "");
+	// Form state — initialised to NEUTRAL values, never from `profileData`.
+	//
+	// D5: this used to be `useState(profileData.x ?? default)` for ~30 fields.
+	// The parent passes `profileData={{ ... }}` as a FRESH object literal on every
+	// render, so the prop signal changed on every parent re-render, and the
+	// "reset the form when the sheet opens" effect below re-ran — while `open` was
+	// still true — and reassigned all 25 fields from the server snapshot,
+	// discarding whatever the user had typed. Reading props in a `$state`
+	// initialiser is also what produced the 26 `state_referenced_locally`
+	// warnings svelte-check reports for this file: a `$state` initialiser is
+	// evaluated once, outside any effect, so it is not allowed to read reactive
+	// values. Initialising neutrally and filling from ONE effect on the open
+	// TRANSITION fixes the data loss and the warnings together.
+	let displayName = $state("");
+	let aboutMe = $state("");
+	let sexualPosition = $state<SexualPositionId | "">("");
+	let bodyType = $state<BodyTypeId | "">("");
 	// isImperialHeight is $derived (not read once into a $state initializer) so
 	// the feet/inches vs. cm branch below stays in sync with the live unit.
 	let isImperialHeight = $derived(heightUnitLabel(getDistanceUnit()) === "in");
-	let height = $state<string>(
-		profileData.height !== null
-			? String(heightToInput(profileData.height, getDistanceUnit()))
-			: "",
-	);
-	let heightFeet = $state<string>(feetInchesFromCm(profileData.height, getDistanceUnit()).feet);
-	let heightInches = $state<string>(
-		feetInchesFromCm(profileData.height, getDistanceUnit()).inches,
-	);
-	let weight = $state<string>(
-		profileData.weight !== null
-			? String(weightToInput(profileData.weight, getDistanceUnit()))
-			: "",
-	);
-	let ethnicity = $state<EthnicityId | "">(profileData.ethnicity ?? "");
-	let relationshipStatus = $state<RelationshipStatusId | "">(
-		profileData.relationshipStatus ?? "",
-	);
-	let selectedLookingFor = $state<Set<LookingForId>>(new Set(profileData.lookingFor));
-	let selectedTribes = $state<Set<TribeId>>(new Set(profileData.grindrTribes));
-	let hivStatus = $state<HivStatusId | "">(profileData.hivStatus ?? "");
-	let selectedHealthPractices = $state<Set<HealthPracticeId>>(new Set(profileData.sexualHealth));
-	let selectedMeetAt = $state<Set<MeetAtId>>(new Set(profileData.meetAt));
-	let nsfwPics = $state<AcceptNSFWPicsId | "">(profileData.nsfw ?? "");
-	let selectedVaccines = $state<Set<VaccineId>>(new Set(profileData.vaccines));
-	let instagram = $state(profileData.socialNetworks?.instagram?.userId ?? "");
-	let twitter = $state(profileData.socialNetworks?.twitter?.userId ?? "");
-	let facebook = $state(profileData.socialNetworks?.facebook?.userId ?? "");
-	let selectedGenders = $state<Set<number>>(new Set(profileData.genders));
-	let selectedPronouns = $state<Set<number>>(new Set(profileData.pronouns));
+	let height = $state("");
+	let heightFeet = $state("");
+	let heightInches = $state("");
+	let weight = $state("");
+	let ethnicity = $state<EthnicityId | "">("");
+	let relationshipStatus = $state<RelationshipStatusId | "">("");
+	let selectedLookingFor = $state<Set<LookingForId>>(new Set());
+	let selectedTribes = $state<Set<TribeId>>(new Set());
+	let hivStatus = $state<HivStatusId | "">("");
+	let selectedHealthPractices = $state<Set<HealthPracticeId>>(new Set());
+	let selectedMeetAt = $state<Set<MeetAtId>>(new Set());
+	let nsfwPics = $state<AcceptNSFWPicsId | "">("");
+	let selectedVaccines = $state<Set<VaccineId>>(new Set());
+	let instagram = $state("");
+	let twitter = $state("");
+	let facebook = $state("");
+	let selectedGenders = $state<Set<number>>(new Set());
+	let selectedPronouns = $state<Set<number>>(new Set());
 
 	let saving = $state(false);
-	let contentScroll = $state(0);
+	// Two booleans rather than a 0..1 ratio: see the `onscroll` handler.
+	let canScrollUp = $state(false);
+	let canScrollDown = $state(false);
 
-	// Reset form when the sheet is opened
+	// D3: until BOTH reference lists have settled, the chip groups cannot render
+	// and Save must not send the pre-load `selectedGenders`/`selectedPronouns`
+	// (which is what silently wiped a user's gender). `gendersOk`/`pronounsOk`
+	// above track the settled state, including failure.
+	const listsPending = $derived(!gendersOk || !pronounsOk);
+
+	/**
+	 * Copy the server snapshot into the form. Called exactly once per OPEN
+	 * TRANSITION (see the effect below), never on an arbitrary re-render.
+	 */
+	function syncFromProfile() {
+		const unit = getDistanceUnit();
+		displayName = profileData.displayName ?? "";
+		aboutMe = profileData.aboutMe ?? "";
+		sexualPosition = profileData.sexualPosition ?? "";
+		bodyType = profileData.bodyType ?? "";
+		// D7 made `height`/`weight` `.optional()` in `profileSchema`, so a profile
+		// that never set them arrives as `undefined`, not just `null`. Bind to
+		// locals so the narrowing is visible to the type-checker on every use below.
+		const profileHeight = profileData.height ?? null;
+		const profileWeight = profileData.weight ?? null;
+		height = profileHeight != null ? String(heightToInput(profileHeight, unit)) : "";
+		const feetInches = feetInchesFromCm(profileHeight, unit);
+		heightFeet = feetInches.feet;
+		heightInches = feetInches.inches;
+		weight = profileWeight != null ? String(weightToInput(profileWeight, unit)) : "";
+		ethnicity = profileData.ethnicity ?? "";
+		relationshipStatus = profileData.relationshipStatus ?? "";
+		selectedLookingFor = new Set(profileData.lookingFor ?? []);
+		selectedTribes = new Set(profileData.grindrTribes ?? []);
+		hivStatus = profileData.hivStatus ?? "";
+		selectedHealthPractices = new Set(profileData.sexualHealth ?? []);
+		selectedMeetAt = new Set(profileData.meetAt ?? []);
+		nsfwPics = profileData.nsfw ?? "";
+		selectedVaccines = new Set(profileData.vaccines ?? []);
+		instagram = profileData.socialNetworks?.instagram?.userId ?? "";
+		twitter = profileData.socialNetworks?.twitter?.userId ?? "";
+		facebook = profileData.socialNetworks?.facebook?.userId ?? "";
+		selectedGenders = new Set(profileData.genders ?? []);
+		selectedPronouns = new Set(profileData.pronouns ?? []);
+		dirty = false;
+	}
+
+	// The values the form had when it was opened, for the unsaved-changes guard.
+	// A JSON snapshot rather than a deep-compare: it is one allocation per open
+	// and cannot drift out of sync with the field list.
+	let pristineSnapshot = $state("");
+
+	function formSnapshot(): string {
+		return JSON.stringify({
+			displayName,
+			aboutMe,
+			sexualPosition,
+			bodyType,
+			height,
+			heightFeet,
+			heightInches,
+			weight,
+			ethnicity,
+			relationshipStatus,
+			lookingFor: [...selectedLookingFor],
+			tribes: [...selectedTribes],
+			hivStatus,
+			healthPractices: [...selectedHealthPractices],
+			meetAt: [...selectedMeetAt],
+			nsfwPics,
+			vaccines: [...selectedVaccines],
+			instagram,
+			twitter,
+			facebook,
+			genders: [...selectedGenders],
+			pronouns: [...selectedPronouns],
+		});
+	}
+
+	// D6: bits-ui's Dialog dismisses on Escape and outside pointer-down by
+	// default, and the Cancel button discards everything — so one stray tap
+	// outside the sheet destroyed 20+ fields of work with no prompt. `dirty`
+	// turns that into a question.
+	let dirty = $state(false);
+	let confirmDiscardOpen = $state(false);
+
+	/**
+	 * Reset the form on the OPEN TRANSITION only.
+	 *
+	 * Reading `open` and comparing against the previous value inside one effect
+	 * means the reset is a function of the transition, not of "is currently open":
+	 * a parent re-render (which recreates the `profileData` object literal) can
+	 * no longer trigger it while the sheet is open.
+	 */
+	let wasOpen = false;
 	$effect(() => {
-		if (open) {
-			displayName = profileData.displayName ?? "";
-			aboutMe = profileData.aboutMe ?? "";
-			sexualPosition = profileData.sexualPosition ?? "";
-			bodyType = profileData.bodyType ?? "";
-			height =
-				profileData.height !== null
-					? String(heightToInput(profileData.height, getDistanceUnit()))
-					: "";
-			const feetInches = feetInchesFromCm(profileData.height, getDistanceUnit());
-			heightFeet = feetInches.feet;
-			heightInches = feetInches.inches;
-			weight =
-				profileData.weight !== null
-					? String(weightToInput(profileData.weight, getDistanceUnit()))
-					: "";
-			ethnicity = profileData.ethnicity ?? "";
-			relationshipStatus = profileData.relationshipStatus ?? "";
-			selectedLookingFor = new Set(profileData.lookingFor);
-			selectedTribes = new Set(profileData.grindrTribes);
-			hivStatus = profileData.hivStatus ?? "";
-			selectedHealthPractices = new Set(profileData.sexualHealth);
-			selectedMeetAt = new Set(profileData.meetAt);
-			nsfwPics = profileData.nsfw ?? "";
-			selectedVaccines = new Set(profileData.vaccines);
-			instagram = profileData.socialNetworks?.instagram?.userId ?? "";
-			twitter = profileData.socialNetworks?.twitter?.userId ?? "";
-			facebook = profileData.socialNetworks?.facebook?.userId ?? "";
-			selectedGenders = new Set(profileData.genders);
-			selectedPronouns = new Set(profileData.pronouns);
-		}
+		const isOpen = open;
+		if (isOpen && !wasOpen) syncFromProfile();
+		wasOpen = isOpen;
 	});
+
+	// `dirty` tracks the form against the snapshot taken on open.
+	$effect(() => {
+		// Depend on every field so the comparison re-runs as the user types.
+		void displayName;
+		void aboutMe;
+		void sexualPosition;
+		void bodyType;
+		void height;
+		void heightFeet;
+		void heightInches;
+		void weight;
+		void ethnicity;
+		void relationshipStatus;
+		void selectedLookingFor;
+		void selectedTribes;
+		void hivStatus;
+		void selectedHealthPractices;
+		void selectedMeetAt;
+		void nsfwPics;
+		void selectedVaccines;
+		void instagram;
+		void twitter;
+		void facebook;
+		void selectedGenders;
+		void selectedPronouns;
+		if (!open) return;
+		dirty = formSnapshot() !== pristineSnapshot;
+	});
+
+	// Keep the pristine snapshot in step with the values `syncFromProfile` wrote,
+	// without reading the fields (which would re-trigger the dirty effect).
+	$effect(() => {
+		if (open) untrack(() => (pristineSnapshot = formSnapshot()));
+	});
+
+	/**
+	 * Guard a close while the form is dirty.
+	 *
+	 * `Dialog.Root`'s `onOpenChange` receives the NEXT VALUE, not an event, so it
+	 * cannot be `preventDefault()`-ed — by the time it runs, `open` is already
+	 * false. The close is therefore undone (`open = true`) and a confirm is
+	 * offered. Escape and outside pointer-down never get this far: they are
+	 * prevented at `Sheet.Content` and raise the confirm via
+	 * `requestDiscardConfirm` instead.
+	 */
+	function handleOpenChange(next: boolean) {
+		if (!next && dirty && !confirmDiscardOpen) {
+			open = true;
+			confirmDiscardOpen = true;
+		}
+	}
+
+	/**
+	 * The dismissals that `preventDefault()` swallows (Escape, outside
+	 * pointer-down) never reach `handleOpenChange` — bits-ui checks
+	 * `defaultPrevented` and skips `root.handleClose()` entirely
+	 * (`bits/dialog/components/dialog-content.svelte`: `onInteractOutside(e);
+	 * if (e.defaultPrevented) return; handleClose()`). So they have to raise the
+	 * confirm themselves, or the user's tap outside does nothing at all with no
+	 * explanation — the sheet just refuses to close.
+	 */
+	function requestDiscardConfirm() {
+		if (!dirty) return false;
+		confirmDiscardOpen = true;
+		return true;
+	}
+
+	function closeDiscarding() {
+		confirmDiscardOpen = false;
+		// Clear `dirty` FIRST: the close below runs through `handleOpenChange`,
+		// which would otherwise re-open the sheet we are trying to close.
+		dirty = false;
+		open = false;
+	}
 
 	function toggleLookingFor(id: LookingForId) {
 		const next = new Set(selectedLookingFor);
@@ -314,9 +485,20 @@
 					twitter: { userId: twitter.trim() !== "" ? twitter.trim() : null },
 					facebook: { userId: facebook.trim() !== "" ? facebook.trim() : null },
 				},
-				genders: Array.from(selectedGenders),
-				pronouns: Array.from(selectedPronouns),
 			};
+
+			// D3 — DATA LOSS. These two blocks used to have no `:catch`, which Svelte
+			// 5 converts into a RETHROWN unhandled rejection
+			// (`await.js`: `if (!catch_fn) throw error.v`). When the gender/pronoun
+			// reference list failed to load, the chip groups vanished, these sets
+			// kept their pre-load values, and the unconditional
+			// `genders: Array.from(selectedGenders)` WIPED the user's gender
+			// selection server-side while still reporting "Profile updated". So:
+			// omit the field entirely while its list is unresolved — a PATCH that
+			// does not mention a field does not change it. `listsPending` also
+			// disables Save, so this is belt-and-braces.
+			if (gendersOk) body.genders = Array.from(selectedGenders);
+			if (pronounsOk) body.pronouns = Array.from(selectedPronouns);
 
 			// `fetchRest` only rejects on an IPC/bridge failure — an HTTP 4xx/5xx
 			// comes back as a normal response. The result was never inspected, so
@@ -331,6 +513,10 @@
 			}
 
 			toast.success("Profile updated");
+			// Clear `dirty` before closing: `open = false` routes through
+			// `onOpenChange`, and the guard would otherwise re-open the sheet we
+			// just successfully saved.
+			dirty = false;
 			open = false;
 			onSave();
 		} catch (err) {
@@ -348,16 +534,41 @@
 	}
 </script>
 
-<Sheet.Root bind:open>
+<!--
+	D6: `onOpenChange` is the catch-all close path (the Cancel button, and any
+	close bits-ui routes through the box setter). Escape and outside
+	pointer-down are intercepted earlier at `Sheet.Content`, so they are
+	prevented there and raise the same confirm — see `requestDiscardConfirm`.
+-->
+<Sheet.Root bind:open onOpenChange={handleOpenChange}>
 	<Sheet.Content
 		side="bottom"
 		showCloseButton={false}
 		class="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom))] mt-(--safe-area-top) mb-(--safe-area-bottom)"
+		onEscapeKeydown={(event: KeyboardEvent) => {
+			// Dirty: swallow the dismiss rather than lose 20+ fields, and ask
+			// instead of silently refusing.
+			if (requestDiscardConfirm()) event.preventDefault();
+		}}
+		onInteractOutside={(event: PointerEvent) => {
+			if (requestDiscardConfirm()) event.preventDefault();
+		}}
+		onFocusOutside={(event: FocusEvent) => {
+			// The confirm renders OUTSIDE the sheet, so focusing it lands here.
+			// bits-ui only ever closes from escape/pointer, so this cannot block a
+			// close either way; kept conditional so focus is never trapped if a
+			// future bits-ui version starts honouring `defaultPrevented` here.
+			if (dirty) event.preventDefault();
+		}}
 	>
 		<Sheet.Header
 			class={[
 				"p-4 border border-x-0 border-t-0 border-transparent transition-colors",
-				{ "border-muted": contentScroll > 0 },
+				// Scroll border: the header border appears once you are PAST the top
+				// (it was inverted before). `canScrollUp` is guarded against a
+				// non-scrollable container, where the ratio is 0/0 = NaN and every
+				// `NaN < x` comparison is false — which made both borders vanish.
+				{ "border-muted": canScrollUp },
 			]}
 		>
 			<div class="flex items-center justify-between">
@@ -374,9 +585,12 @@
 			class="flex flex-col gap-5 px-4 py-4 overflow-auto flex-1 min-h-0"
 			onscroll={(event) => {
 				if (event.target instanceof HTMLDivElement) {
-					contentScroll =
-						event.target.scrollTop /
-						(event.target.scrollHeight - event.target.clientHeight);
+					const range = event.target.scrollHeight - event.target.clientHeight;
+					// `range === 0` (nothing to scroll) would make this 0/0 = NaN.
+					// A separate boolean pair avoids relying on `NaN` comparisons,
+					// which are always false and silently hid both scroll borders.
+					canScrollDown = range > 0 && event.target.scrollTop < range;
+					canScrollUp = range > 0 && event.target.scrollTop > 0;
 				}
 			}}
 		>
@@ -403,15 +617,32 @@
 				/>
 			</div>
 
-			<!-- Genders -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Gender</span>
-				{#await gendersList then allGenders}
+			<!--
+				Genders / Pronouns.
+
+				D20: each group is a `<fieldset>` with a `<legend>` (not a bare
+				`<span>`), and every chip carries `aria-pressed` — selection was
+				conveyed by colour alone, so a screen-reader user had no way to
+				tell a selected chip from an unselected one.
+
+				D3: the `{#await}` blocks now have a `:catch`. Without one Svelte 5
+				RETHROWS the rejection (see `await.js`: `if (!catch_fn) throw
+				error.v`), which both surfaced as an unhandled rejection and made
+				the group vanish while `handleSave` still sent the pre-load
+				selection — wiping the user's gender server-side. `listsPending`
+				additionally disables Save until both lists resolve.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Gender</legend>
+				{#await gendersList}
+					<p class="text-sm text-muted-foreground">Loading…</p>
+				{:then allGenders}
 					<div class="flex flex-wrap gap-2">
-						{#each allGenders.filter((g) => !g.excludeOnProfileSelection?.length) as g}
+						{#each allGenders.filter((g) => !g.excludeOnProfileSelection?.length) as g (g.genderId)}
 							{@const isChecked = selectedGenders.has(g.genderId)}
 							<button
 								type="button"
+								aria-pressed={isChecked}
 								onclick={() => toggleGender(g.genderId)}
 								class={[
 									"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -424,18 +655,25 @@
 							</button>
 						{/each}
 					</div>
+				{:catch}
+					<p class="text-sm text-destructive">
+						Couldn't load gender options. Saving will leave your current
+						gender untouched.
+					</p>
 				{/await}
-			</div>
+			</fieldset>
 
-			<!-- Pronouns -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Pronouns</span>
-				{#await pronounsList then allPronouns}
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Pronouns</legend>
+				{#await pronounsList}
+					<p class="text-sm text-muted-foreground">Loading…</p>
+				{:then allPronouns}
 					<div class="flex flex-wrap gap-2">
-						{#each allPronouns as p}
+						{#each allPronouns as p (p.pronounId)}
 							{@const isChecked = selectedPronouns.has(p.pronounId)}
 							<button
 								type="button"
+								aria-pressed={isChecked}
 								onclick={() => togglePronoun(p.pronounId)}
 								class={[
 									"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -448,8 +686,13 @@
 							</button>
 						{/each}
 					</div>
+				{:catch}
+					<p class="text-sm text-destructive">
+						Couldn't load pronoun options. Saving will leave your current
+						pronouns untouched.
+					</p>
 				{/await}
-			</div>
+			</fieldset>
 
 			<!-- Sexual position -->
 			<div class="flex flex-col gap-1.5">
@@ -566,15 +809,20 @@
 				</select>
 			</div>
 
-			<!-- Looking for -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Looking for</span>
+			<!--
+				Looking for: D20 — `<fieldset>`/`<legend>` instead of a bare `<span>`, a
+				KEYED each (so re-ordering the options cannot make Svelte reuse the
+				wrong chip), and `aria-pressed` so selection is not colour-only.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Looking for</legend>
 				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(lookingForLabels) as [id, label]}
+					{#each Object.entries(lookingForLabels) as [id, label] (id)}
 						{@const numId = Number(id) as LookingForId}
 						{@const isChecked = selectedLookingFor.has(numId)}
 						<button
 							type="button"
+							aria-pressed={isChecked}
 							onclick={() => toggleLookingFor(numId)}
 							class={[
 								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -587,17 +835,22 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</fieldset>
 
-			<!-- Tribes -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Tribes</span>
+			<!--
+				Tribes: D20 — `<fieldset>`/`<legend>` instead of a bare `<span>`, a
+				KEYED each (so re-ordering the options cannot make Svelte reuse the
+				wrong chip), and `aria-pressed` so selection is not colour-only.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Tribes</legend>
 				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(tribeLabels) as [id, label]}
+					{#each Object.entries(tribeLabels) as [id, label] (id)}
 						{@const numId = Number(id) as TribeId}
 						{@const isChecked = selectedTribes.has(numId)}
 						<button
 							type="button"
+							aria-pressed={isChecked}
 							onclick={() => toggleTribe(numId)}
 							class={[
 								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -610,17 +863,22 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</fieldset>
 
-			<!-- Meet at -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Meet at</span>
+			<!--
+				Meet at: D20 — `<fieldset>`/`<legend>` instead of a bare `<span>`, a
+				KEYED each (so re-ordering the options cannot make Svelte reuse the
+				wrong chip), and `aria-pressed` so selection is not colour-only.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Meet at</legend>
 				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(meetAtLabels) as [id, label]}
+					{#each Object.entries(meetAtLabels) as [id, label] (id)}
 						{@const numId = Number(id) as MeetAtId}
 						{@const isChecked = selectedMeetAt.has(numId)}
 						<button
 							type="button"
+							aria-pressed={isChecked}
 							onclick={() => toggleMeetAt(numId)}
 							class={[
 								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -633,7 +891,7 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</fieldset>
 
 			<!-- NSFW pics -->
 			<div class="flex flex-col gap-1.5">
@@ -665,15 +923,20 @@
 				</select>
 			</div>
 
-			<!-- Health practices -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Health practices</span>
+			<!--
+				Health practices: D20 — `<fieldset>`/`<legend>` instead of a bare `<span>`, a
+				KEYED each (so re-ordering the options cannot make Svelte reuse the
+				wrong chip), and `aria-pressed` so selection is not colour-only.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Health practices</legend>
 				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(healthPractices) as [id, label]}
+					{#each Object.entries(healthPractices) as [id, label] (id)}
 						{@const numId = Number(id) as HealthPracticeId}
 						{@const isChecked = selectedHealthPractices.has(numId)}
 						<button
 							type="button"
+							aria-pressed={isChecked}
 							onclick={() => toggleHealthPractice(numId)}
 							class={[
 								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -686,17 +949,22 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</fieldset>
 
-			<!-- Vaccines -->
-			<div class="flex flex-col gap-2">
-				<span class="text-sm font-medium leading-none">Vaccines</span>
+			<!--
+				Vaccines: D20 — `<fieldset>`/`<legend>` instead of a bare `<span>`, a
+				KEYED each (so re-ordering the options cannot make Svelte reuse the
+				wrong chip), and `aria-pressed` so selection is not colour-only.
+			-->
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium leading-none">Vaccines</legend>
 				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(vaccineLabels) as [id, label]}
+					{#each Object.entries(vaccineLabels) as [id, label] (id)}
 						{@const numId = Number(id) as VaccineId}
 						{@const isChecked = selectedVaccines.has(numId)}
 						<button
 							type="button"
+							aria-pressed={isChecked}
 							onclick={() => toggleVaccine(numId)}
 							class={[
 								"rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
@@ -709,7 +977,7 @@
 						</button>
 					{/each}
 				</div>
-			</div>
+			</fieldset>
 
 			<!-- Instagram -->
 			<div class="flex flex-col gap-1.5">
@@ -751,12 +1019,65 @@
 		<Sheet.Footer
 			class={[
 				"p-4 border border-x-0 border-b-0 border-transparent transition-colors",
-				{ "border-muted": contentScroll < 1 },
+				{ "border-muted": canScrollDown },
 			]}
 		>
-			<Button type="button" disabled={saving} onclick={() => handleSave()}>
+			<Button
+				type="button"
+				disabled={saving || listsPending}
+				onclick={() => handleSave()}
+			>
 				{saving ? "Saving…" : "Save"}
 			</Button>
+			{#if listsPending}
+				<p class="text-xs text-muted-foreground text-center mt-2">
+					Still loading your gender and pronoun options — saving now would
+					overwrite them.
+				</p>
+			{/if}
 		</Sheet.Footer>
 	</Sheet.Content>
 </Sheet.Root>
+
+<!--
+	Unsaved-changes confirm (D6). Reuses the hand-rolled `role="alertdialog"`
+	pattern from settings → account → photos, rather than nesting a second modal
+	Dialog inside the Sheet, which fights bits-ui's focus trap.
+-->
+{#if confirmDiscardOpen}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center p-6"
+		role="alertdialog"
+		aria-modal="true"
+		aria-labelledby="discard-title"
+	>
+		<button
+			type="button"
+			aria-label="Keep editing"
+			class="absolute inset-0 bg-black/60"
+			onclick={() => (confirmDiscardOpen = false)}
+		></button>
+		<div
+			class="relative w-full max-w-80 rounded-2xl border border-border bg-popover p-5 flex flex-col gap-4"
+		>
+			<div class="flex flex-col gap-1.5">
+				<p id="discard-title" class="font-semibold">Discard your changes?</p>
+				<p class="text-sm text-muted-foreground">
+					You have edits that haven't been saved yet.
+				</p>
+			</div>
+			<div class="flex gap-2 justify-end">
+				<Button variant="ghost" size="sm" onclick={() => (confirmDiscardOpen = false)}>
+					Keep editing
+				</Button>
+				<Button
+					size="sm"
+					class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+					onclick={() => closeDiscarding()}
+				>
+					Discard
+				</Button>
+			</div>
+		</div>
+	</div>
+{/if}

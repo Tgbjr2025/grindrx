@@ -11,6 +11,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
+import { blobToBase64 } from "$lib/base64";
+
 const uploadResponseSchema = z.object({
 	mediaId: z.number().int(),
 	mediaHash: z.string(),
@@ -45,18 +47,10 @@ export function pickAudioMimeType(): string {
 	return "audio/webm";
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-	const bytes = new Uint8Array(await blob.arrayBuffer());
-	let binary = "";
-	const chunk = 0x8000;
-	for (let i = 0; i < bytes.length; i += chunk) {
-		binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-	}
-	return btoa(binary);
-}
-
 export async function uploadAudioBlob(blob: Blob, lengthMs: number): Promise<UploadedAudio> {
 	const contentType = blob.type || "audio/webm";
+	// Delegates to `$lib/base64`'s single chunked encoder instead of keeping a
+	// second copy of the byte->base64 loop (this module had a third).
 	const base64 = await blobToBase64(blob);
 	const result = await invoke<{ status: number; body: string }>("upload_image", {
 		imageBase64: base64,
@@ -78,7 +72,19 @@ export async function uploadAudioBlob(blob: Blob, lengthMs: number): Promise<Upl
 	return {
 		mediaId: parsed.data.mediaId,
 		mediaHash: parsed.data.mediaHash,
-		url: parsed.data.url ?? `https://cdns.grindr.com/images/${parsed.data.mediaHash}`,
+		// TODO(verify against a live device) — this is the ONE thing in this module
+	// I could not verify, and I am deliberately not guessing a fix.
+	//
+	// `url` falls back to the IMAGE CDN path (`/images/{mediaHash}`) for an
+	// audio upload. The bytes went to the `upload_image` command, so the media
+	// hash is an image's, and the fallback produces a 404 URL the recipient
+	// cannot play — a silently broken voice message. The real audio URL is
+	// whatever `upload_image` returns in `url`; when it does not, the correct
+	// behaviour is to refuse the send (or omit the url so the client fetches
+	// through `fetch_media_bytes`) rather than synthesize an images path.
+	// Which of those the API actually supports is a question for a live
+	// capture, so the guess is left unmade rather than guessed wrong.
+	url: parsed.data.url ?? `https://cdns.grindr.com/images/${parsed.data.mediaHash}`,
 		contentType,
 		length: Math.max(0, Math.round(lengthMs)),
 	};

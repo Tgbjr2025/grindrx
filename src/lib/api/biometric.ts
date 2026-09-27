@@ -9,7 +9,15 @@ export async function isBiometricAvailable(): Promise<boolean> {
 	try {
 		const status = await checkStatus();
 		return status.isAvailable === true;
-	} catch {
+	} catch (e) {
+		// A bare `return false` here was indistinguishable from "this device
+		// genuinely has no biometrics": a missing plugin, a revoked permission,
+		// or a plugin that always throws all looked like a working negative
+		// answer. In an app-lock context that is the difference between "biometric
+		// unlock is unavailable, use your PIN" and "the lock screen is unlocked
+		// and nothing is wrong" — so the failure is reported.
+		// Logs the error object only; never biometric data or a scan result.
+		console.warn("[biometric] availability check failed:", e);
 		return false;
 	}
 }
@@ -30,7 +38,14 @@ export async function promptBiometric(
 			allowDeviceCredential,
 		});
 		return true;
-	} catch {
+	} catch (e) {
+		// Most of the time this is a genuine user cancel, which is a normal
+		// `false`. But it is also what a revoked permission or a plugin that
+		// always throws produces, and the caller is about to tell the user their
+		// fingerprint "didn't work". Report the failure so a real capability
+		// problem is visible in logcat. Only the error object is logged — never
+		// the reason string, the scan result, or any biometric data.
+		console.warn("[biometric] prompt failed:", e);
 		return false;
 	}
 }

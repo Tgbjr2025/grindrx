@@ -11,15 +11,19 @@
 	let {
 		lookingFor,
 	}: {
-		lookingFor: LookingForId[] | null;
+		lookingFor: LookingForId[] | null | undefined;
 	} = $props();
 </script>
 
-{#if lookingFor !== null && lookingFor.length > 0}
+{#if lookingFor != null && lookingFor.length > 0}
 	<ProfileField>
 		<EyesIcon class="shrink-0" weight="fill" />
 		<ProfileValueLabel label="Looking For">
-			{lookingFor.map((option) => lookingForOptions[option]).join(", ")}
+			<!-- D21: `.filter(Boolean)` — see HealthPractices.svelte. -->
+			{lookingFor
+				.map((option) => lookingForOptions[option])
+				.filter(Boolean)
+				.join(", ")}
 		</ProfileValueLabel>
 	</ProfileField>
 {/if}

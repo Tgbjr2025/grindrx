@@ -6,6 +6,7 @@ import {
 	hashPin,
 	isValidPin,
 	PBKDF2_ITERATIONS,
+	sha256Hex,
 } from "$lib/utils/pin";
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -51,16 +52,48 @@ describe("constantTimeEqual", () => {
 });
 
 describe("isValidPin", () => {
-	it("accepts 4-8 digit pins", () => {
-		expect(isValidPin("1234")).toBe(true);
+	it("accepts 6-8 digit pins", () => {
+		expect(isValidPin("123456")).toBe(true);
 		expect(isValidPin("12345678")).toBe(true);
 	});
 
-	it("rejects too short, too long, or non-numeric", () => {
-		expect(isValidPin("123")).toBe(false);
+	// The verifier is plaintext app storage, so the floor is the whole defence
+	// against an offline sweep: 4 digits is 10,000 candidates.
+	it("rejects 4- and 5-digit pins", () => {
+		expect(isValidPin("1234")).toBe(false);
+		expect(isValidPin("12345")).toBe(false);
+	});
+
+	it("rejects too long, or non-numeric", () => {
 		expect(isValidPin("123456789")).toBe(false);
-		expect(isValidPin("12a4")).toBe(false);
+		expect(isValidPin("12a456")).toBe(false);
 		expect(isValidPin("")).toBe(false);
+	});
+});
+
+describe("sha256Hex (legacy v0.1.25-v0.1.32 digest)", () => {
+	it("is the plain SHA-256 of the input, hex-encoded", async () => {
+		const digest = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode("salt:1234"),
+		);
+		expect(await sha256Hex("salt:1234")).toBe(bytesToHex(new Uint8Array(digest)));
+		expect(await sha256Hex("salt:1234")).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("reproduces the legacy format exactly (SHA-256 of `${salt}:${pin}`)", async () => {
+		const salt = "ab".repeat(16);
+		// Independent recomputation of a plain SHA-256 over the same input.
+		const digest = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode(`${salt}:1234`),
+		);
+		expect(await sha256Hex(`${salt}:1234`)).toBe(
+			bytesToHex(new Uint8Array(digest)),
+		);
+		// ...and it is NOT a PBKDF2 digest, which is why a legacy install could
+		// never be verified by the current verifier.
+		expect(await sha256Hex(`${salt}:1234`)).not.toBe(await hashPin("1234", salt));
 	});
 });
 

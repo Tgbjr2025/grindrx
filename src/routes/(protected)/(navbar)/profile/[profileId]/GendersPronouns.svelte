@@ -19,12 +19,16 @@
 
 {#if (genders !== null && genders.length > 0) || (pronouns !== null && pronouns.length > 0)}
 	<ProfileField>
+		<!-- D21: purely decorative — it duplicates the adjacent "Stats" heading,
+		     so it must not be announced as an image with no name. -->
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
 			width="1em"
 			height="1em"
 			viewBox="0 0 24 24"
 			class="shrink-0"
+			aria-hidden="true"
+			focusable="false"
 		>
 			<!-- Icon from Lucide by Lucide Contributors - https://github.com/lucide-icons/lucide/blob/main/LICENSE -->
 			<g
@@ -51,6 +55,15 @@
 					)
 					.filter(Boolean)
 					.join(", ")}
+			{:catch}
+				<!--
+					D3: this block had no `:catch`, which Svelte 5 converts into a
+					RETHROWN unhandled rejection (await.js: `if (!catch_fn) throw
+					error.v`). A failed gender-list fetch therefore produced an
+					unhandled promise rejection in a component that is purely
+					decorative.
+				-->
+				<span class="text-muted-foreground">Unavailable</span>
 			{/await}
 		{/if}
 		{#if genders !== null && genders.length > 0 && pronouns !== null && pronouns.length > 0}
@@ -67,6 +80,9 @@
 					)
 					.filter(Boolean)
 					.join(", ")}
+			{:catch}
+				<!-- D3: see the note on the gender block above. -->
+				<span class="text-muted-foreground">Unavailable</span>
 			{/await}
 		{/if}
 	</ProfileField>

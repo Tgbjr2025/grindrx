@@ -11,11 +11,12 @@
 	let {
 		nsfwPics,
 	}: {
-		nsfwPics: AcceptNSFWPicsId | null;
+		nsfwPics: AcceptNSFWPicsId | null | undefined;
 	} = $props();
 </script>
 
-{#if nsfwPics !== null}
+<!-- D7: `nsfw` is optional now — loose `!= null` so `undefined` does not render. -->
+{#if nsfwPics != null}
 	<ProfileField>
 		<CameraIcon class="shrink-0" />
 		<ProfileValueLabel label="NSFW pics?">

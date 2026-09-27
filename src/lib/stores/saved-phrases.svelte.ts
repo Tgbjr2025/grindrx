@@ -17,6 +17,8 @@ const STORAGE_KEY = "grindrx-saved-phrases";
 const MAX_PHRASE_LENGTH = 1000;
 /** Guard against unbounded growth from a runaway UI or imported data. */
 const MAX_PHRASES = 100;
+/** Public so a UI can tell the user what the cap is instead of just "full". */
+export const SAVED_PHRASES_MAX = MAX_PHRASES;
 
 const phraseSchema = z.object({
 	id: z.string().min(1),
@@ -90,16 +92,37 @@ function initialPhrases(): SavedPhrase[] {
 	}
 }
 
+/**
+ * The last localStorage write failure, or `null` when the list is persisted.
+ *
+ * Reactive so a component can watch it: a `console.error` alone is invisible to
+ * the user, and "my phrase disappeared" has no other explanation. Declared
+ * BEFORE `phrases` because the first `initialPhrases()` call below reaches
+ * `persist()`, which assigns this.
+ */
+let persistError = $state<Error | null>(null);
+
 function persist(phrases: SavedPhrase[]): void {
 	if (!browser) return;
 	try {
 		localStorage.setItem(STORAGE_KEY, JSON.stringify(phrases));
+		persistError = null;
 	} catch (err) {
+		// A localStorage quota failure (or a Safari private-mode write denial) used
+		// to be a `console.error` only, so the phrase appeared to save and then
+		// silently vanished on the next reload. Expose it reactively instead; the
+		// drawer surfaces it as a toast. `console.error` is kept for the log.
 		console.error("[GrindrX] Failed to persist saved phrases:", err);
+		persistError = err instanceof Error ? err : new Error(String(err));
 	}
 }
 
 let phrases = $state<SavedPhrase[]>(initialPhrases());
+
+/** The most recent persistence failure, or `null`. Reactive. */
+export function getSavedPhrasesPersistError(): Error | null {
+	return persistError;
+}
 
 /** The current list of saved phrases (reactive). */
 export function getSavedPhrases(): SavedPhrase[] {
@@ -107,9 +130,22 @@ export function getSavedPhrases(): SavedPhrase[] {
 }
 
 /**
+ * Whether `addSavedPhrase` is about to refuse for capacity rather than for empty
+ * text.
+ *
+ * `addSavedPhrase` returns `null` for BOTH "the text was empty" and "the list is
+ * already at MAX_PHRASES", so the drawer could not tell a no-op from a full list
+ * and silently did nothing. The cap is `MAX_PHRASES`; this is the only caller-
+ * facing way to ask about it.
+ */
+export function savedPhraseLimitReached(): boolean {
+	return phrases.length >= MAX_PHRASES;
+}
+
+/**
  * Add a phrase to the end of the list. The text is trimmed; empty text is
  * ignored. Returns the created phrase, or `null` if it was empty or the list is
- * already at the cap.
+ * already at the cap — call `savedPhraseLimitReached()` to tell those apart.
  */
 export function addSavedPhrase(text: string): SavedPhrase | null {
 	const trimmed = text.trim().slice(0, MAX_PHRASE_LENGTH);

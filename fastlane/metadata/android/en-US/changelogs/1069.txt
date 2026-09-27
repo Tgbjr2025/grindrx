@@ -1,0 +1,7 @@
+Fixed a PIN set in v0.1.25–v0.1.32 that could never unlock the app.
+
+Signing out now clears your saved phrases, viewed locations, photos and other account data from the device. Turning the app lock off, or changing your PIN, now asks for your current PIN first. Chat previews no longer reach the lock screen while the app lock is on.
+
+The weight filter could never find anyone (it searched in the wrong unit). Photos stopped flickering and re-downloading while scrolling. Typing in Chinese, Japanese or Korean no longer sends messages by accident. Reporting a message or profile works now, and failures are reported. The microphone no longer stays on if you leave the screen while permission is being requested. Unread messages that arrive while the app is closed are no longer hidden.
+
+Full line-by-line audit: 4 critical, 11 high, ~30 medium findings across 30k lines. See the repository audit report.

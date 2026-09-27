@@ -1,15 +1,27 @@
 <script lang="ts">
-	import { checkPermissions, getCurrentPosition } from "@tauri-apps/plugin-geolocation";
+	import {
+		checkPermissions,
+		getCurrentPosition,
+		requestPermissions,
+	} from "@tauri-apps/plugin-geolocation";
 	import { platform } from "@tauri-apps/plugin-os";
-	import { ArrowCounterClockwiseIcon, CompassIcon, EyeSlashIcon } from "phosphor-svelte";
+	import {
+		ArrowCounterClockwiseIcon,
+		CompassIcon,
+		EyeSlashIcon,
+	} from "phosphor-svelte";
 	import { onMount } from "svelte";
 
-	import { getPreferences, setPreferences } from "$lib/app-data/preferences.svelte";
+	import {
+		getPreferences,
+		setPreferences,
+	} from "$lib/app-data/preferences.svelte";
 	import { encodeGeohash } from "$lib/model/geohash";
 	import {
 		clearExploreLocation,
 		getExploreLocation,
 	} from "$lib/stores/explore-location.svelte";
+	import { isGeohashPinned, setGeohashPinned } from "./grid";
 	import { gridState } from "./grid-state.svelte";
 	import Grid from "./Grid.svelte";
 	import LocationChooser from "./LocationEmpty.svelte";
@@ -22,10 +34,38 @@
 	const explore = $derived(getExploreLocation());
 
 	onMount(async () => {
+		// A first-run user is never asked for location on this route, so the
+		// "Use current location" button on the empty state is the only way to get
+		// it — and by then they have already been dropped onto a map with no
+		// indication that permission was the missing step. Ask on mount, while
+		// this is the screen the user is looking at. Best-effort: a denial is
+		// handled by the map-picker path, and must never block the grid.
+		if (["android", "ios"].includes(platform())) {
+			try {
+				const perms = await checkPermissions();
+				if (
+					perms.location === "prompt" ||
+					perms.location === "prompt-with-rationale"
+				) {
+					await requestPermissions(["location"]);
+				}
+			} catch (error) {
+				console.error("Failed to request location permission", error);
+			}
+		}
+
 		const prefs = await preferences;
 		if (!prefs.geohash) return;
 		// Don't chase GPS while the user is intentionally browsing a remote area.
 		if (getExploreLocation()) return;
+		// D17: the same is true of a "Browse from here" location, which writes a
+		// hand-picked geohash into the SAME `preferences.geohash` slot this
+		// updater writes. The old early return only covered the explore override
+		// (which is cleared by that path), so on the next cold start a real GPS
+		// fix compared against the remote hash, differed by >1 km, and overwrote
+		// it — the chosen area silently reverting to the device's location, with
+		// no error. The pin flag is what distinguishes the two.
+		if (isGeohashPinned()) return;
 		if (!["android", "ios"].includes(platform())) return;
 		try {
 			const perms = await checkPermissions();
@@ -37,6 +77,8 @@
 			// Only update if position changed by more than ~1 km (6-char geohash cell)
 			if (newHash.slice(0, 6) !== prefs.geohash.slice(0, 6)) {
 				await setPreferences({ geohash: newHash });
+				// A real GPS fix supersedes any hand-picked pin, so clear it.
+				setGeohashPinned(false);
 				preferences = getPreferences();
 			}
 		} catch {
@@ -46,6 +88,9 @@
 
 	function resetToRealLocation() {
 		clearExploreLocation();
+		// A hand-picked "browse from here" location is also not the real
+		// location, so un-pin it: the next GPS fix is then allowed to take over.
+		setGeohashPinned(false);
 		// Re-evaluate which geohash the grid should use.
 		preferences = getPreferences();
 	}
@@ -92,7 +137,9 @@
 						</button>
 					{/if}
 					{#if incognito}
-						<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-800/80 border border-neutral-700/60 text-neutral-300 text-xs font-medium backdrop-blur-sm pointer-events-none">
+						<span
+							class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-neutral-800/80 border border-neutral-700/60 text-neutral-300 text-xs font-medium backdrop-blur-sm pointer-events-none"
+						>
 							<EyeSlashIcon class="size-3.5 shrink-0" />
 							Incognito
 						</span>

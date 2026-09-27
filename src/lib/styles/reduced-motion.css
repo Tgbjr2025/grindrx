@@ -1,0 +1,54 @@
+/*
+ * prefers-reduced-motion — global, accessibility.
+ *
+ * The app had NO handling for this anywhere (grep: zero hits under src/ before
+ * this file). shadcn-svelte / vaul-svelte / bits-ui all ship transition-heavy
+ * primitives (dialog + sheet/drawer scale-and-fade in, alert-dialog overlays,
+ * accordions/collapsibles, and the `tw-animate-css` keyframes that layout.css
+ * pulls in at the top), so a user who has asked the OS for reduced motion still
+ * got all of it.
+ *
+ * IMPORTED BY src/routes/+layout.svelte — one line, the coordinator must add:
+ *
+ *     import "$lib/styles/reduced-motion.css";
+ *
+ * (`$lib` is src/lib; the `$layout` alias in svelte.config.js points at
+ * src/layout.css, so "../styles/reduced-motion.css" is equally correct from a
+ * route file. layout.css itself belongs to another batch and was NOT touched.)
+ *
+ * WHY 0.01ms AND NOT `none`: `animation: none` / `transition: none` can swallow
+ * the `transitionend` / `animationend` event, so any Svelte `transition:` or
+ * bits-ui state machine waiting on one is left hanging. Clamping the duration to
+ * ~0 keeps the event firing while removing all visible motion.
+ *
+ * SCOPE, deliberately narrow: this only neutralises CSS transitions/animations
+ * in the app's document. It cannot reach motion applied by JS at runtime, or the
+ * WebView's own scroll/overscroll behaviour. Those need a
+ * `matchMedia("(prefers-reduced-motion: reduce)")` check at the call site, and
+ * nothing in the tree does that today (reported, not changed — those files are
+ * owned by other batches).
+ */
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto !important;
+	}
+
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-delay: 0ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		transition-delay: 0ms !important;
+		scroll-behavior: auto !important;
+	}
+
+	/* shadcn-svelte / bits-ui drive their enter+exit animations off data-state
+	   attributes; without a data-state on the resting element there is nothing
+	   left to clamp, so this is belt-and-braces for the ones that keep it. */
+	[data-state] {
+		animation: none !important;
+	}
+}

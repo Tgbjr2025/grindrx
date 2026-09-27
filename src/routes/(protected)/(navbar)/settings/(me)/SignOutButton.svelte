@@ -5,11 +5,18 @@
 	import { clearGendersCache } from "$lib/api/genders";
 	import { clearAllProfileCaches } from "$lib/api/profile";
 	import { clearPronounsCache } from "$lib/api/pronouns";
+	import { isLocked } from "$lib/app-data/app-lock.svelte";
+	import { purgeAccountLocalData } from "$lib/app-data/purge";
 	import * as AlertDialog from "$lib/components/ui/alert-dialog";
 	import * as Item from "$lib/components/ui/item";
 	import ButtonItemContent from "./ButtonItemContent.svelte";
 
 	async function onSignOut() {
+		// Signing out while the app lock is up would navigate out of
+		// `(protected)`, which unmounts `PinLockGate` and drops the gate
+		// entirely. Nothing protected is rendered while locked, so this button
+		// can't normally be reached in that state.
+		if (isLocked()) return;
 		try {
 			await callMethod("logout");
 		} catch (error) {
@@ -18,6 +25,11 @@
 		clearAllProfileCaches();
 		clearGendersCache();
 		clearPronounsCache();
+		// The previous account's data does not leave with the session: saved
+		// message text, geohash, read cursors, signed CDN URLs, the app-lock
+		// verifier, and the preferences file. Purge BEFORE the hard navigation,
+		// which is what actually unmounts the app.
+		await purgeAccountLocalData();
 		window.location.href = "/auth/sign-in";
 	}
 

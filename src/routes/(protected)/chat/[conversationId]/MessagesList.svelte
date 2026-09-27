@@ -111,7 +111,15 @@
 		const previousPageKey = conversationState.pageKey;
 		const previousCount = conversationState.messages.length;
 		const prevScrollHeight = container.scrollHeight;
-		await conversationState.loadMore();
+		// `loadMore` reports whether the FETCH SUCCEEDED. On failure it swallowed
+		// the error, left both `pageKey` and `messages.length` untouched, and the
+		// two checks below were BOTH satisfied — so a single transient network
+		// failure nulled the cursor sentinel and nothing ever set it back,
+		// permanently ending the user's ability to read history. Bail out before the
+		// end-of-history test when the request did not succeed; the sentinel stays
+		// mounted and the next intersection retries.
+		const ok = await conversationState.loadMore();
+		if (!ok) return;
 		// Guard: same cursor, or a page that added nothing, means we are done.
 		if (
 			conversationState.pageKey === previousPageKey ||
@@ -146,6 +154,11 @@
 	class="flex-1 flex flex-col min-h-0 overflow-auto gap-1 p-2 max-w-full pt-20 *:first:mt-auto"
 	bind:this={container}
 	style:overflow-anchor="none"
+	// Announce new messages to assistive tech. Without a live region, a screen
+	// reader user had no way to learn a reply had arrived.
+	role="log"
+	aria-live="polite"
+	aria-label="Messages"
 	onscroll={() => {
 		if (!container) return;
 		const near = isNearBottom(container);
@@ -184,6 +197,10 @@
 			ready" affordance that was missing.
 		-->
 		{#if newArrivals > 0}
+			<!-- `z-10` matches nothing above it any more: the navbar was raised to
+			     `z-20` (see ChatNavBar). At equal stacking level this pill is LATER in
+			     the DOM than the absolutely-positioned navbar, so it painted over the
+			     back button whenever the user was scrolled up in a long thread. -->
 			<div class="sticky top-0 z-10 flex justify-center pt-1 shrink-0">
 				<button
 					type="button"
@@ -232,7 +249,18 @@
 				}}
 				onReact={async (reactionType: number) => {
 					try {
-						await conversationState.reactTo(message.messageId, reactionType);
+						const result = await conversationState.reactTo(
+							message.messageId,
+							reactionType,
+						);
+						// Re-tapping a reaction you already hold is NOT a silent no-op
+						// any more. There is no remove-reaction endpoint available to
+						// this client, so say that instead of pretending nothing
+						// happened.
+						if (result === "already-held")
+							toast.info(
+								"You already reacted — removing a reaction isn't supported yet.",
+							);
 					} catch {
 						toast.error("Failed to react to message");
 					}

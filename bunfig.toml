@@ -1,2 +1,16 @@
+# This project tests with VITEST, not Bun's built-in test runner:
+#   package.json -> "test:unit": "svelte-kit sync && vitest run"
+#   package.json -> "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib"
+#
+# IMPORTANT: this `[test]` section is DEAD CONFIG for every supported command.
+# bunfig.toml's `[test]` table is only read by `bun test`, and `bun test` is not
+# used by any script in package.json. So the preload below does NOT run during
+# `bun run test`, `bun run test:unit`, `bun run test:rust`, or CI.
+#
+# It is kept deliberately as a trap: if a contributor types `bun test` instead of
+# `bun run test`, Bun's runner starts, the preload fires, and the process exits 1
+# with "Use `bun run test` instead of `bun test`" rather than reporting a pile of
+# bogus failures (or, worse, quietly passing on a subset). Delete this section
+# only if the guard is moved somewhere `bun test` actually reads it.
 [test]
 preload = ["./scripts/no-bun-test.ts"]

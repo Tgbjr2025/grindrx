@@ -3,6 +3,19 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.34": [
+		"Security: if you set a PIN between v0.1.25 and v0.1.32, it works again. That update could never unlock, and this release fixes it.",
+		"Security: signing out now clears your saved messages, viewed locations and photos from the device.",
+		"Security: turning the app lock off, or changing your PIN, now asks for your current PIN first.",
+		"Security: chat previews no longer appear on your lock screen while the app lock is on.",
+		"Fixed: the weight filter could never find anyone. It was searching in the wrong unit.",
+		"Fixed: photos stopped flickering and re-downloading every time you scrolled past them.",
+		"Fixed: typing in Chinese, Japanese or Korean no longer sent messages by accident.",
+		"Fixed: reporting a message or profile now actually works, and you are told if it fails.",
+		"Fixed: the microphone no longer stays on if you leave the screen while it is asking for permission.",
+		"Fixed: the app no longer forgets unread messages that arrived while it was closed.",
+		"Fixed: three separate Android build files disagreed about the version number, which could stop an update installing.",
+	],
 	"0.1.33": [
 		"Fixed: the keyboard no longer covers the message box — you can read messages and actually reply.",
 		"Fixed: voice messages never played. They now load, with a loading and failure state instead of a dead play button.",
@@ -14,7 +27,7 @@ export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
 		"Fixed: profile edits saving silently, a black screen when going back from a profile, and incognito not actually working.",
 		"New: sending a location in chat, not just receiving one.",
 		"New: screenshot protection — the app is blocked from screen recording and from the recent-apps thumbnail.",
-		"New: Android app backups are switched off, so your precise location and app-lock data can't be extracted.",
+		"New: Android app backups are switched off, so your precise location and app-lock data can't be extracted via Android backup or device transfer.",
 	],
 	"0.1.32": [
 		"App lock with fingerprint or face — you can now unlock with just a biometric, no PIN needed.",
@@ -46,6 +59,26 @@ export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
 	],
 };
 
+// Lookup MUST go through Object.hasOwn, not a bare `VERSION_HIGHLIGHTS[v]`.
+//
+// `VERSION_HIGHLIGHTS` is a plain object literal, so it inherits from
+// Object.prototype. `VERSION_HIGHLIGHTS["toString"]` (and "constructor",
+// "valueOf", "__proto__", "hasOwnProperty", …) is therefore NOT undefined — it is
+// the inherited function. The old
+//
+//     return VERSION_HIGHLIGHTS[version] ?? ["Bug fixes and improvements."];
+//
+// so `??` never fired for those keys and returned a FUNCTION. The only consumer
+// does `{#each items as item (item)}` (WhatsNewDialog.svelte), which throws on a
+// non-iterable — so a version string of "toString" would have crashed the What's
+// New dialog rather than falling back to the generic message.
+//
+// Not reachable today: the argument comes from `getVersion()` inside the Tauri
+// runtime, not from user input. That is exactly why it is worth making sound
+// rather than leaving it to stay unreachable.
 export function highlightsFor(version: string): string[] {
-	return VERSION_HIGHLIGHTS[version] ?? ["Bug fixes and improvements."];
+	if (Object.hasOwn(VERSION_HIGHLIGHTS, version)) {
+		return VERSION_HIGHLIGHTS[version];
+	}
+	return ["Bug fixes and improvements."];
 }

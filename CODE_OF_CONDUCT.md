@@ -1,5 +1,29 @@
 # Contributor Covenant 3.0 Code of Conduct
 
+> ## ⚠️ INHERITED FROM UPSTREAM `open-grind/open-grind` — UNMODIFIED
+>
+> This is the **Contributor Covenant 3.0** text as adopted by upstream Open Grind.
+> It is byte-for-byte upstream's copy and this fork has not adopted, replaced, or
+> amended it — the statements below describe the covenant faithfully, and the
+> fork's project-level banners are in
+> [GOVERNANCE.md](./GOVERNANCE.md).
+>
+> ### What applies, and what does not
+>
+> | Part | Status for GrindrX |
+> | --- | --- |
+> | The covenant itself (pledge, behaviours, scope) | **Applies**, unmodified. |
+> | "send a message to maintainers using contacts in [GOVERNANCE.md](./GOVERNANCE.md)" (line ~48) | **Points at the wrong people.** `GOVERNANCE.md` is upstream's and names `@hloth`, who has no role in this fork. A GrindrX conduct report should go to **[@Tgbjr2025](https://github.com/Tgbjr2025)** via the issue tracker or a private channel — see [README.md](./README.md#issues--contributing). **Until that line is rewritten, this is a real gap: there is no published, correct address for a conduct report on this project.** DECISION NEEDED — see [CONTRIBUTING.md](./CONTRIBUTING.md#decision-needed). |
+> | "Community Moderators" / "Community Managers" as enforcement roles | **No such role exists** for GrindrX. Enforcement is done by the single maintainer. The enforcement ladder itself is a usable guideline and is left in place. |
+>
+> ### What is actually true for GrindrX
+>
+> The project has one public maintainer,
+> [@Tgbjr2025](https://github.com/Tgbjr2025), and no separate moderator or
+> response team. The operative terms of this covenant — be welcoming, be
+> respectful, no harassment, no discrimination, and repair harm when you cause
+> it — are the standard, and they are the terms contributors here are held to.
+
 ## Our Pledge
 
 We pledge to make our community welcoming, safe, and equitable for all.

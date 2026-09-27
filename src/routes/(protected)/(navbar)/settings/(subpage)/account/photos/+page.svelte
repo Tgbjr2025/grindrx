@@ -29,6 +29,17 @@
 	let primaryHash = $state<string | null>(null);
 	// Everything else, in display order.
 	let secondary = $state<string[]>([]);
+	// IS `primaryHash` actually the server's primary, or our guess at it?
+	//
+	// `GET /v3/me/profile/images` returns an ordered `medias` array and does NOT
+	// say which entry is primary. The first cold load therefore ASSUMES
+	// `medias[0]` is primary — and that assumption used to be written straight
+	// back to the server. If the user's real primary was, say, entry 3, the very
+	// first arrow tap issued a PUT with the wrong photo promoted to main: the
+	// primary silently changed, and `load()` (which only re-derives when
+	// `!primaryHash`) never corrected it. So we track the assumption explicitly
+	// and refuse to persist while it holds.
+	let primaryIsAssumed = $state(false);
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -36,6 +47,23 @@
 	let uploading = $state(false);
 	let saving = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
+
+	// --- Serialised mutations (D10) ----------------------------------------
+	// `move`/`makePrimary` were `async` and each called `persist()` itself, so
+	// four rapid arrow taps issued FOUR overlapping PUTs with four different
+	// orderings and no ordering guarantee between them: the last request to
+	// ARRIVE won, which is not necessarily the last one sent. `saving` was set
+	// but never read by the mutators, so nothing serialised or blocked them.
+	// Every mutation now goes through one promise chain, and the arrows are
+	// disabled while a write is in flight.
+	let writeChain: Promise<unknown> = Promise.resolve();
+	function enqueue<T>(task: () => Promise<T>): Promise<T> {
+		const run = writeChain.then(task, task);
+		// Keep the chain alive after a rejection so one failure does not wedge
+		// every later mutation.
+		writeChain = run.catch(() => undefined);
+		return run;
+	}
 
 	async function load() {
 		loading = true;
@@ -47,11 +75,17 @@
 			// cold load we keep whatever the user last set in this session and
 			// otherwise fall back to server order with the first photo as main.
 			const known = new Set(res.medias.map((p) => p.mediaHash));
-			if (primaryHash && !known.has(primaryHash)) primaryHash = null;
+			if (primaryHash && !known.has(primaryHash)) {
+				primaryHash = null;
+				// The hash we had was deleted server-side, so the old assumption
+				// no longer describes anything; re-derive it from server order.
+				primaryIsAssumed = true;
+			}
 			secondary = secondary.filter((h) => known.has(h));
 			if (!primaryHash && res.medias.length > 0) {
 				primaryHash = res.medias[0].mediaHash;
 				secondary = res.medias.slice(1).map((p) => p.mediaHash);
+				primaryIsAssumed = true;
 			}
 		} catch {
 			error = "Failed to load photos.";
@@ -69,14 +103,27 @@
 		busy = next;
 	}
 
-	/** Push the current primary + ordering to the API. */
+	/**
+	 * Push the current primary + ordering to the API.
+	 *
+	 * REFUSES while `primaryIsAssumed` is set. The order we would send is built
+	 * from a guess about which photo is primary, and a PUT makes that guess
+	 * authoritative — so the first mutation after a cold load would otherwise
+	 * silently promote the wrong photo to main and rewrite the user's real
+	 * ordering around it. The mutation is still applied optimistically in the UI
+	 * (so the tap visibly does something); it just is not written until the
+	 * primary is one the SERVER chose, which happens as soon as the user
+	 * explicitly picks a main photo or uploads one.
+	 */
 	async function persist() {
+		if (primaryIsAssumed) return false;
 		saving = true;
 		try {
 			await setProfilePhotos({
 				primaryImageHash: primaryHash,
 				secondaryImageHashes: secondary,
 			});
+			return true;
 		} finally {
 			saving = false;
 		}
@@ -86,17 +133,30 @@
 		if (primaryHash === hash) return;
 		const previousPrimary = primaryHash;
 		const previousSecondary = secondary;
+		const previousAssumed = primaryIsAssumed;
 		// Optimistic: swap into the main slot and push the old main down the list.
 		primaryHash = hash;
-		secondary = [previousPrimary, ...secondary.filter((h) => h !== hash)].filter(
-			(h): h is string => h != null,
-		);
+		secondary = [
+			previousPrimary,
+			...secondary.filter((h) => h !== hash),
+		].filter((h): h is string => h != null);
+		// The user has now named the primary themselves, so the assumption is
+		// resolved and the state is safe to write.
+		primaryIsAssumed = false;
 		try {
-			await persist();
+			const wrote = await enqueue(() => persist());
+			if (!wrote) {
+				// persist() bailed: put the assumption back so a later mutation
+				// still refuses to write.
+				primaryIsAssumed = previousAssumed;
+				toast.error("Couldn't confirm your main photo. Try again.");
+				return;
+			}
 			toast.success("Main photo updated.");
 		} catch (err) {
 			primaryHash = previousPrimary;
 			secondary = previousSecondary;
+			primaryIsAssumed = previousAssumed;
 			console.error("Failed to set main photo", err);
 			toast.error("Couldn't update your main photo.");
 		}
@@ -112,7 +172,7 @@
 		const previous = secondary;
 		secondary = next;
 		try {
-			await persist();
+			await enqueue(() => persist());
 		} catch (err) {
 			secondary = previous;
 			console.error("Failed to reorder photos", err);
@@ -131,7 +191,10 @@
 		try {
 			const hash = await uploadProfilePhoto(file);
 			if (!primaryHash) {
+				// The user has now named the primary, so the "first photo is
+				// main" assumption no longer holds and a PUT is safe.
 				primaryHash = hash;
+				primaryIsAssumed = false;
 			} else if (secondary.length < MAX_SECONDARY_PROFILE_PHOTOS) {
 				secondary = [...secondary, hash];
 			} else {
@@ -144,13 +207,20 @@
 				await deletePhoto(hash, { silent: true });
 				return;
 			}
-			await persist();
-			// Re-read so the server's canonical order wins over our guess.
+			// Serialised with any in-flight reorder, so the PUT that lands carries
+			// the ordering the user can see.
+			await enqueue(() => persist());
+			// Re-read so the server's response to OUR write is reflected (a new
+			// photo can be rejected, or the server can normalise the order). This
+			// does NOT reconcile a wrong primary assumption: `load()` only
+			// re-derives when `primaryHash` is unset, which is never true after a
+			// mutation — see `primaryIsAssumed`.
 			await load();
 			toast.success("Photo added.");
 		} catch (err) {
 			console.error("Failed to add photo", err);
-			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			const detail =
+				err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
 			toast.error(`Failed to add photo${detail}`, { duration: 15000 });
 		} finally {
 			uploading = false;
@@ -164,7 +234,12 @@
 		const prevPrimary = primaryHash;
 		const prevSecondary = secondary;
 		photos = photos.filter((p) => p.mediaHash !== hash);
-		if (primaryHash === hash) primaryHash = secondary[0] ?? null;
+		if (primaryHash === hash) {
+			primaryHash = secondary[0] ?? null;
+			// The deleted photo was the one we ASSUMED was primary, so the next
+			// photo is a fresh guess, not a server-confirmed fact.
+			primaryIsAssumed = true;
+		}
 		secondary = secondary.filter((h) => h !== hash);
 		try {
 			// PRIVACY-CRITICAL: the documented delete is `DELETE /v3/me/profile/images`
@@ -182,8 +257,11 @@
 			if (res.status < 200 || res.status >= 300) {
 				throw new Error(`HTTP ${res.status}`);
 			}
-			// Keep the remaining photos' primary/ordering in sync.
-			await persist();
+			// Keep the remaining photos' primary/ordering in sync — but only when
+			// the primary is server-confirmed. A DELETE, unlike a PUT, does not
+			// set the primary, so writing a guessed one here would be the same
+			// data-loss bug as an arrow tap; persist() refuses and skips instead.
+			await enqueue(() => persist());
 			if (!opts.silent) toast.success("Photo deleted.");
 		} catch {
 			photos = prevPhotos;
@@ -229,7 +307,9 @@
 {/if}
 
 <div class="flex w-full px-4">
-	<main class="pb-(--content-pb) flex flex-col gap-4 w-full max-w-120 m-auto pt-2">
+	<main
+		class="pb-(--content-pb) flex flex-col gap-4 w-full max-w-120 m-auto pt-2"
+	>
 		<div class="flex items-center justify-between gap-2">
 			<div class="min-w-0">
 				<p class="text-sm text-muted-foreground">
@@ -298,8 +378,21 @@
 		{:else}
 			{#if secondary.length > 0}
 				<p class="text-xs text-muted-foreground px-1">
-					{secondary.length} of {MAX_SECONDARY_PROFILE_PHOTOS} extra photos
-					shown. Use the arrows to reorder.
+					{secondary.length} of {MAX_SECONDARY_PROFILE_PHOTOS} extra photos shown.
+					Use the arrows to reorder.
+				</p>
+			{/if}
+			<!--
+				Honest about the one thing this screen cannot know: the API does not
+				report which photo is primary, so the "Main" slot above may be our
+				guess. Say so rather than implying the ordering has been confirmed,
+				and explain why reordering is therefore not being written yet.
+			-->
+			{#if primaryIsAssumed && secondary.length > 0}
+				<p class="text-xs text-muted-foreground px-1">
+					Reordering isn't saved until you choose a main photo — Grindr's API
+					doesn't report which photo is currently main, so we won't overwrite
+					your real order with a guess.
 				</p>
 			{/if}
 			<div class="grid grid-cols-3 gap-1.5">
@@ -328,12 +421,21 @@
 							{/if}
 						</button>
 
+						<!--
+							Arrows are disabled while a write is in flight (D10): four
+							rapid taps used to issue four overlapping PUTs with four
+							orderings and no arrival-order guarantee. Writes are also
+							serialised through `enqueue`, so this is belt-and-braces —
+							the UI must not invite a race the code now prevents.
+						-->
 						{#if !isBusy}
-							<div class="absolute top-1 left-1 right-1 flex items-center justify-between">
+							<div
+								class="absolute top-1 left-1 right-1 flex items-center justify-between"
+							>
 								<button
 									type="button"
 									aria-label="Move photo earlier"
-									disabled={i === 0}
+									disabled={i === 0 || saving}
 									class="size-6 rounded-full bg-black/60 flex items-center justify-center disabled:opacity-30"
 									onclick={() => void move(hash, -1)}
 								>
@@ -342,7 +444,7 @@
 								<button
 									type="button"
 									aria-label="Move photo later"
-									disabled={i === secondary.length - 1}
+									disabled={i === secondary.length - 1 || saving}
 									class="size-6 rounded-full bg-black/60 flex items-center justify-center disabled:opacity-30"
 									onclick={() => void move(hash, 1)}
 								>
@@ -411,7 +513,11 @@
 				</p>
 			</div>
 			<div class="flex gap-2 justify-end">
-				<Button variant="ghost" size="sm" onclick={() => (pendingDelete = null)}>
+				<Button
+					variant="ghost"
+					size="sm"
+					onclick={() => (pendingDelete = null)}
+				>
 					Cancel
 				</Button>
 				<Button

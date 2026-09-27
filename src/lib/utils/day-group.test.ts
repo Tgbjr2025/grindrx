@@ -29,9 +29,25 @@ describe("dayGroupLabel", () => {
 		expect(dayGroupLabel(daysAgo(NOW, 0), NOW.getTime())).toBe("Today");
 	});
 
-	it("uses the weekday name for the six preceding days", () => {
-		// 26 Sep 2026 is a Saturday, so day-1 is Friday and day-3 is Wednesday.
-		expect(dayGroupLabel(daysAgo(NOW, 1), NOW.getTime())).toBe("Friday");
+	// "Yesterday" used to render as a bare weekday name (a message from yesterday
+	// morning read "Friday", indistinguishable from five days ago).
+	it("labels the immediately preceding day 'Yesterday'", () => {
+		expect(dayGroupLabel(daysAgo(NOW, 1), NOW.getTime())).toBe("Yesterday");
+		// ...at both ends of the day, not just near midnight.
+		expect(
+			dayGroupLabel(
+				daysAgo(NOW, 1),
+				setMinutes(setHours(NOW, 23), 59).getTime(),
+			),
+		).toBe("Yesterday");
+		expect(
+			dayGroupLabel(daysAgo(NOW, 1), setMinutes(setHours(NOW, 0), 5).getTime()),
+		).toBe("Yesterday");
+	});
+
+	it("uses the weekday name for the two to six preceding days", () => {
+		// 26 Sep 2026 is a Saturday, so day-2 is Thursday and day-6 is Sunday.
+		expect(dayGroupLabel(daysAgo(NOW, 2), NOW.getTime())).toBe("Thursday");
 		expect(dayGroupLabel(daysAgo(NOW, 3), NOW.getTime())).toBe("Wednesday");
 		expect(dayGroupLabel(daysAgo(NOW, 6), NOW.getTime())).toBe("Sunday");
 	});

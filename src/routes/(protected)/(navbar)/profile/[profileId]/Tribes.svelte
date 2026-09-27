@@ -7,11 +7,11 @@
 	let {
 		tribes,
 	}: {
-		tribes: TribeId[] | null;
+		tribes: TribeId[] | null | undefined;
 	} = $props();
 </script>
 
-{#if tribes !== null && tribes.length > 0}
+{#if tribes != null && tribes.length > 0}
 	<ProfileField>
 		<UsersThreeIcon class="shrink-0" />
 		{tribes.map((tribe) => allTribes[tribe]).join(", ")}

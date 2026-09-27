@@ -2,6 +2,7 @@
 	import { ChatCircleSlashIcon, MagnifyingGlassIcon } from "phosphor-svelte";
 	import { onMount, tick } from "svelte";
 
+	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import Skeleton from "$lib/components/ui/skeleton/skeleton.svelte";
 	import Conversation from "./Conversation.svelte";
@@ -33,11 +34,19 @@
 	);
 
 	onMount(() => {
-		void conversations.initial.then(tick).then(() => {
-			if (container && conversations.listScrollY > 0) {
-				container.scrollTop = conversations.listScrollY;
-			}
-		});
+		// `.catch` is required: `initial` now REJECTS on a failed first page (it used
+		// to be `.catch()`-wrapped in the store, which made the `{:catch}` branch below
+		// dead code and rendered "No Conversations Yet" — "you have no conversations" —
+		// when the truth was a network failure). Attach a handler so the restore is
+		// silent; the error is surfaced reactively via `initialError` below.
+		void conversations.initial
+			.then(tick)
+			.then(() => {
+				if (container && conversations.listScrollY > 0) {
+					container.scrollTop = conversations.listScrollY;
+				}
+			})
+			.catch((error) => console.error(error));
 	});
 
 	let {
@@ -71,11 +80,14 @@
 	]}
 	onscroll={() => (conversations.listScrollY = container?.scrollTop ?? 0)}
 >
-	{#await conversations.initial}
+	<!-- `loading` / `initialError` are reactive, unlike the old `{#await}` on
+	     `conversations.initial`: a rejected first-page load is now a real state
+	     with a retry, instead of falling through to "No Conversations Yet". -->
+	{#if conversations.loading}
 		{#each Array(8)}
 			<Skeleton class="w-full h-24.5 shrink-0" />
 		{/each}
-	{:catch}
+	{:else if conversations.initialError}
 		<Empty.Root>
 			<Empty.Header>
 				<Empty.Media variant="icon">
@@ -84,8 +96,11 @@
 				<Empty.Title>Couldn't Load Conversations</Empty.Title>
 				<Empty.Description>Check your connection and try again.</Empty.Description>
 			</Empty.Header>
+			<Button variant="outline" size="sm" onclick={() => conversations.retryInitialLoad()}>
+				Retry
+			</Button>
 		</Empty.Root>
-	{:then}
+	{:else}
 		<div class="relative mb-2 shrink-0">
 			<MagnifyingGlassIcon
 				class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none"
@@ -125,5 +140,5 @@
 		{#if conversations.nextPage !== null && searchQuery.trim() === ""}
 			<div class="h-0" use:observeSentinel></div>
 		{/if}
-	{/await}
+	{/if}
 </div>

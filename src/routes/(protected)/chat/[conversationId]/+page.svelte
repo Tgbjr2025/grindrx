@@ -59,7 +59,8 @@
 <Card.Content class="flex flex-col flex-1 pb-2 px-0 min-h-0">
 	<MessagesList {conversationState} />
 	<MessageComposer
-		onSend={(message: Message) => conversationState.send(message)}
+		onSend={(message: Message) =>
+			Promise.resolve(conversationState.send(message))}
 		onSendAlbum={(albumIds: number[], expirationType: AlbumExpirationType) =>
 			conversationState.sendAlbums(albumIds, expirationType)}
 		onSendPhotoOptimistic={(params: {

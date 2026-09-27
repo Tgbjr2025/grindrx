@@ -15,6 +15,7 @@
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { encodeGeohash } from "$lib/model/geohash";
+	import { setGeohashPinned } from "./grid";
 
 	let {
 		onUpdate,
@@ -30,6 +31,11 @@
 	async function handleDetectLocation() {
 		disabled = true;
 		try {
+			// A single try/catch/finally with no `catch` meant any rejection here —
+			// `checkPermissions`, `requestPermissions`, even a bridge failure —
+			// escaped as an UNHANDLED REJECTION. The button simply stopped working
+			// with nothing on screen to explain why, and `disabled` was reset by the
+			// `finally` so it looked tappable again.
 			let permissions = await checkPermissions();
 			if (
 				permissions.location === "prompt" ||
@@ -43,7 +49,9 @@
 						coords: { latitude, longitude },
 					} = await getCurrentPosition();
 
-					await submitGeohash(encodeGeohash(latitude, longitude));
+					await submitGeohash(encodeGeohash(latitude, longitude), {
+						pinned: false,
+					});
 				} catch (e) {
 					console.error(e);
 					toast.error("Failed to get current location");
@@ -53,13 +61,27 @@
 					"Location permission denied. Change this in your system settings to use this button.",
 				);
 			}
+		} catch (error) {
+			console.error("Failed to detect location", error);
+			toast.error("Couldn't check your location permission. Please try again.");
 		} finally {
 			disabled = false;
 		}
 	}
 
-	async function submitGeohash(geohash: string) {
+	/**
+	 * Persist a chosen location.
+	 *
+	 * `pinned` distinguishes a real GPS fix from a hand-picked spot on the map.
+	 * A fix supersedes a previous "Browse from here" pin and must clear the flag,
+	 * or the GPS updater would keep refusing to refresh the real location.
+	 */
+	async function submitGeohash(
+		geohash: string,
+		opts: { pinned?: boolean } = {},
+	) {
 		try {
+			setGeohashPinned(opts.pinned ?? true);
 			await setPreferences({ geohash });
 			geoMapPickerOpen = false;
 			onUpdate?.();
@@ -103,4 +125,7 @@
 		</a>
 	</Button> -->
 </Empty.Root>
-<LocationChooser onSubmit={submitGeohash} bind:open={geoMapPickerOpen} />
+<LocationChooser
+	onSubmit={(geohash: string) => submitGeohash(geohash, { pinned: true })}
+	bind:open={geoMapPickerOpen}
+/>

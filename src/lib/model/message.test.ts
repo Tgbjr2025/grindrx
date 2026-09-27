@@ -235,18 +235,45 @@ describe("previewFromMessage", () => {
 		expect(preview.albumId).toBe(77);
 	});
 
-	it("has no preview text for message types that carry no content", () => {
-		const bodies: Record<string, unknown> = {
-			Retract: { targetMessageId: "msg-0" },
-			Unknown: {},
-			Generative: {},
-		};
-		for (const [type, body] of Object.entries(bodies)) {
-			expect(previewFromMessage(build(type, body)).text).toBeNull();
-		}
+	// Every remaining type now returns a real label. `text: null` used to survive
+	// for these four, which made the conversation row render "Preview not
+	// available" — a string that reads as "this chat is broken" rather than "this
+	// message is empty" — and `message.test.ts` pinned that as intended.
+	it.each([
+		["Retract", { targetMessageId: "msg-0" }, "Message deleted"],
+		["Unknown", {}, "Unsupported message"],
+		["Generative", {}, "AI message"],
+	])(
+		"labels %s instead of returning a null preview text",
+		(type, body, expected) => {
+			expect(previewFromMessage(build(type, body)).text).toBe(expected);
+		},
+	);
+
+	// `unsent: true` is set optimistically by `markMessageAsUnsent` and by the
+	// retract handler, independently of the server having cleared `type`/`body`,
+	// so the preview must consult it before the type switch. Without this the
+	// inbox row kept showing the real text of a message just unsent.
+	it("labels an optimistically-unsent message from `unsent`, not from `type`", () => {
+		const unsent = apiResponseMessageSchema.parse({
+			type: "Text",
+			body: { text: "a secret I regret" },
+			unsent: true,
+			messageId: "msg-3",
+			conversationId: "conversation-1",
+			senderId: 42,
+			timestamp: 1_710_000_000_000,
+			reactions: [],
+		});
+		expect(previewFromMessage(unsent)).toEqual({
+			type: "Unsent",
+			text: "Message unsent",
+			albumId: null,
+			imageHash: null,
+		});
 	});
 
-	it("has no preview text for an unsent message", () => {
+	it("labels a message whose type is already Unsent", () => {
 		const unsent = apiResponseMessageSchema.parse({
 			type: "Text",
 			body: null,
@@ -259,7 +286,7 @@ describe("previewFromMessage", () => {
 		});
 		expect(previewFromMessage(unsent)).toEqual({
 			type: "Unsent",
-			text: null,
+			text: "Message unsent",
 			albumId: null,
 			imageHash: null,
 		});

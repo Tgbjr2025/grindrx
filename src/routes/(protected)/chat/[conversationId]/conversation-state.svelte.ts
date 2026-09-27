@@ -28,26 +28,74 @@ const POLL_INTERVAL_MS = 10_000;
 const SAFETY_NET_INTERVAL_MS = 60_000;
 
 /**
- * Stable identity for an album-share optimistic message. The share endpoint
- * returns an empty body, so there is no real `messageId` to adopt — see
+ * Stable identity for ONE album-share attempt. The share endpoint returns an
+ * empty body, so there is no real `messageId` to adopt — see
  * `OptimisticMessage.pendingKey`. Exported so tests can assert the same key.
+ *
+ * The key MUST be unique per attempt, not per album. `album:${albumId}` alone
+ * meant that sharing album 42 twice produced two optimistic bubbles carrying the
+ * SAME key, and both the WS handler (`find`) and `reconcile` (`findIndex`) take
+ * the FIRST match — leaving the second bubble on `status: "pending"` forever.
+ * `#syncCache` filters pendings out, so it was not even persisted: a ghost
+ * "Sending…" bubble for the whole session, with no error and no retry. Including
+ * the already-unique `tempId` makes every attempt individually addressable;
+ * matchers use `albumPendingKeyPrefix` so they still pair an echo with a share
+ * attempt for the same album.
  */
-export function albumPendingKey(albumId: number): string {
-	return `album:${albumId}`;
+export function albumPendingKey(albumId: number, tempId: string): string {
+	return `album:${albumId}:${tempId}`;
 }
 
 /**
- * The `pendingKey` an inbound `chat.v1.message_sent` payload should match, or
- * `null` for message types that always carry a real id. Album shares are the
- * only type whose send call gives us nothing back.
+ * Prefix shared by every attempt at sharing `albumId`. Used to match an inbound
+ * `chat.v1.message_sent` payload (which knows the album but not our temp id)
+ * against a pending share bubble.
+ */
+export function albumPendingKeyPrefix(albumId: number): string {
+	return `album:${albumId}:`;
+}
+
+/**
+ * The `pendingKey` prefix an inbound `chat.v1.message_sent` payload should
+ * match, or `null` for message types that always carry a real id. Album shares
+ * are the only type whose send call gives us nothing back.
  */
 function pendingKeyForPayload(payload: {
 	type: string;
 	body?: unknown;
 }): string | null {
-	if (payload.type !== "Album" && payload.type !== "ExpiringAlbumV2") return null;
+	// `ExpiringAlbum` was missing here even though it is a member of
+	// `messageSchema` and is rendered by `Message.svelte`, so an echo for that
+	// variant could never be adopted onto its optimistic bubble.
+	if (
+		payload.type !== "Album" &&
+		payload.type !== "ExpiringAlbum" &&
+		payload.type !== "ExpiringAlbumV2"
+	)
+		return null;
 	const albumId = (payload.body as { albumId?: unknown } | null)?.albumId;
-	return typeof albumId === "number" ? albumPendingKey(albumId) : null;
+	return typeof albumId === "number" ? albumPendingKeyPrefix(albumId) : null;
+}
+
+/**
+ * Index of the OLDEST still-pending message whose `pendingKey` starts with
+ * `prefix`, or -1.
+ *
+ * Oldest-first matters: `this.messages` is sorted newest-first, so scanning from
+ * the end pairs share attempt #1 with echo #1 rather than crossing the two
+ * attempts. Callers `splice` the returned entry out of their candidate list, so
+ * each pending is consumed at most once.
+ */
+function indexOfOldestPendingWithPrefix(
+	messages: OptimisticMessage[],
+	prefix: string,
+): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.status === "pending" && m.pendingKey?.startsWith(prefix) === true)
+			return i;
+	}
+	return -1;
 }
 
 export type OptimisticMessage = ApiResponseMessage & {
@@ -147,15 +195,22 @@ export class ConversationState {
 		if (ws.status === "disconnected") {
 			this.#startPolling();
 		}
-		// Always run the slow safety net, connected or not.
+		// Always run the slow safety net, connected or not. It is idempotent and it
+		// is RESTARTED on every socket transition below — see #startSafetyNet.
 		this.#startSafetyNet();
 
 		// Listen for WS connect / disconnect to toggle polling. Keep the promises so
 		// destroy() can await + unlisten even if it runs before listen() resolves.
 		this.#removeWsConnectedListener = ws.onConnected(() => {
 			if (this.#destroyed) return;
-		this.#stopPolling();
-		this.#stopSafetyNet();
+			this.#stopPolling();
+			// The safety net must be (re)started HERE, not only in the constructor:
+			// `onConnected` stopped it, and nothing ever started it again, so after
+			// the first WS connect BOTH timers were null forever. That silently
+			// disabled the load-bearing recovery path for a dropped album-share echo
+			// AND froze `recipientReadTimestamp` (so the "Read" label never moved for
+			// the whole session) for as long as the socket stayed healthy.
+			this.#startSafetyNet();
 			// Catch up the open thread on anything that arrived while the socket was
 			// down. The disconnect-time poll was just stopped and the WS replays
 			// nothing, so without this a message received during a brief drop never
@@ -169,6 +224,11 @@ export class ConversationState {
 				listen<void>("ws:disconnected", () => {
 					if (this.#destroyed) return;
 					this.#startPolling();
+					// Same hole as onConnected: the safety net must be restarted on
+					// every transition, or it only ever ran during construction.
+					// Its body is `if (ws.status === "connected")`, so while the
+					// socket is down it is a no-op timer and the 10s poll does the work.
+					this.#startSafetyNet();
 				}),
 		);
 		this.#removeWsDisconnectedListener.catch(console.error);
@@ -182,29 +242,38 @@ export class ConversationState {
 				if (event.payload.senderId === this.ourProfileId) {
 					// First try an exact messageId match (works once the send() response
 					// has rewritten the pending message's id). If no exact match exists,
-					// only fall back to "the single pending message" when exactly one is
-					// in flight — with concurrent sends, blindly upgrading the first
-					// pending corrupts cross-type messages (text vs album).
+					// album shares are matched by `pendingKey` PREFIX (album id + our
+					// unique per-attempt temp id), taking the OLDEST unconsumed attempt.
 					const exact = this.messages.find(
-						(m) => m.status === "pending" && m.messageId === event.payload.messageId,
+						(m) =>
+							m.status === "pending" &&
+							m.messageId === event.payload.messageId,
 					);
-					// Album shares get no messageId back from the send call, so match
-					// the pending bubble by `pendingKey` (album id) instead. Without
-					// this the echo fell through to the prepend below and the user saw
-					// the album twice, permanently.
+					// Album shares get no messageId back from the send call, so match the
+					// pending bubble by `pendingKey` instead. Without this the echo fell
+					// through to the prepend below and the user saw the album twice,
+					// permanently.
 					const echoKey = pendingKeyForPayload(event.payload);
 					const byKey =
 						echoKey === null
 							? undefined
-							: this.messages.find(
-									(m) =>
-										m.status === "pending" && m.pendingKey === echoKey,
-								);
-					const pendings = this.messages.filter((m) => m.status === "pending");
-					const pending =
-						exact ??
-						byKey ??
-						(pendings.length === 1 ? pendings[0] : undefined);
+							: (() => {
+									const idx = indexOfOldestPendingWithPrefix(
+										this.messages,
+										echoKey,
+									);
+									return idx === -1 ? undefined : this.messages[idx];
+								})();
+					// There is deliberately NO "the single pending message" fallback any
+					// more. It could adopt an echo onto the WRONG bubble: send a photo
+					// (pending bubble), then a text — the text's HTTP response lands
+					// first and flips it to `sent`, leaving the photo as the only
+					// pending, and the text's own echo (no id match, no pendingKey for
+					// Text) then OVERWROTE the photo bubble with the text payload. The
+					// photo the user had just sent simply disappeared. A miss now falls
+					// through to the existing-message / prepend paths below, which are
+					// safe.
+					const pending = exact ?? byKey;
 					if (pending) {
 						// Replace pending with full server data in-place (avoids array replacement
 						// during Drawer close animation which would freeze the UI on Android).
@@ -324,6 +393,11 @@ export class ConversationState {
 		if (this.#readTimer !== null) clearTimeout(this.#readTimer);
 		if (this.#typingTimer !== null) clearTimeout(this.#typingTimer);
 		this.#stopPolling();
+		// The 60s safety-net interval was never cleared on teardown, so every
+		// conversation the user ever opened leaked one live interval for the rest
+		// of the process. It was previously invisible only because
+		// `#reconcileMessages` early-returns on `#destroyed`.
+		this.#stopSafetyNet();
 		this.#removeWsConnectedListener
 			?.then((unlisten) => unlisten())
 			.catch(console.error);
@@ -354,6 +428,12 @@ export class ConversationState {
 	 * no recovery path: if the echo was missed, the optimistic bubble stayed
 	 * pending for the whole session. This closes that hole without paying for a
 	 * full page fetch every 10s.
+	 *
+	 * It is idempotent (`#safetyTimer !== null` guard) and MUST be called on EVERY
+	 * socket transition — the constructor, `ws.onConnected` and `ws:disconnected` —
+	 * not just the constructor. It was previously stopped by `onConnected` and never
+	 * restarted, so after the first connect both timers were null for the rest of
+	 * the session.
 	 */
 	#startSafetyNet(): void {
 		if (this.#safetyTimer !== null) return;
@@ -465,8 +545,20 @@ export class ConversationState {
 		}
 	}
 
-	async loadMore(): Promise<void> {
-		if (this.loadingMore || this.pageKey === null) return;
+	/**
+	 * Fetch the next page of history.
+	 *
+	 * Resolves to whether the fetch SUCCEEDED — deliberately NOT "did we get new
+	 * messages". The caller (`MessagesList.loadMore`) treats "same pageKey" or
+	 * "same length" as end-of-history and nulls the cursor sentinel; if a
+	 * transient network failure also answered false to both of those tests, one
+	 * flaky request on a train permanently ended the user's ability to read
+	 * history, with nothing ever setting the sentinel back. So a failure now
+	 * returns `false` and the caller leaves the cursor alone, retrying on the next
+	 * sentinel intersection.
+	 */
+	async loadMore(): Promise<boolean> {
+		if (this.loadingMore || this.pageKey === null) return false;
 		this.loadingMore = true;
 		try {
 			const result = await getConversation({
@@ -479,9 +571,11 @@ export class ConversationState {
 			]);
 			this.pageKey = result.pageKey;
 			this.#syncCache();
+			return true;
 		} catch (err) {
 			toast.error("Failed to load more messages");
 			console.error(err);
+			return false;
 		} finally {
 			this.loadingMore = false;
 		}
@@ -491,14 +585,25 @@ export class ConversationState {
 	// failed message can be retried with its exact body (see retry()).
 	#pendingSends = new Map<string, MessageType>();
 
-	send(message: MessageType): void {
+	/**
+	 * Queue a generic outbound message with an optimistic bubble.
+	 *
+	 * Returns whether a bubble was actually created. The composer's `onSubmit`
+	 * used to `await onSend(...)` and clear the text field unconditionally, and
+	 * `send` *bails* (rather than throwing) when the conversation's profile has
+	 * not resolved — so awaiting a `void` return resolved and wiped the user's
+	 * typed text while the bail toasted an error. Returning the boolean makes the
+	 * bail observable to both the text composer and the location sender, which
+	 * must not tell the user their coordinates were transmitted when they were not.
+	 */
+	send(message: MessageType): boolean {
 		// Don't silently discard the message. The composer's text field and submit
 		// button are not disabled while the conversation's profile is still
 		// resolving, so a user who typed and hit send immediately watched the field
 		// clear with no bubble, no toast and no error — the message just vanished.
 		if (!this.profile) {
 			toast.error("Still loading this conversation. Try again in a moment.");
-			return;
+			return false;
 		}
 		const tempId = `pending-${crypto.randomUUID()}`;
 		const optimistic: OptimisticMessage = {
@@ -515,6 +620,7 @@ export class ConversationState {
 		this.#updatePreview(optimistic);
 		this.#pendingSends.set(tempId, message);
 		void this.#resolveMessage({ tempId, message });
+		return true;
 	}
 
 	/**
@@ -559,9 +665,10 @@ export class ConversationState {
 			unsent: false,
 			reactions: [] as Array<{ profileId: number; reactionType: number }>,
 			status: "pending" as const,
-			// The share endpoint returns no messageId, so identify this bubble by
-			// the album it carries instead (see OptimisticMessage.pendingKey).
-			pendingKey: albumPendingKey(albumId),
+			// The share endpoint returns no messageId, so identify THIS attempt by
+			// the album it carries plus the unique temp id (see
+			// OptimisticMessage.pendingKey / albumPendingKey).
+			pendingKey: albumPendingKey(albumId, tempId),
 		} satisfies OptimisticMessage;
 		this.messages = removeDuplicateMessages([optimistic, ...this.messages]);
 		this.#updatePreview(optimistic);
@@ -582,8 +689,11 @@ export class ConversationState {
 			this.messages = removeDuplicateMessages(this.messages);
 			this.#syncCache();
 		} catch (err) {
+			// Match THIS attempt only. The old `m.pendingKey === albumPendingKey(albumId)`
+			// matched every attempt at the same album, so a failure could mark a
+			// different (successful) share as errored.
 			const msg = this.messages.find(
-				(m) => m.messageId === tempId || m.pendingKey === albumPendingKey(albumId),
+				(m) => m.messageId === tempId || m.pendingKey === albumPendingKey(albumId, tempId),
 			);
 			if (msg) {
 				msg.status = "error";
@@ -808,8 +918,25 @@ export class ConversationState {
 			if (isLatest) this.#updatePreview(this.messages.at(0));
 			this.#syncCache();
 			const revertDeleteMessage = () => {
-				this.messages.splice(index, 0, removed);
-				if (isLatest) this.#updatePreview(removed);
+				// Re-derive the insertion point from the removed message's own
+				// timestamp instead of closing over the pre-delete `index`. A
+				// `chat.v1.message_sent` (or a reconcile) that landed while the
+				// DELETE request was in flight shifts every later index, so the old
+				// code re-inserted the message into the wrong slot — visibly
+				// re-ordering the thread on a failed delete.
+				let insertAt = this.messages.length;
+				for (let i = 0; i < this.messages.length; i++) {
+					if (this.messages[i].timestamp <= removed.timestamp) {
+						insertAt = i;
+						break;
+					}
+				}
+				this.messages.splice(insertAt, 0, removed);
+				// Re-check "is this still the newest message" rather than trusting the
+				// pre-delete `isLatest`: a newer message may have arrived meanwhile, in
+				// which case the preview must not be rolled back to the restored one.
+				if (this.messages.at(0)?.messageId === messageId)
+					this.#updatePreview(removed);
 				this.#syncCache();
 			};
 
@@ -874,9 +1001,20 @@ export class ConversationState {
 		}
 	}
 
-	async reactTo(messageId: string, reactionType: number): Promise<void> {
+	/**
+	 * Result of a reaction attempt, so the caller can give real feedback instead
+	 * of silently doing nothing.
+	 *
+	 * - `added` — the reaction is now on the message.
+	 * - `already-held` — you already hold this reaction type, so nothing was sent.
+	 * - `missing` — no such message in this conversation.
+	 */
+	async reactTo(
+		messageId: string,
+		reactionType: number,
+	): Promise<"added" | "already-held" | "missing"> {
 		const msg = this.messages.find((m) => m.messageId === messageId);
-		if (!msg) return;
+		if (!msg) return "missing";
 		// Don't stack duplicate reactions from a double-tap before the first
 		// request resolves — it inflated the count.
 		if (
@@ -885,7 +1023,18 @@ export class ConversationState {
 					r.profileId === this.ourProfileId && r.reactionType === reactionType,
 			)
 		) {
-			return;
+			// NOT a silent no-op. This used to `return` here, so re-tapping your own
+			// reaction did nothing at all — no un-react, no toast, no visual change —
+			// and the `Reaction` badge is not clickable, so there was no removal path
+			// anywhere in the app.
+			//
+			// There is no remove-reaction endpoint in `lib/api/messages.ts` (only
+			// `POST /v4/chat/message/reaction` via `reactToMessage`), and inventing
+			// one would be guessing at a prod write path, so the honest minimum is a
+			// distinct return value the UI turns into a message. See the routing note
+			// in the handoff: adding `unreactToMessage` to `lib/api/messages.ts` is
+			// what makes this a real toggle.
+			return "already-held";
 		}
 		const optimisticReaction = { reactionType, profileId: this.ourProfileId };
 		msg.reactions.push(optimisticReaction);
@@ -922,22 +1071,42 @@ export class ConversationState {
 			this.#syncCache();
 			throw err;
 		}
+		return "added";
 	}
 
 	markMessageAsUnsent(messageId: string) {
 		const msg = this.messages.find((m) => m.messageId === messageId);
 		let revert: () => void = () => {};
 		if (msg) {
+			// Capture the FULL original shape, not just `unsent`. The revert used to
+			// restore only `msg.unsent`, leaving `type: "Unsent"` and `body: null` in
+			// place — so after a FAILED `unsendMessage` the bubble read "Message
+			// unsent" forever, the original text was unrecoverable, and
+			// `previewFromMessage` returned `{type:"Unsent", text:null}` so the inbox
+			// row fell back to "Preview not available". It only healed if a reconcile
+			// adopted the server's version, which (see #startSafetyNet) never ran
+			// while the socket was healthy.
 			const originalUnsent = msg.unsent;
+			const originalType = msg.type;
+			const originalBody = msg.body;
 			msg.unsent = true;
 			msg.type = "Unsent";
 			msg.body = null;
 			this.#syncCache();
 			this.#updatePreview(msg);
 			revert = () => {
-				msg.unsent = originalUnsent;
+				// Re-find by id rather than closing over `msg`. The
+				// `chat.v1.message_sent` echo replaces the array slot with a NEW
+				// object, orphaning `msg`; writes to it then hit a detached proxy and
+				// the visible bubble never healed. Same class of bug as the fix in
+				// `reactTo` below.
+				const current = this.messages.find((m) => m.messageId === messageId);
+				const target = current ?? msg;
+				target.unsent = originalUnsent;
+				target.type = originalType;
+				target.body = originalBody;
 				this.#syncCache();
-				this.#updatePreview(msg);
+				this.#updatePreview(target);
 			};
 		}
 		return {
@@ -1042,12 +1211,16 @@ export function reconcile(
 		// Adopt the server id/data onto the pending entry in place so the user
 		// never sees the message twice. Each pending is matched at most once.
 		if (sv.senderId === ourProfileId) {
-			// Prefer an exact `pendingKey` match (album shares have no id to match
-			// on), then fall back to type + near-identical timestamp.
+			// Prefer an exact `pendingKey`-PREFIX match (album shares have no id to
+			// match on), then fall back to type + near-identical timestamp. The
+			// prefix match takes the OLDEST unconsumed attempt at that album, so two
+			// concurrent shares of the SAME album are adopted onto two distinct
+			// bubbles instead of the first one twice (which left the second stuck on
+			// "Sending…" for the whole session).
 			const svKey = pendingKeyForPayload(sv);
 			const mineIdx =
 				svKey !== null
-					? pendingMine.findIndex((p) => p.pendingKey === svKey)
+					? indexOfOldestPendingWithPrefix(pendingMine, svKey)
 					: pendingMine.findIndex(
 							(p) =>
 								p.type === sv.type &&

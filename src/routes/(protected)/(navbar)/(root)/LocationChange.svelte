@@ -3,7 +3,10 @@
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
-	import { getPreferences, setPreferences } from "$lib/app-data/preferences.svelte";
+	import {
+		getPreferences,
+		setPreferences,
+	} from "$lib/app-data/preferences.svelte";
 	import LocationChooser from "$lib/components/location-chooser/LocationChooser.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { decodeGeohash } from "$lib/model/geohash";
@@ -12,15 +15,31 @@
 		getExploreLocation,
 		setExploreLocation,
 	} from "$lib/stores/explore-location.svelte";
+	import { setGeohashPinned } from "./grid";
 
 	let {
 		onUpdate,
 		class: className,
 		expansion,
+		lastPick = $bindable(null),
+		onBrowseFromHere,
 	}: {
 		onUpdate?: () => void;
 		class?: import("svelte/elements").ClassValue;
 		expansion: number;
+		/**
+		 * The most recent pick, OWNED BY THE PARENT (`TopBar`).
+		 *
+		 * This used to be local state here. Three `LocationChange` instances are
+		 * alive at once (expanded / in-flight / collapsed), each with its own copy,
+		 * so picking a place in one left the others blank — and collapsing the bar
+		 * swapped which instance was on screen, so the "Browse from here"
+		 * affordance (the only untiered way to browse a chosen area) vanished. It
+		 * is bindable so the parent owns the single source of truth.
+		 */
+		lastPick?: { geohash: string; label: string | null } | null;
+		/** Called after the user accepts "Browse from here", so the parent can clear. */
+		onBrowseFromHere?: () => void;
 	} = $props();
 
 	// "Explore other areas": picking a place sets a browsing-location override
@@ -33,11 +52,6 @@
 	// instead. That costs nothing, works on every account, and gives a free user
 	// a way to actually browse an area they picked.
 	const explore = $derived(getExploreLocation());
-
-	// The most recent pick, kept so we can offer the untiered alternative after
-	// the picker closes. `LocationChooser` only surfaces the place label through
-	// its `onSubmit(geohash, label)` callback, so this is where we capture it.
-	let lastPick = $state<{ geohash: string; label: string | null } | null>(null);
 
 	let pinPos: { lat: number; lon: number } | undefined = $state();
 	let geoMapPickerOpen = $state(false);
@@ -54,8 +68,11 @@
 		}
 	}
 
-	function applyBrowseFromHere(pick: { geohash: string; label: string | null }) {
-		lastPick = null;
+	function applyBrowseFromHere(pick: {
+		geohash: string;
+		label: string | null;
+	}) {
+		onBrowseFromHere?.();
 		void browseFromHere(pick.geohash, pick.label);
 	}
 
@@ -64,10 +81,17 @@
 	 * Not the `exploreGeoHash` param, so it is not paywalled. Clears any explore
 	 * override first, otherwise the grid would still centre on the old remote
 	 * area and this would look like it did nothing.
+	 *
+	 * `setGeohashPinned(true)` is what makes the choice survive a relaunch. The
+	 * geohash goes into the SAME `preferences.geohash` slot the GPS updater
+	 * writes, so without the flag the next cold start compared a real GPS fix
+	 * against this remote hash, found them >1 km apart, and overwrote it — the
+	 * chosen area silently reverting to the device's location. See `isGeohashPinned`.
 	 */
 	async function browseFromHere(geohash: string, label?: string | null) {
 		try {
 			clearExploreLocation();
+			setGeohashPinned(true);
 			await setPreferences({ geohash });
 			geoMapPickerOpen = false;
 			onUpdate?.();
@@ -116,7 +140,7 @@
 		"transition-none relative *:absolute *:top-1/2 *:left-1/2 *:-translate-1/2 *:flex *:items-center *:justify-center *:gap-1.5 overflow-clip",
 		className,
 	]}
-	style="width: max(44px, {expansion * 100}%)"
+	style="width: max(44px, calc(44px + (100% - 44px) * {expansion}))"
 	onclick={() => (geoMapPickerOpen = true)}
 >
 	<div style="opacity: {expansion}">
@@ -128,7 +152,7 @@
 	</div>
 </Button>
 <LocationChooser
-	onSubmit={onSubmit}
+	{onSubmit}
 	bind:open={geoMapPickerOpen}
 	bind:this={locationChooser}
 	bind:pinPos

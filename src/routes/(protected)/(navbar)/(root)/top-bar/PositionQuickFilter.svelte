@@ -8,6 +8,7 @@
 	import PositionFilterToggle from "$lib/components/filters/position/PositionFilterToggle.svelte";
 	import { Button, buttonVariants } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
+	import { Label } from "$lib/components/ui/label";
 	import { Switch } from "$lib/components/ui/switch";
 
 	let {
@@ -32,7 +33,8 @@
 
 	$effect(() => {
 		if (open) {
-			filtersChanges.positions = value;
+			// D23: aliased the parent's live array — see AgeQuickFilter.svelte.
+			filtersChanges.positions = [...value];
 			filtersChanges.positionEnabled = enabled;
 		}
 	});
@@ -54,6 +56,10 @@
 			</div>
 			<Drawer.Title>Positions</Drawer.Title>
 			<div class="flex-1 flex justify-end">
+				<!-- D23: unlabelled Switch. -->
+				<Label for="positions-filter-enabled" class="sr-only">
+					Enable the position filter
+				</Label>
 				<Switch
 					id="positions-filter-enabled"
 					bind:checked={filtersChanges.positionEnabled}

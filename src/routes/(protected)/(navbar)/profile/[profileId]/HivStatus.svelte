@@ -6,18 +6,22 @@
 	let {
 		hivStatus,
 	}: {
-		hivStatus: HivStatusId | null;
+		hivStatus: HivStatusId | null | undefined;
 	} = $props();
 </script>
 
-{#if hivStatus !== null}
+{#if hivStatus != null}
 	<ProfileField>
+		<!-- D21: decorative — the value is already announced by the
+		     `ProfileValueLabel` text, so the icon is hidden from AT. -->
 		<svg
 			xmlns="http://www.w3.org/2000/svg"
 			width="1em"
 			height="1em"
 			viewBox="0 0 24 24"
 			class="shrink-0"
+			aria-hidden="true"
+			focusable="false"
 		>
 			<!-- Icon from Sharp free icons by Streamline - https://creativecommons.org/licenses/by/4.0/ -->
 			<g fill="none" stroke="currentColor" stroke-width="1.5">

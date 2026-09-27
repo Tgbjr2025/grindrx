@@ -501,3 +501,139 @@ None — docs-only reconciliation. Doc files edited this pass (#3): `memory/SESS
   ~2/3 of the source zip); live on-disk backups unaffected (R4 discipline intact).
   Forgejo asset download path is `/repos/…/releases/download/<tag>/<name>`; the
   `releases/assets/<id>` API path 404s.
+
+- **2026-09-27 — GRID / PROFILE / MEDIA read-only line-by-line audit (no files modified).** Operator Tom.
+  Partition: `(navbar)/(root)/` (Grid, GridWindow, grid-state, grid, filters bar, top-bar, location),
+  `lib/model/grid/**`, `lib/components/filters/**`, `lib/stores/grid-order`, `lib/utils/authed-image`
+  + test, `geohash`/`distance`/`measurements`/`linkify`, `AuthedImage`, `ProgressiveBlur`,
+  `lib/model/profile` + test, `profile/[profileId]/**` (+ the out-of-partition
+  `settings/(subpage)/account/photos/+page.svelte` + `lib/api/profile.ts` photo API, pulled in because
+  the brief requires verifying the v0.1.33 profile-photo claim). 74 files, every line read.
+  **Headline CRITICAL: the weight grid filter is 1000x wrong** — `grid-state.svelte.ts:206-209` sends
+  `weightGramsMin/Max: weight[0..1]` where the slider stores KILOGRAMS (`WeightFilter.svelte:14`
+  `KG_TO_GRAMS = 1000` is applied for DISPLAY only; `measurements.ts:98-104 weightFromInput` proves the
+  API unit is grams). Enabling the weight filter can therefore never match a profile. Height is correct.
+  **Second CRITICAL-adjacent: `retainAuthedImage` (authed-image.ts:75) has ZERO callers** — the entire
+  refcount + `retired` no-revoke-while-visible machinery is dead code, so `remember()` always takes the
+  immediate-revoke branch. The "no revoke while visible" claim is REFUTED. `retired` is also unbounded.
+  Also confirmed: the grid (`ProfileMiniCard.svelte:38`) and the profile carousel
+  (`ImageCarousel.svelte:132`) use PLAIN CDN `<img>` and bypass the authed pipeline entirely, so the
+  32-entry blob LRU does not bound grid memory at all (Chromium's HTTP+bitmap cache does).
+  `{#await ... then ...}` with no `:catch` in `EditProfileSheet.svelte:409,433` and
+  `GendersPronouns.svelte:31,51` re-throws (verified in svelte 5.55.5 `await.js`:
+  `if (!catch_fn) throw error.v`) -> unhandled rejection + a failed `getGenders()` would make Save
+  wipe genders/pronouns. `TopBar.svelte:113-114` calls `getBoundingClientRect()` on EVERY scroll event
+  (unthrottled forced reflow). `TextMessage.svelte` linkify render: `{@html}` is used NOWHERE in the app
+  and `rel="noreferrer nofollow noopener"` IS present -> linkify XSS claim VERIFIED SAFE; regex is not
+  ReDoS-prone. `prefers-reduced-motion` appears NOWHERE. No `console.log`/TODO/FIXME in the partition.
+  Tests: 68 tests across 6 files, real assertions, but `v3.test.ts:29-47` has a duplicated test, v4.ts has
+  0 tests, `grid-state.#fetchProfiles` (the filter->query mapper) has 0 tests, and nothing covers
+  windowing maths or `retainAuthedImage`. 3 of the 4 claimed v0.1.33 profile-save silent-failure fixes
+  are VERIFIED in code; the 4th is NOT (the no-`:catch` gender/pronoun path). Read-only audit: zero
+  source files touched, no commits, no pushes (R11). — audit agent, operator Tom.
+
+## 2026-09-27 — GRID / PROFILE / MEDIA audit-fix batch (D1–D23) — agent: grid/profile/media
+
+**CONFLICT WARNING (read this first).** A SECOND, duplicate agent was running the SAME
+D1–D23 task over the SAME owned file list at the same time (3 other `opencode` processes;
+`authed-image.ts` mtime advanced seconds after my first read). Both of us wrote overlapping
+files. Final on-disk state is therefore a MERGE of two writers, not one. Files the peer
+evidently completed: `authed-image.ts`/`AuthedImage.svelte`/`authed-image.test.ts` (D2/D22/D23),
+`grid.ts` (D8 + D23 pin flag + `profileCache` bound), `grid-state.svelte.ts` (D1 + D19 boolean),
+`Grid/`+`+page.svelte` (D17 + requestPermissions), `TopBar.svelte` (D4 + lastPick hoist),
+`LocationChange.svelte`/`LocationEmpty.svelte` (D17/D23), `photos/+page.svelte` (D9/D10),
+`EditProfileSheet.svelte` (a duplicate `gendersOk`/`pronounsOk` block that I merged into).
+**The coordinator MUST re-verify these files; a later write may have dropped my edits.**
+
+**Verified fixed by ME (all unit-tested and run, 155 tests green across 14 files):**
+- D1 weight kg→grams: `buildCascadeQuery`/`weightKgRangeToGrams` extracted + `grid-state.query.test.ts`.
+- D7 `profileSchema` tolerance (cosmetic booleans/arrays optional, per-field rationale).
+- D8 cascade v3 `age` kept + mapped in `getGrid`.
+- D11 `z.coerce.number()` profile-0 resurrection blocked in `profileMinSchema` + `searchProfileSchema`.
+- D12 `formatDistance` no longer prints "0.0 mi" (feet below 0.1 mi) + NEW `distance.test.ts`.
+- D13 **NOT fixed by choice** — the raw `getDistanceUnit`/`setDistanceUnit` in `utils/distance.ts`
+  are the localStorage primitives that `app-data/distance-unit.svelte.ts` DELEGATES to
+  (`readStoredUnit`/`writeStoredUnit`). Deleting/renaming them breaks a file batch A owns.
+- D14 `weightToInput` keeps one decimal + NEW `measurements.test.ts` (86182.65 round-trip).
+- D15 geohash precision 12 → 8 (`PERSISTED_PRECISION`); schema widened to a 6..12 RANGE so hashes
+  already on disk still parse — batch E's `grid.api.test.ts` (12-char `"9q8yyk8ytpxr"`) still passes.
+- D16 `encodeGeohash` throws on non-finite / out-of-range + NEW `geohash.test.ts` (16 tests).
+- D20 GendersFilter: More/Less moved out of `ToggleGroup.Root`; exclusion prunes `value`.
+- D23 sweep: rowGap from `getComputedStyle`, index-keyed chunks, `restoreInFlight`, `PULL_ARM_AT`,
+  `describe`/`sr-only` roster for collapsed chunks, `grid-template-rows` reveal, `aria-expanded`,
+  `aria-live` on the age readouts, sr-only Switch labels, `[...value]` clones, `$state.snapshot`
+  filters, `GridFilters` awaits before closing, `pointer-events-none` on ProgressiveBlur overlays,
+  O(1) `grid-order` index + empty-order publish, `exploreUuid` placeholder removed.
+- Dead code deleted after a zero-importer grep: `ProfileFieldValue.svelte`, `grid/cascade/index.ts` (0 bytes).
+
+**NOT done, needs routing:** D7's `medias` (4 out-of-partition consumers dereference it unguarded);
+D23 `linkify.ts` homograph defence; no `prefers-reduced-motion` anywhere (layout.css is not mine);
+D23 `search.ts` `searchQuerySchema` is LIVE (`api/grid.ts:searchProfiles`) so it was kept, not deleted.
+
+No git mutations, no commits, no pushes (R11). eslint clean on every file I changed except
+pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
+
+- **2026-09-27 03:10 UTC — 100% line-by-line audit of v0.1.33 + remediation round, 7 partitions.**
+  Operator Tom. Full audit of `89e2e41` (30,107 lines TS/Svelte across 423 files + 3,410 lines
+  Rust across 12 files + Android/Gradle/capabilities + config + docs), every line read, no
+  sampling, in 7 file-disjoint partitions, then cross-verified. Full report:
+  **`memory/AUDIT_REPORT_v0.1.33.md`** (NEW).
+  **Baseline captured first:** 0 type errors / **30** warnings, 244 tests, no CI at all, and —
+  critically — **the Rust had never been compiled in this version's history** (three shipped
+  compile breaks in the previous round came from that). **Found the M1 Mac reachable over
+  Tailscale** (`ssh mac` = `thomasbateman@100.92.26.108`; the `ubuntu@`/`mac@` usernames from
+  the tailscale listing are wrong), so the Rust is now **machine-verified against the real
+  shipping target** instead of shipped uncompiled: `cargo check --lib` clean, `cargo test --lib`
+  17/17, `cargo check --lib --target aarch64-linux-android` clean. NDK clang must be on PATH for
+  the android target (`~/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/bin`)
+  and rsync'd sources verified by sha256 (R5). Backup (R4) OUTSIDE the tree at
+  `/home/ubuntu/backups/grindrx_v133_auditfix_20260927_004556` — deliberately not `.bak` inside
+  `src-tauri/`, which already carries 37 such files polluting the source zip.
+  **4 CRITICAL found, all fixed + regression-tested:** (1) v0.1.33 **bricked every PIN set in
+  v0.1.25–v0.1.32** — legacy SHA-256 verifiers were compared against a PBKDF2 digest with no
+  migration, so there was permanent unrecoverable lockout (proven empirically, not inferred);
+  (2) the weight grid filter sent **kilograms into `weightGramsMin`/`Max`** — a 1000× error in the
+  one mapper that had zero tests, so the filter could never match anyone; (3) **`retainAuthedImage`
+  had zero callers**, so the entire "never revoke a blob while displayed" fix was dead code
+  (`refCounts` permanently empty, `retired` never written, and the existing bound test was
+  hollow because the cache is module state); (4) **Android lock-screen notifications leaked 80
+  chars of chat text**, entirely ungated by the app lock, because nothing in Rust knew the lock
+  existed — fixed on both sides (new `set_app_locked` command + `app-lock-gate.ts`).
+  **11 HIGH** incl. the Report button unmounting its own dialog (chat's only reporting path was a
+  no-op), a failed report reporting success, the WS logout "lost-wakeup" fix **refuted**
+  (`notify_waiters()` stores no permit and the epoch was checked nowhere else), videos still
+  unauthenticated, no IME guard (CJK could not type), the mic surviving death during the
+  permission dialog, sign-out clearing **no** persisted PII (8 of 13 plaintext stores survived,
+  incl. the previous account's ±4 m geohash and incognito state), PIN disable/replace requiring
+  no auth, `turnOff()` leaving biometrics enabled while the switch read off, the store listing
+  advertising a removed "radar map", `KEYS.md` publishing a certificate no GrindrX APK has, and
+  **three in-tree Android config copies disagreeing on the version** (one embedded in the APK
+  assets with a weaker CSP and a versionCode that F-Droid/Play would reject as a downgrade).
+  **Independently confirmed good:** **zero XSS sinks app-wide** (`@html`/`innerHTML`/`eval`/
+  `new Function`/`srcdoc` → nothing) despite rendering a very large amount of attacker-controlled
+  text; the token never enters JS memory (grep for `token` across the whole API layer returns only
+  comments); the msgpack depth guard is correct (covers all 256 byte values, checked before
+  descending, no bypass); TLS-before-auth-header and the no-redirect client are correct; the
+  vendored shadcn tree is byte-for-byte unmodified; no `openssl`/`native-tls` anywhere.
+  **Structural root causes** (why the bugs existed, not the bugs): no CI; **zero component tests
+  are even possible** (`vite.config.mjs` sets `environment: "node"`, no jsdom, no
+  `@testing-library`) so ~200 `.svelte` files have no DOM coverage; the filter mapper and the
+  image ref-count both had no tests and both were broken; Rust was never compiled on the release
+  host; and docs drifted with nothing checking them.
+  **After:** 0 type errors / **4** warnings (from 30), **442 tests / 39 files all passing** (from
+  244), eslint clean on all 127 changed files, Rust 17/17 + android target clean. 164 files
+  touched. **NOT built, NOT installed, NOT pushed (R11).** **NOT device-tested** — compiling is
+  not running. Batch D's `.optional()`-on-`profileSchema` change rippled into 6 consumer files
+  (a correct change, but the agent could not run a project-wide check); the fallout was fixed by
+  hand and a `Versatile` icon branch that the same agent dropped was restored — that last one is
+  why per-agent verification is not optional. **Open / needs the operator:** the password-reset
+  endpoint contradiction (`/v1/accounts/password/reset` vs the Rust `/v3/users/forgot-password`,
+  whose real implementation has **zero callers**) needs a live Grindr account to resolve;
+  moving the PIN verifier into the keyring needs Rust + a device; the two stacked
+  keyboard-compensation mechanisms (`MainActivity.kt` bottomMargin **and** `app.html`
+  `interactive-widget=resizes-content`) may double-count the IME height and is the highest-risk
+  unresolved item; `MainActivity.createNotificationChannel` still needs
+  `setVisibility(VISIBILITY_PRIVATE)` **plus a channel-id bump** (Android never updates a live
+  channel); several product decisions (telemetry opt-out, map restore-or-delete, AI-contribution
+  policy) are flagged DECISIONS NEEDED in the report. A minimal `.github/workflows/ci.yml` was
+  added but has never executed. — agent, operator Tom.

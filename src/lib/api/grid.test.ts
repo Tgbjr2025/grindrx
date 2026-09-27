@@ -13,7 +13,6 @@ import { getProfiles } from "$lib/api/profile";
 import { cascadeV3QuerySchema } from "$lib/model/grid/cascade/query/v3";
 import { Tribe } from "$lib/model/profile";
 import { urlSearchParamsCodec } from "$lib/utils";
-
 // getGrid/resolvePartialBatch live in the route module, not $lib/api — this
 // file also covers them per the P7 plan (issue #2 regression + batching).
 import {

@@ -2,7 +2,7 @@
 
 > A privacy-focused Grindr client for Android — forked from [open-grind](https://git.opengrind.org/open-grind/open-grind), maintained by [@Tgbjr2025](https://github.com/Tgbjr2025).
 
-**Current release: v0.1.33** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
+**Current release: v0.1.34** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
 
 ---
 
@@ -17,24 +17,58 @@ The app also checks for updates on its own: when a newer release exists, an in-a
 ### Verify your download
 
 ```
-SHA-256 (GrindrX-v0.1.33.apk):  b0fe12040807499e680666a3219dd3fdf4b48a14da50e76510c7fdcde1f098af
-Size:                           70,950,792 bytes
+SHA-256 (GrindrX-v0.1.34.apk):  00c8582f62a34ab4befe5b9df416ab82abc30a716b06159254b67d50762cff07
+Size:                           71,136,868 bytes
 certificate:                    22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
 ```
 
-`sha256sum GrindrX-v0.1.33.apk` and `apksigner verify --print-certs GrindrX-v0.1.33.apk`.
+`sha256sum GrindrX-v0.1.34.apk` and `apksigner verify --print-certs GrindrX-v0.1.34.apk`.
 
-> **Status:** v0.1.33 builds, is signed with the long-standing key, and carries a
-> higher `versionCode` (1068) than v0.1.32 (1065), so it upgrades in place. It has
+> **Status:** v0.1.34 builds, is signed with the long-standing key, and carries a
+> higher `versionCode` (1069) than v0.1.33 (1068), so it upgrades in place. It has
 > **not yet been tested on a physical device** — the fixes are verified at build
 > and test level only. Try it on a spare device first, and keep the previous APK
 > around until you have.
+>
+> v0.1.34 is a **full line-by-line audit and remediation release** — 4 critical,
+> 11 high and ~30 medium findings across 30k lines, with the test suite going from
+> 244 to 442. The most important fix: **if you set a PIN between v0.1.25 and
+> v0.1.32, that PIN could not unlock the app** and this release repairs it. See
+> [CHANGES.md](./CHANGES.md#v0134--full-code-audit--remediation-2026-09-27).
 
 ---
 
 ## What is GrindrX?
 
-GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free, tracker-free, and privacy-centered. The Rust layer handles all Grindr API calls with device-header spoofing and session management; the SvelteKit frontend is embedded into the native binary.
+GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https://tauri.app) and [SvelteKit](https://kit.svelte.dev). It is ad-free and tracker-free, and privacy-centered — with one honest exception, below. The Rust layer handles all Grindr API calls with device-header spoofing and session management; the SvelteKit frontend is embedded into the native binary.
+
+### The one thing that leaves your device
+
+**On every launch, GrindrX sends a single anonymous ping to the maintainer's own
+server** so the "active users" number on the Stats screen can be counted. It is
+issued unconditionally — there is no setting to turn it off, and no consent
+prompt. What it contains:
+
+- a random ID generated on your device (`crypto.randomUUID()`, stored locally). It
+  is not your account, your email, your phone number, your device ID, or anything
+  Grindr knows.
+- the app version.
+
+It is sent as a `POST` to `cam.dominusaxis.com/grindrx/ping` with those two
+values in the query string, and nothing else in the body. It is not an
+advertising tracker — it cannot follow you into other apps or onto websites, and
+it is not shared with anyone — but it is a network request you did not ask for,
+so it is stated here rather than buried. Adding a Settings → Privacy opt-out is
+the obvious fix and is **not yet done**.
+
+The separate, _optional_ page-view analytics is **off** in shipped builds: it only
+runs if `PUBLIC_ENABLE_ANALYTICS=true` is set at build time, and it is not set.
+
+There is no advertising SDK, no crash reporter, and no third-party analytics
+library in the app.
+
+See also [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for the licences of
+the bundled third-party components.
 
 ### Features
 
@@ -59,8 +93,8 @@ GrindrX is an unofficial, open-source Grindr client built with [Tauri 2](https:/
 **Privacy & security**
 
 - **Screenshot protection** — the app window is `FLAG_SECURE`, so the recents/multitasker thumbnail cannot capture it and screenshots/screen recording are blocked
-- **App lock** — optional PIN (PBKDF2, stored only as a salted hash) and/or **fingerprint / face unlock**; open the app with just a biometric if you like, with the device PIN/pattern as a fallback
-- **Android backups disabled** — `allowBackup=false` plus explicit data-extraction rules, so `adb backup` cannot extract your precise location, app-lock hash, or media cache
+- **App lock** — optional PIN (PBKDF2-SHA-256, 200k iterations) and/or **fingerprint / face unlock**; open the app with just a biometric if you like, with the device PIN/pattern as a fallback. Being straight about the limit: the PIN verifier is stored as a salted hash in the app's own storage, so on a **rooted** device someone could try PINs offline, and a short PIN is guessable that way. The attempt backoff and re-lock are what protect you on an ordinary, non-rooted phone. There is no PIN recovery — if you forget it, clear the app's storage and sign in again.
+- **Android backups disabled** — `allowBackup=false` plus explicit data-extraction rules, so your precise location, app-lock hash, and media cache cannot be pulled out via Android backup or device transfer. (Nothing on a _rooted_ device is out of reach — this is about the standard OS mechanisms.)
 - **Notification settings** — per-type (message / tap) toggles, enforced natively and off until your real preferences have loaded
 - Incognito (written to the server, not just a local label), reveal-profile-views and reveal-read-receipt controls, discreet app icon
 - Keyring session storage (OS keychain), authenticated image loading (no black squares)
@@ -134,7 +168,7 @@ Requirements:
 ```bash
 git clone https://github.com/Tgbjr2025/grindrx.git
 cd grindrx
-bun install
+bun install --frozen-lockfile
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
 
 export ANDROID_HOME="$HOME/Library/Android/sdk"          # or your SDK path
@@ -162,10 +196,29 @@ password=your-password
 > actually verified end-to-end. See [BUILDING.md](./BUILDING.md).
 
 > **Note on `versionCode`.** It is set explicitly in `tauri.conf.json`
-> (`autoIncrementVersionCode` is **off**). Read the real value back after every
-> build with `aapt2 dump badging <apk> | grep ^package` — an auto-incrementing
-> code produced a _lower_ number on a later build than on an earlier one, which
-> would have broken in-place upgrades.
+> (`autoIncrementVersionCode` is **off**). Nothing increments it for you — bump
+> it yourself, and read the real value back after every build with
+> `aapt2 dump badging <apk> | grep ^package` — an auto-incrementing code produced
+> a _lower_ number on a later build than on an earlier one, which would have
+> broken in-place upgrades. Note also that `gen/android/app/tauri.properties` is
+> the file `build.gradle.kts` actually reads, so it has to agree; see
+> [BUILDING.md → Do not build the Gradle project directly](./BUILDING.md#do-not-build-the-gradle-project-directly).
+
+### Tests
+
+```bash
+bun install --frozen-lockfile
+bun run lint        # eslint
+bun run check       # svelte-check (types)
+bun run test:unit   # vitest — 442 tests
+bun run test:rust   # cargo test --lib — 17 tests
+```
+
+The first three also run in CI on every push and pull request
+(`.github/workflows/ci.yml`); CI was added in v0.1.34 — until then nothing
+re-ran the suite automatically. The workflow has not itself executed yet; treat
+the first run as unproven. The Rust leg builds for the host, so it does not
+compile the Android-only code; see the note in the workflow file.
 
 ---
 
@@ -181,12 +234,14 @@ Verify a downloaded APK with `apksigner verify --print-certs GrindrX-*.apk`. Mor
 
 Recent hardening in the Rust layer:
 
-- **A byte-size cap does not bound msgpack nesting.** A one-element array is one byte, so an 8 MB body — well under the size cap — can encode ~8 million levels of nesting, and the decoder has no recursion limit. That overflows the stack, which _aborts the app_ rather than returning a catchable error. Inbound payloads nested deeper than 64 are now rejected with an ordinary error.
-- **A logout during the WebSocket handshake could be silently lost**, leaving the socket authenticated with the _previous_ account's token. A monotonic session epoch is now checked before credentials are used, after the token fetch, and after the handshake.
-- **API responses are size-capped** on every path, including the generic request bridge.
+- **A byte-size cap does not bound msgpack nesting.** A one-element array is one byte, so an 8 MB body — well under the size cap — can encode ~8 million levels of nesting, and the decoder has no recursion limit. That overflows the stack, which _aborts the app_ rather than returning a catchable error. Inbound payloads nested deeper than 64 are now rejected with an ordinary error, checked _before_ decoding.
+- **A logout during the WebSocket handshake could be silently lost**, leaving the socket authenticated with the _previous_ account's token. A monotonic session epoch is now checked before credentials are used, after the token fetch, and after the handshake — and, as of v0.1.34, at the top of every message-loop iteration, because the wakeup itself was lossy and a logout during frame processing was still being dropped. That is what kept the previous account's messages arriving after sign-out.
+- **API responses are size-capped on every path**, including the generic request bridge, the three upload commands, the auth path, and the release/stats fetches (v0.1.34 closed the last seven uncapped reads).
+- **The request bridge only accepts `GET`, `POST`, `PUT`, `PATCH` and `DELETE`**, and the media fetchers refuse anything that is not `https` before the auth header is attached, on a client that does not follow redirects.
 - **A server error code that truncated `i64`→`i32`** could wrap into a `401` and **delete the stored session**, forcing a logout.
-- **Debug builds no longer log request bodies** in full — that is where chat text, profile edits and the account password live.
-- The WebView was narrowed: no clipboard **read**, no ability to post its own notifications, and no unused filesystem path grants.
+- **Debug builds no longer log request bodies** in full — that is where chat text, profile edits and the account password live. The release WebSocket no longer logs message bodies either.
+- The WebView was narrowed: no clipboard **read**, no ability to post its own notifications, and no unused filesystem path grants. The unused continuous-location capability and the unused `FileProvider` were both removed in v0.1.34.
+- **Keyring reads and writes both run off the async runtime** — the Android Keystore call takes tens of milliseconds and was stalling every request queued behind it.
 
 ---
 
@@ -200,4 +255,6 @@ Recent hardening in the Rust layer:
 
 ## License
 
-See [LICENSE](./LICENSE). This project is a fork of open-grind and inherits its license.
+See [LICENSE](./LICENSE). This project is a fork of open-grind and inherits its license. The licences of the bundled third-party components — including Leaflet's BSD-2-Clause, which requires its notice to be reproduced in redistributions — are in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
+`GOVERNANCE.md` and `CODE_OF_CONDUCT.md` are inherited from upstream Open Grind and are marked as such at the top of each; read the banners before relying on them.

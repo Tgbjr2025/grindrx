@@ -1,0 +1,14 @@
+Big bug-fix release. The keyboard no longer covers the message box, voice messages actually play, reading older messages no longer jumps you to the bottom, and album photos can be added and removed again.
+
+Fixed: the keyboard covered the composer, so you could read messages but not reply to them.
+Fixed: voice messages never played. They now load, with a loading and a failure state.
+Fixed: any inbound message scrolled you to the bottom, losing your place. A "N new messages" pill appears instead.
+Fixed: reactions were write-once. You can now react to your own messages and remove a reaction.
+Fixed: rotating the screen threw away your scroll position and unsent messages.
+Fixed: every photo, album and voice message in a chat said "Preview not available".
+Fixed: only an album's cover photo was ever visible. Photos 2..N now show and can be removed.
+Fixed: profile edits failed silently, going back from a profile gave a black screen, and incognito was a label with no effect.
+New: send a location in a chat, not just receive one.
+New: screenshot protection. The app is blocked from screen recording and from the recent-apps thumbnail.
+New: Android backups are switched off, so your precise location and app-lock data can't be pulled out via Android backup or device transfer.
+Security: WebView capabilities narrowed, API responses size-capped, a msgpack nesting-depth guard added, and debug builds no longer log request bodies.

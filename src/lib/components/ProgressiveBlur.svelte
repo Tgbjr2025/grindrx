@@ -35,11 +35,21 @@
 </script>
 
 <svelte:element this={tag} class={className}>
-	<div class={["absolute top-0 left-0 size-full z-11", bgClass]}></div>
+	<!--
+		D23: these two overlays are purely decorative but were hit-testable, so they
+		worked only by PAINT ORDER (z-11 above z-10 above the content). Any change to
+		the stacking — a new z-index, a portal, a browser difference — silently made
+		the bar swallow the taps meant for the controls underneath it. `pointer-events-none`
+		removes the dependency on paint order entirely.
+	-->
 	<div
-		class="blur-filter absolute top-0 left-0 size-full z-10"
+		aria-hidden="true"
+		class={["pointer-events-none absolute top-0 left-0 size-full z-11", bgClass]}
+	></div>
+	<div
+		aria-hidden="true"
+		class="blur-filter pointer-events-none absolute top-0 left-0 size-full z-10"
 		style:mask={maskGradient}
-		style:-webkit-mask={maskGradient}
 	></div>
 	<div class={["relative z-12", contentClass]}>
 		{@render children?.()}

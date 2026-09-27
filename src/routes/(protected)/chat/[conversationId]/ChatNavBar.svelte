@@ -3,11 +3,11 @@
 
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import DisplayName from "$lib/components/DisplayName.svelte";
-	import { formatDistance } from "$lib/utils/distance";
 	import ProgressiveBlur from "$lib/components/ProgressiveBlur.svelte";
 	import * as Avatar from "$lib/components/ui/avatar";
 	import * as Card from "$lib/components/ui/card";
 	import { Skeleton } from "$lib/components/ui/skeleton";
+	import { formatDistance } from "$lib/utils/distance";
 	import type { ConversationState } from "./conversation-state.svelte";
 	import MediaGallery from "./MediaGallery.svelte";
 
@@ -30,7 +30,11 @@
 
 <ProgressiveBlur
 	direction="topToBottom"
-	class="w-full shrink-0 h-19 absolute z-10"
+	// `z-20`, not `z-10`: the "N new messages" pill in `MessagesList` is
+	// `sticky top-0 z-10` and comes LATER in the DOM. At equal stacking level it
+	// painted over the back button whenever the user was scrolled up in a long
+	// thread.
+	class="w-full shrink-0 h-19 absolute z-20"
 	bgClass="bg-linear-to-b max-xs:from-background xs:from-card to-transparent"
 	contentClass="flex items-center h-full"
 	tag="nav"
@@ -38,7 +42,15 @@
 	<a href="/chat" class="flex items-center justify-center w-19 h-full text-foreground/80 hover:text-foreground transition-colors">
 		<ArrowLeftIcon size={28} />
 	</a>
-	{#if conversationState.loading || conversationState.profile === null}
+	<!-- Order matters and used to be wrong: the first branch tested
+	     `loading || profile === null`, and a FAILED initial load leaves exactly
+	     that state (`loading` is cleared in the `finally`, `profile` stays null),
+	     so the "Failed to load conversation" branch below was unreachable. The
+	     error check now comes first, where the real error UI (retry) lives in
+	     `MessagesList`. -->
+	{#if conversationState.error}
+		<span class="flex-1 text-sm text-muted-foreground">Failed to load conversation</span>
+	{:else if conversationState.loading || conversationState.profile === null}
 		<div class="py-4 ps-0 flex-1 flex items-center gap-3">
 			<Skeleton class="rounded-full size-10" />
 			<div class="flex flex-col gap-2">
@@ -46,8 +58,6 @@
 				<Skeleton class="rounded-md w-14 h-3" />
 			</div>
 		</div>
-	{:else if conversationState.error}
-		<span class="flex-1 text-sm text-muted-foreground">Failed to load conversation</span>
 	{:else}
 		{@const profile = conversationState.profile}
 		<a href="/profile/{profile.profileId}" class="flex-1 ps-0 py-3 pe-4">

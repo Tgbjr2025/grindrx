@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ChatTextIcon, PlusIcon, TrashIcon } from "phosphor-svelte";
+	import { toast } from "svelte-sonner";
 
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
@@ -7,7 +8,10 @@
 	import {
 		addSavedPhrase,
 		getSavedPhrases,
+		getSavedPhrasesPersistError,
 		removeSavedPhrase,
+		SAVED_PHRASES_MAX,
+		savedPhraseLimitReached,
 	} from "$lib/stores/saved-phrases.svelte";
 
 	let {
@@ -22,6 +26,21 @@
 	let newPhrase = $state("");
 
 	const phrases = $derived(getSavedPhrases());
+	const atLimit = $derived(savedPhraseLimitReached());
+	// A localStorage quota failure (or private-mode write denial) is otherwise a
+	// silent `console.error`: the phrase looks saved and then vanishes on reload.
+	// Surface it, and only report each distinct failure once.
+	let reportedPersistError: string | null = null;
+	$effect(() => {
+		const err = getSavedPhrasesPersistError();
+		if (!err) {
+			reportedPersistError = null;
+			return;
+		}
+		if (err.message === reportedPersistError) return;
+		reportedPersistError = err.message;
+		toast.error("Couldn't save phrases — storage is full or unavailable");
+	});
 
 	function choose(text: string) {
 		onInsert(text);
@@ -29,8 +48,19 @@
 	}
 
 	function addNew() {
+		// `addSavedPhrase` returns `null` for both "empty text" and "list is at the
+		// cap"; the drawer used to clear/do nothing with no feedback at all, so a
+		// full list looked broken. Distinguish them.
 		const created = addSavedPhrase(newPhrase);
-		if (created) newPhrase = "";
+		if (created) {
+			newPhrase = "";
+			return;
+		}
+		if (newPhrase.trim() !== "" && atLimit) {
+			toast.error(
+				`Saved phrases are full (${SAVED_PHRASES_MAX}) — delete one to add another.`,
+			);
+		}
 	}
 </script>
 
@@ -87,7 +117,16 @@
 							currentTarget: EventTarget & HTMLTextAreaElement;
 						},
 					) => {
-						if (event.key === "Enter" && !event.shiftKey) {
+						// IME composition guard: while composing, Enter confirms the
+						// candidate — it must not add the half-finished romaji/pinyin as a
+						// saved phrase. `keyCode === 229` covers older Android WebViews that
+						// report `isComposing: false` for the confirming keydown.
+						if (
+							event.key === "Enter" &&
+							!event.shiftKey &&
+							!event.isComposing &&
+							event.keyCode !== 229
+						) {
 							event.preventDefault();
 							addNew();
 						}
@@ -97,7 +136,10 @@
 					type="button"
 					size="icon"
 					class="size-10 shrink-0 rounded-xl cursor-pointer"
-					disabled={newPhrase.trim() === ""}
+					aria-label={atLimit
+						? `Saved phrases are full (${SAVED_PHRASES_MAX})`
+						: "Add phrase"}
+					disabled={newPhrase.trim() === "" || atLimit}
 					onclick={addNew}
 				>
 					<PlusIcon class="size-4.5" weight="bold" />
