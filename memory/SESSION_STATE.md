@@ -702,3 +702,44 @@ pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
   (`ghp_WeLo…` working, `ghp_QxJ…` and `ghp_DBq…` both 401). They are also embedded in the
   `github` remote URL on both hosts. **All of them should be rotated and the remote URLs
   re-written without embedded credentials** — prefer `gh auth login` / a credential helper.
+
+- **2026-09-27 04:35 UTC — v0.1.35: Android link bug found and fixed, plus a mandatory update gate.**
+  Operator Tom reported "the download button in the update banner does nothing". **Root cause found and
+  it was not the banner.** `@tauri-apps/plugin-opener`'s JS binding invokes
+  `plugin:opener|open_url`, but `tauri-plugin-opener` **2.5.3** registers the command as **`open`** on
+  Android (`OpenerPlugin.kt`: `@Command fun open`) while registering `open_url` on desktop
+  (`src/commands.rs`). The capability compounds it — `opener:allow-open-url` grants
+  `commands.allow = ["open_url"]`, a name that does not exist on Android, so the real `open` is not
+  permitted either. The plugin's own CHANGELOG shows this mobile bug being fixed once already, so it
+  has regressed. **Every `openUrl()` call in the app was dead on Android**: the update banner's
+  Download button, every tappable chat link (`Link.svelte`), and the map link
+  (`LocationMessage.svelte`). Invisible because the promise was never awaited — a rejection became an
+  unhandled rejection with no feedback.
+  **Fixed** with a new `open_external_url` Tauri command (`src-tauri/src/api/openurl.rs`) that calls
+  the plugin's **Rust** API, which handles the platform split correctly (on mobile
+  `OpenerExt::open_url` -> `run_mobile_plugin("open", ..)`). All three call sites now route through
+  `$lib/api/open-url` and surface a real error. This also **closes the audit's `intent://`/`file://`
+  injection finding** — the release URL came from remote JSON into an unscoped opener; the scheme is
+  now allow-listed to http/https in Rust before dispatch.
+  **Force-update gate added** (`ForceUpdateGate.svelte` + `update-gate.svelte.ts`): full-screen
+  non-dismissable block below `MINIMUM_SUPPORTED_VERSION` = 0.1.34, mounted last in the root layout
+  so it sits above every overlay. Three safety properties, 19 tests in `src/lib/update-gate.test.ts`:
+  **never blocks on missing/unreachable release data** (a server blink must not strand a user whose
+  app is fine), **ignores draft/prerelease tags**, and **always offers a copy-link fallback** so the
+  gate is never a single-button dead end. This is the only exit for a user stuck on the PIN-broken
+  v0.1.33.
+  Commit **`ad570c5`**, tags `v0.1.35` + `audit-v0.1.35-rollback-20260927` (at `df66f4e` = v0.1.34).
+  **version 0.1.35, versionCode 1070.** Built on the M1, `BUILD_EXIT=0`, universal, all 4 ABIs,
+  minSdk 28 / targetSdk 36, same cert `22:D6:…:4C:01` and package `com.grindrx.app` as every prior
+  release. **APK sha256 `5636c3e0675b173a850344491735669848b656852c62ed416fb059377e4ba9b1`,
+  71,268,236 B**, copied to both hosts and re-hashed (R5).
+  **Shipped to all three:** Forgejo `main` fast-forwarded to `ad570c5` + release id 54 with both
+  assets; GitHub branch + tags (main deliberately still `a547f8e`) + release id `397509106` with both
+  assets; F-Droid index regenerated and **live** at 0.1.35/1070 with the matching hash. **Both
+  hosts' release APKs downloaded back and sha256-verified identical.**
+  Gates: 0 type errors / 4 warnings, **461 tests** (was 442), eslint clean, `cargo check --lib`
+  clean on the M1. **NOT device-tested** — and this fix in particular is exactly the class that
+  compiles clean, passes every test, and only manifests on a real phone, so **install 0.1.35 on a
+  device and confirm the Download button opens a browser before telling anyone the gate is the only
+  way out.** The gate is the sole recovery path for PIN-locked v0.1.33 users; if the button is still
+  broken the gate bricks them. — agent, operator Tom.
