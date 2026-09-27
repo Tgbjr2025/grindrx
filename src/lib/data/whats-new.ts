@@ -3,6 +3,12 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.35": [
+		"Fixed: the 'Download' button in the update banner did nothing on Android. So did every tappable link in a chat, and the map link.",
+		"New: if your version has a known fault that locks you out, the app now blocks with a full-screen 'Update required' and a working download button, instead of failing quietly.",
+		"Only stable releases can ever push you to an update — a draft or pre-release is ignored.",
+		"The app will never lock you out because a server was briefly unreachable.",
+	],
 	"0.1.34": [
 		"Security: if you set a PIN between v0.1.25 and v0.1.32, it works again. That update could never unlock, and this release fixes it.",
 		"Security: signing out now clears your saved messages, viewed locations and photos from the device.",

@@ -103,6 +103,7 @@ pub fn run() {
             api::rest::fetch_download_stats,
             api::rest::fetch_active_users,
             api::rest::send_usage_ping,
+            api::openurl::open_external_url,
             set_foreground,
             set_notification_prefs,
             set_app_locked,

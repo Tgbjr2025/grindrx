@@ -5,6 +5,67 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.35 — working download button + a mandatory update gate (2026-09-27)
+
+**versionCode 1070** (was 1069). Universal APK, all 4 ABIs, signed with the same
+`22:D6:…:4C:01` key, so it upgrades in place over v0.1.34. Tests 442 → **461**.
+
+### The Download button did nothing on Android — and neither did every other link
+
+`@tauri-apps/plugin-opener`'s JavaScript binding invokes `plugin:opener|open_url`,
+but `tauri-plugin-opener` **2.5.3**'s Android implementation registers that command
+as `open` (`OpenerPlugin.kt`: `@Command fun open`), while its desktop build
+registers `open_url` (`src/commands.rs`: `pub async fn open_url`). The capability
+compounds it: `opener:allow-open-url` grants `commands.allow = ["open_url"]`, a
+command name that does not exist on Android, so the real `open` is not permitted
+either. The plugin's own CHANGELOG shows this exact mobile breakage being fixed
+once already ("Fix broken JS commands `opener.openPath` and `opener.openUrl` on
+mobile"), so it has regressed.
+
+**Impact:** on any phone, *every* `openUrl()` call rejected — the update banner's
+Download button, every tappable link in a chat, and the map link. It was invisible
+because the returned promise was never awaited or caught, so a rejection became an
+unhandled rejection with no user feedback.
+
+**Fix:** a new `open_external_url` Tauri command (`src-tauri/src/api/openurl.rs`)
+that calls the plugin's **Rust** API, which handles the platform difference
+correctly (on mobile `OpenerExt::open_url` dispatches to
+`run_mobile_plugin("open", …)`). All three call sites now route through
+`$lib/api/open-url` and surface a real error instead of failing silently.
+
+This also closes a security finding from the audit: the release URL came from
+remote JSON and was handed to the opener with an unscoped
+`opener:allow-open-url`, so an `intent://` or `file://` URL from a hostile feed
+would have reached an Android `Intent`. The scheme is now allow-listed to
+`http`/`https` in Rust, before anything is dispatched.
+
+### Mandatory "Update required" screen
+
+v0.1.33 permanently locked out anyone who set an app-lock PIN in v0.1.25–v0.1.32,
+with no recovery from inside the app. v0.1.34 fixes the migration, so anyone below
+the minimum cannot proceed — there is nothing they can do for themselves.
+
+`ForceUpdateGate.svelte` + `update-gate.svelte.ts` block the whole viewport for
+versions below `MINIMUM_SUPPORTED_VERSION` (0.1.34) with the release notes, a
+working download button, and a copy-link fallback.
+
+Three deliberate safety properties, each pinned by tests in
+`src/lib/update-gate.test.ts`:
+
+- **It never blocks on bad or missing data.** An unreachable release server, an
+  unreadable version, or a release with no download link all resolve to
+  `unavailable` and let the user through. Locking someone out of a working app
+  because a server blinked would be far worse than the bug it prevents.
+- **Only stable releases can trigger it.** A draft or prerelease tag is ignored.
+- **It is never a dead end.** The download button goes through the fixed command
+  *and* a copy-link fallback sits beneath it. A mandatory gate whose only action
+  is one button is a single bad button away from bricking the app.
+
+The gate is mounted last in the root layout so it renders above every other
+overlay, including the request-blocked alert.
+
+---
+
 ## v0.1.34 — full code audit + remediation (2026-09-27)
 
 **versionCode 1069** (was 1068). Universal APK, all 4 ABIs, minSdk 28 / targetSdk 36,

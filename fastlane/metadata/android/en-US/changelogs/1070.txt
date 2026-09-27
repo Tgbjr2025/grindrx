@@ -1,0 +1,5 @@
+Fixed the update banner's Download button, which did nothing on Android. Every tappable link in a chat and the map link were broken the same way — the app was asking the system to open a link under a name Android does not recognise.
+
+New: if your version has a fault that locks you out of the app, you now get a full-screen "Update required" with a working download button, instead of the app failing quietly. Only stable releases can trigger it, and the app will never lock you out because a server was briefly unreachable.
+
+Also in this build: the full audit remediation from v0.1.34, including the repair for app-lock PINs set in v0.1.25-v0.1.32.

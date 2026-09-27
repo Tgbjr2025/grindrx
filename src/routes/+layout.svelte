@@ -136,6 +136,7 @@
 
 	import RequestBlockedAlert from "$lib/api/request-blocked/RequestBlockedAlert.svelte";
 	import favicon from "$lib/assets/favicon.png";
+	import ForceUpdateGate from "$lib/components/ForceUpdateGate.svelte";
 
 	let {
 		children,
@@ -163,7 +164,14 @@
 	}}
 	expand
 />
+<!--
+	Mounted ABOVE the app content and after the request-blocked alert: the
+	force-update gate must be the last thing rendered so it sits on top of
+	everything, including any other overlay. See $lib/update-gate.svelte for why
+	it is safe to block on (it is not — a network failure never blocks).
+-->
 <IconContext values={{}}>
 	{@render children?.()}
 </IconContext>
 <RequestBlockedAlert />
+<ForceUpdateGate />
