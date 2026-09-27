@@ -54,6 +54,13 @@
 	{#if isOnline}
 		<span class="absolute top-1.5 left-1.5 size-2.5 rounded-full bg-green-500 border-2 border-background z-10 shadow-sm"></span>
 	{/if}
+	<!--
+		Stacking note: the placeholder `UserIcon` is `position: absolute`, so it
+		paints ABOVE any non-positioned sibling. The `<img>` below must therefore
+		carry `relative` or it renders *under* the icon and every tile shows a grey
+		outline person instead of the photo. Both are positioned with z-index auto,
+		so DOM order decides — icon first, photo second, photo wins.
+	-->
 	<div class="absolute w-full h-full bg-muted">
 		<UserIcon
 			weight="fill"
@@ -71,7 +78,10 @@
 				src="https://cdns.grindr.com/images/thumb/320x320/{profilePicture.mediaHash}"
 				alt={altText}
 				class={[
-					"w-full h-full object-cover transition-transform duration-300 group-hover:scale-105",
+					// `relative` is load-bearing, not cosmetic: see the stacking note
+					// above. Without it this image renders beneath the absolute
+					// placeholder icon.
+					"relative w-full h-full object-cover transition-transform duration-300 group-hover:scale-105",
 					{
 						"blur-2xl": env.PUBLIC_ENABLE_BLUR_EFFECTS,
 					},
@@ -87,7 +97,11 @@
 				// "no photo" case uses.
 				onerror={(event) => {
 					const img = event.currentTarget as HTMLImageElement | null;
-					if (img) img.hidden = true;
+					// `display:none` explicitly rather than the `hidden` attribute: the
+					// img carries `relative` plus full-size utility classes, and an
+					// explicit inline style cannot be beaten by a stylesheet rule.
+					// Hiding it reveals the placeholder icon behind, which is the point.
+					if (img) img.style.display = "none";
 				}}
 			/>
 		{/if}

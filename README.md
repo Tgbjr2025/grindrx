@@ -2,7 +2,7 @@
 
 > A privacy-focused Grindr client for Android — forked from [open-grind](https://git.opengrind.org/open-grind/open-grind), maintained by [@Tgbjr2025](https://github.com/Tgbjr2025).
 
-**Current release: v0.1.35** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
+**Current release: v0.1.36** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
 
 ---
 
@@ -17,15 +17,15 @@ The app also checks for updates on its own: when a newer release exists, an in-a
 ### Verify your download
 
 ```
-SHA-256 (GrindrX-v0.1.35.apk):  5636c3e0675b173a850344491735669848b656852c62ed416fb059377e4ba9b1
-Size:                           71,268,236 bytes
+SHA-256 (GrindrX-v0.1.36.apk):  60baa93c54377efab808a2ea56efa60b129855f5855822cc98955aa53dbf3456
+Size:                           71,268,916 bytes
 certificate:                    22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
 ```
 
-`sha256sum GrindrX-v0.1.35.apk` and `apksigner verify --print-certs GrindrX-v0.1.35.apk`.
+`sha256sum GrindrX-v0.1.36.apk` and `apksigner verify --print-certs GrindrX-v0.1.36.apk`.
 
-> **Status:** v0.1.35 builds, is signed with the long-standing key, and carries a
-> higher `versionCode` (1070) than v0.1.34 (1069), so it upgrades in place. It has
+> **Status:** v0.1.36 builds, is signed with the long-standing key, and carries a
+> higher `versionCode` (1071) than v0.1.35 (1070), so it upgrades in place. It has
 > **not yet been tested on a physical device** — the fixes are verified at build
 > and test level only. Try it on a spare device first, and keep the previous APK
 > around until you have.
