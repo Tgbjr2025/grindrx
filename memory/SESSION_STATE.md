@@ -743,3 +743,36 @@ pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
   device and confirm the Download button opens a browser before telling anyone the gate is the only
   way out.** The gate is the sole recovery path for PIN-locked v0.1.33 users; if the button is still
   broken the gate bricks them. — agent, operator Tom.
+
+- **2026-09-27 05:25 UTC — v0.1.36: a placeholder icon was painted over every grid photo. My regression.**
+  Operator Tom reported "a generic outline guy over every profile pic on the grid".
+  **This is a regression I introduced in v0.1.34**, not a pre-existing bug. `ProfileMiniCard.svelte`
+  renders a grey `UserIcon` as the "no photo" placeholder; in v0.1.33 it lived in an `{:else}`
+  branch so it only entered the DOM when there was no photo. The v0.1.34 remediation pass hoisted
+  it out so it could double as the fallback for a new `onerror` handler on the `<img>` (a public
+  thumb can 404) — **right intent, but it then rendered unconditionally**. The icon is
+  `position: absolute` and the `<img>` was **not positioned at all**, so in CSS painting order the
+  icon painted ABOVE the photo on **every tile in the grid**. Fixed by giving the `<img>`
+  `position: relative`, so both are positioned with `z-index: auto` and DOM order decides (icon
+  first, photo second, photo wins); the onerror fallback still works because a failed image is
+  hidden and the icon behind shows through. That handler now sets `style.display = "none"`
+  explicitly rather than the `hidden` attribute, so no stylesheet rule can beat it.
+  Only `ProfileMiniCard` was affected — `Conversation.svelte` and `ChatNavBar.svelte` use
+  shadcn's `Avatar.Fallback`, which correctly renders only on image failure. Verified by diffing
+  the component against `v0.1.33` rather than reasoning about it.
+  **The important lesson, recorded so it is not repeated:** *no test could have caught this, and
+  none could.* There is no component-test runner in this project (`vite.config.mjs` sets
+  `environment: "node"`, no jsdom, no `@testing-library`), so a pure CSS stacking bug on the main
+  screen passes the type checker, the linter and all 461 tests. This is the structural gap the
+  audit flagged as finding #2, and this was its concrete cost — a one-class change to the primary
+  screen shipped to users twice (v0.1.34 and v0.1.35) before anyone noticed.
+  Commit **`6c1fe4b`**, tag `v0.1.36` + `audit-v0.1.36-rollback-20260927` (at `e94fce9` = v0.1.35).
+  **version 0.1.36, versionCode 1071**, built on the M1, `BUILD_EXIT=0`, universal, 4 ABIs, same
+  cert `22:D6:…:4C:01` / package `com.grindrx.app`. **APK sha256
+  `60baa93c54377efab808a2ea56efa60b129855f5855822cc98955aa53dbf3456`, 71,268,916 B.**
+  Shipped to all three: Forgejo `main` -> `6c1fe4b` + release id 56 (both assets); GitHub branch +
+  tags (main still `a547f8e`) + release id `397520485` (both assets, **downloaded back and
+  sha256-verified identical**); F-Droid index regenerated and **live** at 0.1.36/1071 with the
+  matching hash. Gates: 0 type errors / 4 warnings, 461 tests, eslint clean, `cargo check --lib`
+  clean. **STILL not device-tested** — and this bug was itself only visible on a real screen, so
+  the visual changes still need a human eye. — agent, operator Tom.
