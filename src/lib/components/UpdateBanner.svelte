@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { getVersion } from "@tauri-apps/api/app";
 	import { invoke } from "@tauri-apps/api/core";
-	import { openUrl } from "@tauri-apps/plugin-opener";
 	import { CaretDownIcon, CaretUpIcon, XIcon } from "phosphor-svelte";
 	import { onMount } from "svelte";
 
+	import { openExternalUrl } from "$lib/api/open-url";
 	import { isNewer } from "$lib/utils/version";
 
 	let updateAvailable = $state(false);
@@ -14,6 +14,7 @@
 	let releaseNotes = $state("");
 	let dismissed = $state(false);
 	let expanded = $state(false);
+	let openError = $state<string | null>(null);
 
 	function isDismissed(version: string): boolean {
 		try {
@@ -29,6 +30,23 @@
 		} catch {
 			// ignore — storage may be unavailable
 		}
+	}
+
+	/**
+	 * Open the release page.
+	 *
+	 * This used to be `openUrl` from `@tauri-apps/plugin-opener`, whose JS binding
+	 * invokes `plugin:opener|open_url` while that plugin's Android build registers
+	 * the command as `open` — so it rejected on every phone, and because the
+	 * promise was never awaited the rejection was silent. The button simply did
+	 * nothing. Routed through our own `open_external_url` command now, which uses
+	 * the plugin's Rust API (correct on all platforms), and the failure is
+	 * surfaced instead of swallowed.
+	 */
+	async function openRelease() {
+		openError = null;
+		const result = await openExternalUrl(releaseUrl);
+		if (!result.opened) openError = result.error;
 	}
 
 	onMount(async () => {
@@ -88,7 +106,9 @@
 			<button
 				type="button"
 				class="shrink-0 rounded-lg border border-primary-foreground/30 px-3 py-1 text-xs font-semibold hover:bg-primary-foreground/10 active:bg-primary-foreground/20 transition-colors"
-				onclick={() => openUrl(releaseUrl)}
+				onclick={() => {
+					void openRelease();
+				}}
 			>
 				Download
 			</button>
@@ -104,6 +124,16 @@
 				<XIcon class="size-4" />
 			</button>
 		</div>
+
+		{#if openError}
+			<p
+				class="px-4 pb-2 -mt-1 text-xs text-primary-foreground/90"
+				role="alert"
+			>
+				{openError} — open this link manually:
+				<span class="font-mono break-all">{releaseUrl}</span>
+			</p>
+		{/if}
 
 		{#if expanded && releaseNotes}
 			<div class="px-4 pb-3 -mt-0.5">

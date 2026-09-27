@@ -1,0 +1,1 @@
+Fixed the update banner's "Download" button, which still did nothing on Android in v0.1.35. It now opens your browser, and tells you what went wrong (with the link) if it can't. A build check now also stops any part of the app from using the broken link-opener again.
