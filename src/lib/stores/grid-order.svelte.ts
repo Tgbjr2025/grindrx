@@ -9,9 +9,29 @@
 
 let order = $state<number[]>([]);
 
-/** Replace the published grid order (called by the grid as it loads). */
+/**
+ * D23: `getAdjacentProfileId` is called from a `$derived` in the profile page, so
+ * it re-runs on every re-render of that route, and it was an O(n) `indexOf` over
+ * an array that grows with infinite scroll (hundreds to thousands of entries).
+ * The index is built once per published order instead, so the lookup is O(1).
+ * `indexById` is rebuilt only in `setGridOrder`, i.e. when the order actually
+ * changes.
+ */
+let indexById = new Map<number, number>();
+
+/**
+ * Replace the published grid order (called by the grid as it loads).
+ *
+ * Passing an empty array clears both the order and the index, which is what
+ * happens on `gridState.#reset()`: `Grid.svelte`'s effect depends on the
+ * de-duplicated item list, so a reset (empty list) publishes `[]` immediately
+ * rather than leaving the PREVIOUS filter's order live until the new load
+ * resolves. Without that, swiping straight after a filter change walked the old
+ * list.
+ */
 export function setGridOrder(ids: number[]): void {
 	order = ids;
+	indexById = new Map(ids.map((id, i): [number, number] => [id, i]));
 }
 
 /** The current ordered list of grid profile ids. */
@@ -28,8 +48,8 @@ export function getAdjacentProfileId(
 	id: number,
 	direction: "next" | "prev",
 ): number | null {
-	const index = order.indexOf(id);
-	if (index === -1) return null;
+	const index = indexById.get(id);
+	if (index === undefined) return null;
 	const nextIndex = direction === "next" ? index + 1 : index - 1;
 	if (nextIndex < 0 || nextIndex >= order.length) return null;
 	return order[nextIndex];

@@ -34,7 +34,19 @@ export const searchQuerySchema = gridQuerySchema.extend({
 });
 
 export const searchProfileSchema = z.object({
-	profileId: z.coerce.number().int().nonnegative(),
+	// Not `z.coerce.number().int().nonnegative()`: coercion runs first, and
+	// `Number(null) === Number("") === 0` passes `.nonnegative()`, so a missing
+	// or blank id MANUFACTURED profile 0 — the `/profile/0` bug that was fixed
+	// downstream in v0.1.33, re-created here at the parse layer. Reject the two
+	// coercible-to-zero inputs by name, then coerce, then require positive.
+	profileId: z.preprocess(
+		(val) => {
+			if (val === null || val === undefined) return val;
+			if (typeof val === "string" && val.trim() === "") return Number.NaN;
+			return val;
+		},
+		z.coerce.number().int().positive(),
+	),
 	displayName: z.string().nullable(),
 	age: z.int().nonnegative().nullable(),
 	distance: z.number().nullable(),

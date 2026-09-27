@@ -1,4 +1,8 @@
-I got sick of the official Grindr app — ads, trackers, and it chews through battery — so I've been maintaining my own client. GrindrX is a fork of open-grind, built with Tauri 2: all the Grindr API calls happen in Rust and the UI is SvelteKit embedded in the native shell. No ads, no analytics. MIT-licensed.
+I got sick of the official Grindr app — ads, trackers, and it chews through battery — so I've been maintaining my own client. GrindrX is a fork of open-grind, built with Tauri 2: all the Grindr API calls happen in Rust and the UI is SvelteKit embedded in the native shell. No ads, no third-party analytics or tracking SDKs. MIT-licensed.
+
+If you are upgrading from v0.1.25 to v0.1.33 and you set an app-lock PIN: that PIN could not unlock the app, because v0.1.33 changed how the PIN is checked and did not carry your old one over. v0.1.34 repairs it. There is no PIN recovery — if you are still stuck, clear the app's storage and sign in again.
+
+v0.1.34 is a full line-by-line audit of the whole app: 4 critical, 11 high and about 30 medium problems found and fixed, with the test suite growing from 244 to 442 checks. Beyond the PIN fix, it corrects a weight filter that could never match anyone, stops photos re-downloading while you scroll, makes non-Latin keyboards able to type, makes the Report button actually work, stops the microphone staying on if you leave mid-prompt, stops unread messages being hidden after the app was closed, and clears your saved data on sign-out.
 
 On top of upstream it adds:
 
@@ -9,9 +13,22 @@ On top of upstream it adds:
 * App lock — a PIN and/or fingerprint/face; open the app with just a biometric (device PIN/pattern as the fallback)
 * Notification controls — turn message and tap notifications on or off
 * Profile / tag search
-* A radar map of nearby profiles, a per-chat media gallery, taps & favorites, and inbox search
+* Per-chat media gallery, and inbox search
+* Real incognito mode — written to the server, not just a local label
+* Screenshot protection — the app is blocked from screen recording and from the recent-apps thumbnail
+* Android backups switched off, so your precise location and app-lock data can't be pulled out via Android backup or device transfer
 * Session storage in the OS keychain, and fixed authenticated image loading (no more black squares on private pics)
 * In-app update notices with a changelog, a first-run feature tour, and a share-with-a-friend link
+
+What GrindrX does NOT do, so you are not looking for it later:
+
+* No local photo library. It cannot store your own pictures. Every photo you send comes from your Grindr profile, an album, or the in-chat album picker.
+* No map or radar view of nearby profiles. The map code is not reachable from the app's navigation.
+* No video calling.
+
+One honest note on privacy, since this app is sold as privacy-focused: on each launch the app sends ONE anonymous ping to the maintainer's own server so the "active users" figure on the Stats screen can be counted. Its request URL carries a random ID generated on your device (a fresh UUID — not tied to your account, your email, your phone number, or anything Grindr knows) and the app version. Nothing else is sent. There is no way to turn it off in the app right now — it powers the stats screen. It is not an advertising tracker: it cannot follow you across other apps or websites, and it is not shared with anyone. If you would rather it did not happen, that is a known open request.
+
+Permissions, and why: microphone (voice messages), location (distance figures and sending a location in chat), notifications (message and tap alerts), and a foreground-service pair (so message notifications keep arriving when the app is closed). Biometric use is declared for the fingerprint/face app lock. What it does NOT ask for: your photo library, video library, contacts, or the camera. All photo/video picking goes through the system document picker, which needs none of those — there is no photo-library feature, so there is no photo-library permission.
 
 Some Grindr features are XTRA/server-gated (unlocking every profile viewer, browsing other regions, video calling) and simply can't be provided by a third-party client — GrindrX surfaces what the server returns and never fakes access to a paid feature.
 

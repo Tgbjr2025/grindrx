@@ -31,6 +31,14 @@ const cascadeV3ResponseProfileSchema = z.object({
 	// strict schema was an all-or-nothing trap (see parseApiResponse, which
 	// throws on any mismatch).
 	onlineUntil: unixTimestampMsSchema.nullable().optional(),
+	// The cascade DOES send an age for full profiles (the v4 schema already
+	// accepts it). It was simply never declared here, and Zod STRIPS unknown
+	// keys — so `getGrid` hardcoded `age: null` and page 1 of the grid, which is
+	// entirely `full` profiles, showed no age badge at all. Later pages, resolved
+	// through `resolvePartialBatch`, DID get one: the exact inverse of what a user
+	// wants. Nullable + optional because a profile can hide their age
+	// (`showAge: false`), and absent must not drop the item.
+	age: z.number().int().nonnegative().nullable().optional(),
 	rightNow: z.string().nullable().optional(),
 	unreadCount: z.number().int().nonnegative().catch(0),
 	isVisiting: z.boolean().optional(),

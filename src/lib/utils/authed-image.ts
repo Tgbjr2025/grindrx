@@ -65,12 +65,21 @@ const inflight = new Map<string, Promise<string | null>>();
 const refCounts = new Map<string, number>();
 // Evicted-but-still-referenced URLs, revoked once their last consumer releases.
 const retired = new Map<string, string>();
+// `retired` is outside the `objectUrlCache` size bound, so a caller that retains
+// and never releases could pin unbounded blob memory for the process lifetime.
+// Cap it: past this many parked blobs, sacrifice the oldest referenced entry
+// (its <img> may briefly blank and re-fetch) rather than leak. A correct caller
+// releases promptly and never reaches this.
+const MAX_RETIRED = MAX_ENTRIES;
 
 /**
  * Retain a resolved object URL for as long as the caller needs it, and get a
  * release function to call from an `$effect`/teardown. Callers MUST release, or
  * the entry is never revoked (bounded by `MAX_ENTRIES` for the cache, but a
  * leaked blob is not freed).
+ *
+ * Prefer {@link resolveAuthedImageRetained}, which returns the release function
+ * next to the URL so the two cannot be separated at the call site.
  */
 export function retainAuthedImage(objectUrl: string): () => void {
 	refCounts.set(objectUrl, (refCounts.get(objectUrl) ?? 0) + 1);
@@ -97,6 +106,15 @@ export function retainAuthedImage(objectUrl: string): () => void {
 	};
 }
 
+/** Revoke a parked blob, swallowing the "already revoked" case. */
+function revokeQuietly(objectUrl: string): void {
+	try {
+		URL.revokeObjectURL(objectUrl);
+	} catch {
+		// already revoked / not an object URL — nothing to do
+	}
+}
+
 function remember(srcUrl: string, objectUrl: string): void {
 	objectUrlCache.delete(srcUrl);
 	objectUrlCache.set(srcUrl, objectUrl);
@@ -112,12 +130,34 @@ function remember(srcUrl: string, objectUrl: string): void {
 			retired.set(evicted, evicted);
 			continue;
 		}
-		try {
-			URL.revokeObjectURL(evicted);
-		} catch {
-			// already revoked / not an object URL — nothing to do
-		}
+		revokeQuietly(evicted);
 	}
+	// Keep the parked set bounded (see MAX_RETIRED).
+	while (retired.size > MAX_RETIRED) {
+		const oldest = retired.keys().next().value;
+		if (oldest === undefined) break;
+		retired.delete(oldest);
+		refCounts.delete(oldest);
+		revokeQuietly(oldest);
+	}
+}
+
+/**
+ * Reset every module-level cache. Tests only: `objectUrlCache` is module
+ * state, so without this a bound assertion in one test is satisfied by
+ * bookkeeping the test never created (a freshly-reset counter reporting a
+ * stale real cache as within budget).
+ */
+export function __resetAuthedImageCacheForTests(): void {
+	objectUrlCache.clear();
+	inflight.clear();
+	refCounts.clear();
+	retired.clear();
+}
+
+/** Test-only introspection: how many object URLs are currently parked. */
+export function __retiredAuthedImageCount(): number {
+	return retired.size;
 }
 
 /** ISO-BMFF major brands that are genuinely video containers. */
@@ -324,4 +364,28 @@ export async function resolveAuthedImage(url: string): Promise<string | null> {
 	})();
 	inflight.set(url, task);
 	return task;
+}
+
+/**
+ * {@link resolveAuthedImage} plus a retain, returned TOGETHER so the release
+ * function cannot be dropped at a call site.
+ *
+ * This exists because `retainAuthedImage` had zero callers: the ref-count that
+ * stops cache eviction revoking a blob a mounted `<img>` is still displaying
+ * was dead code, so every eviction revoked immediately and scrolling past the
+ * cache size produced a blank image whose `onerror` re-ran the whole IPC byte
+ * fetch. Returning the pair together makes the correct call shape the default.
+ *
+ * `release` is idempotent and must be called from the consumer's teardown.
+ * `release` is null when `url` was not an authed host (nothing to retain).
+ */
+export async function resolveAuthedImageRetained(
+	url: string,
+): Promise<{ url: string; release: (() => void) | null }> {
+	const resolved = await resolveAuthedImage(url);
+	if (resolved === null) return { url, release: null };
+	// Only blob: object URLs are ours to retain/revoke. A passthrough of a
+	// signed or direct URL has no lifecycle to manage.
+	if (!resolved.startsWith("blob:")) return { url: resolved, release: null };
+	return { url: resolved, release: retainAuthedImage(resolved) };
 }

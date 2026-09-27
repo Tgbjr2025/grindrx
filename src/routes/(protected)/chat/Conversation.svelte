@@ -9,8 +9,8 @@
 	import { Badge } from "$lib/components/ui/badge";
 	import * as Item from "$lib/components/ui/item";
 	import type { Conversation } from "$lib/model/conversation";
-	import { getConversations } from "./conversations-context.svelte";
 	import ConversationRelativeTimeDynamic from "./ConversationRelativeTimeDynamic.svelte";
+	import { getConversations } from "./conversations-context.svelte";
 
 	let {
 		conversation,
@@ -27,9 +27,20 @@
 		page.params.conversationId === conversation.data.conversationId,
 	);
 
+	// `Date.now()` is not reactive, so a `$derived` over it is evaluated once and
+	// the green online dot never changed while the list stayed open. Re-evaluate on
+	// a ticker instead: `now` is a `$state` that the interval writes.
+	let now = $state(Date.now());
+	$effect(() => {
+		now = Date.now();
+		const interval = setInterval(() => {
+			now = Date.now();
+		}, 30_000);
+		return () => clearInterval(interval);
+	});
+
 	const isOnline = $derived(
-		conversation.data.onlineUntil != null &&
-			conversation.data.onlineUntil > Date.now(),
+		conversation.data.onlineUntil != null && conversation.data.onlineUntil > now,
 	);
 
 	let showDeleteMenu = $state(false);
@@ -91,32 +102,55 @@
 	}
 
 	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let pressStartX = 0;
+	let pressStartY = 0;
+	// Standard long-press movement tolerance. Beyond this the gesture is a SCROLL,
+	// not a press, and a scrolling row must never open "Delete conversation".
+	const PRESS_MOVE_TOLERANCE_PX = 10;
 
 	// FIX 13: clean up long-press timer if component is destroyed while pointer held
 	$effect(() => () => {
 		if (longPressTimer !== null) clearTimeout(longPressTimer);
 	});
 
+	function clearLongPress() {
+		if (longPressTimer !== null) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
 	function onPointerDown(event: PointerEvent) {
 		if (event.button !== 0) return;
+		pressStartX = event.clientX;
+		pressStartY = event.clientY;
 		longPressTimer = setTimeout(() => {
 			longPressTimer = null;
 			openDeleteMenu();
 		}, 600);
 	}
 
-	function onPointerUp() {
-		if (longPressTimer !== null) {
-			clearTimeout(longPressTimer);
-			longPressTimer = null;
+	// The timer was previously only cleared on pointerup/pointercancel, and NEITHER
+	// fires while the finger is still down and moving. So a scroll gesture that
+	// started on a row and lasted more than 600 ms reliably opened the delete menu
+	// on the row the user merely touched — in a long conversation, a normal flick
+	// is enough. Cancel on any movement past the tolerance.
+	function onPointerMove(event: PointerEvent) {
+		if (longPressTimer === null) return;
+		if (
+			Math.abs(event.clientX - pressStartX) > PRESS_MOVE_TOLERANCE_PX ||
+			Math.abs(event.clientY - pressStartY) > PRESS_MOVE_TOLERANCE_PX
+		) {
+			clearLongPress();
 		}
 	}
 
+	function onPointerUp() {
+		clearLongPress();
+	}
+
 	function onPointerCancel() {
-		if (longPressTimer !== null) {
-			clearTimeout(longPressTimer);
-			longPressTimer = null;
-		}
+		clearLongPress();
 	}
 </script>
 
@@ -177,11 +211,14 @@
 				</span>
 			{:else if preview.text !== null}
 				{preview.text}
-			{:else if preview.albumId !== null}
-				Album
-			{:else if preview.imageHash !== null || preview.type === "Image"}
-				Photo
 			{:else}
+				<!--
+					The `preview.albumId !== null` and `preview.imageHash !== null` branches
+					that used to live here were DEAD: `previewFromMessage` returns a
+					non-null `text` for every type it can name (photo, album, GIF, voice,
+					video, location, deleted, unsent, unsupported, AI). If `text` is null
+					the only case left is a missing message, so this is the honest label.
+				-->
 				<span class="font-normal tracking-tight italic text-muted-foreground">
 					Preview not available
 				</span>
@@ -209,11 +246,13 @@
 <div class="relative">
 	<Item.Root
 		variant={selected ? "muted" : "outline"}
-		class="p-0 gap-0 flex items-stretch flex-nowrap @container min-w-24"
+		class="p-0 gap-0 flex items-stretch flex-nowrap @container min-w-24 select-none"
 		oncontextmenu={openContextMenu}
 		onpointerdown={onPointerDown}
+		onpointermove={onPointerMove}
 		onpointerup={onPointerUp}
 		onpointercancel={onPointerCancel}
+		onpointerleave={onPointerCancel}
 	>
 		<a
 			href="/profile/{participant.profileId}"
@@ -236,14 +275,19 @@
 	</Item.Root>
 
 	{#if showDeleteMenu}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<!-- Dismiss overlay. `role="presentation"` (rather than a `svelte-ignore`) is
+		     the honest answer: it is a full-screen click target with no semantics of
+		     its own, and focus is moved into the menu by the effect above, so it
+		     must NOT be a stop in the tab order. -->
 		<div
 			class="fixed inset-0 z-40"
+			role="presentation"
 			onclick={closeDeleteMenu}
 		></div>
 		<div
 			class="absolute right-2 top-2 z-50 min-w-36 rounded-xl border border-border bg-popover shadow-lg overflow-hidden"
 			role="menu"
+			tabindex="-1"
 			aria-label="Conversation actions"
 			onkeydown={onMenuKeydown}
 		>

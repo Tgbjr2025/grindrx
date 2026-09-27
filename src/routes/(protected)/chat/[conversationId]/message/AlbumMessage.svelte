@@ -213,6 +213,10 @@
 </script>
 
 {#if message.isViewable || isOut}
+	<!-- The cover `<AuthedImage alt="">` is decorative, so this button had NO
+	     accessible name at all — a screen reader announced just "button". The
+	     image bubble says `aria-label="Open image"` and the location bubble has
+	     visible text; this one had neither. -->
 	<button
 		class={[
 			className,
@@ -225,6 +229,7 @@
 		onclick={openAlbum}
 		disabled={albumState.status !== "idle"}
 		bind:this={media.el}
+		aria-label="Open shared album"
 	>
 		{#if message.coverUrl}
 			<AuthedImage

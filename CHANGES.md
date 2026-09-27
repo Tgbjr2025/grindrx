@@ -5,6 +5,303 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.34 — full code audit + remediation (2026-09-27)
+
+**versionCode 1069** (was 1068). Universal APK, all 4 ABIs, minSdk 28 / targetSdk 36,
+signed with the same `22:D6:…:4C:01` certificate as every prior release, so this is
+an in-place upgrade. Built on the M1; `cargo test --lib` 17/17 and
+`cargo check --lib --target aarch64-linux-android` both clean — the first time the
+Rust in this project has been compiled against the shipping target before release.
+Full findings: **`memory/AUDIT_REPORT_v0.1.33.md`**.
+
+A 100% line-by-line audit of the 30,107 lines of TypeScript/Svelte and 3,410 lines
+of Rust, plus the Android config, build configuration and documentation. Every line
+was read; no sampling. Tests 244 → **442**, type warnings 30 → **4**.
+
+### Critical
+
+- **App lock: PINs set in v0.1.25–v0.1.32 could never unlock the app.** v0.1.33
+  replaced the single-SHA-256 verifier with PBKDF2 but wrote no migration, so a
+  legacy verifier was compared against a PBKDF2 digest and never matched. The
+  "transparent upgrade" path was unreachable because it only ran *after* a
+  successful verify, and there is no forgot-PIN — so every user who set a PIN in
+  those eight releases was permanently locked out. Now verified against both forms
+  and rewritten to PBKDF2 on a legacy match.
+- **The weight grid filter could never match anyone.** `weightGramsMin`/`weightGramsMax`
+  were fed the slider array, which is kilograms, so the request asked for profiles
+  weighing 40–273 *grams*. The mapper had zero tests, which is why it shipped. It is
+  now a pure, table-tested function with a single conversion point.
+- **The image-cache "never revoke while displayed" fix was dead code.**
+  `retainAuthedImage` was exported and never imported, so the reference count was
+  permanently empty, the eviction guard was always false, and every eviction revoked
+  a blob a mounted `<img>` was still using. The existing bound test was also hollow,
+  because the cache is module state and the test counted a freshly-reset counter. Now
+  wired through a `resolveAuthedImageRetained()` that returns the release function
+  *with* the URL, with a real regression test.
+- **Chat previews leaked to the Android lock screen past the app lock.** The Rust
+  notifier had no way to learn the lock was engaged, so up to 80 characters of
+  message text were posted to the notification shade with full visibility. Gated now
+  on both sides via a new `set_app_locked` command.
+
+### High
+
+- The Report button unmounted its own dialog, so **the only way to report a message
+  or profile did nothing**; and a *failed* report reported success.
+- The WebSocket logout fix did not work: `notify_waiters()` stores no permit and the
+  session epoch was compared only inside the lossy wakeup arm, so a logout during
+  frame processing was dropped and the previous account's events kept arriving.
+- Video messages were still unauthenticated (the audio fix had been applied to only
+  one of two sibling files), so they rendered a black rectangle with working controls.
+- Enter-to-send had no IME-composition guard, so **CJK keyboards could not type**.
+- The microphone stayed live if the screen was left while the permission prompt was
+  open, because `destroyed` was checked before the `await` and never after.
+- Signing out cleared **no** persisted data: 8 of 13 plaintext stores survived into
+  the next account, including saved phrases, the previous account's geohash at ±4 m,
+  and the incognito and reveal toggles.
+- Turning the app lock off, or replacing the PIN, required no authentication — a
+  single tap, defeating the control against its own documented threat model.
+- Turning the lock off also left the *biometric* lock enabled while the switch
+  displayed it as off.
+- The password-reset screen posts to `/v1/accounts/password/reset`, while the Rust
+  implements the same feature at `/v3/users/forgot-password` — and that
+  implementation, though registered and typed in the bridge, has **zero callers**.
+  Which path is real needs a live account; left unchanged rather than guessed.
+- The published store listing advertised a "radar map" whose tab is commented out.
+- `KEYS.md` documented a signing certificate no GrindrX APK has, with a verification
+  script that always failed.
+- Three in-tree Android config files disagreed on the shipped version, one of them
+  embedded in the APK with a weaker CSP; building Gradle directly would have produced
+  a versionCode F-Droid and Play reject as a downgrade.
+- R8 was enabled in release with an entirely commented-out `proguard-rules.pro`,
+  including the keep rule for the three `@JavascriptInterface` bridges.
+- A granted-but-unused continuous-location capability, an unused `FileProvider`
+  exposing all shared storage, and three media-read permissions for a feature the
+  project documents as removed.
+
+### Also
+
+Around 30 medium findings, including: messages that could vanish on a failed send or
+unsend, an album share that left a permanent "Sending…" bubble, unread counts
+swallowed after a background, one failed page permanently ending chat history, no
+re-auth latch and **HTTP 401 never handled at all**, raw server error bodies shown
+to the user, a `ws_raw_event` call to a Tauri command that does not exist, and full
+message bodies logged to logcat in release. Roughly 60 low/info items, including 7
+uncapped response-body reads, synchronous keyring writes on the async runtime, and a
+missing HTTP-method allowlist on the request bridge.
+
+**Independently confirmed good:** zero XSS sinks app-wide, despite rendering a large
+amount of attacker-controlled text; the session token never enters JS memory; the
+msgpack depth guard is correct; TLS is enforced before the auth header is attached;
+the vendored component tree is unmodified.
+
+**Not device-tested.** Everything compiles and is signed; nothing has been run on
+hardware. The highest-risk open item is that two keyboard-compensation mechanisms
+(`MainActivity` bottom margin *and* `interactive-widget=resizes-content`) may
+double-count the IME height.
+
+---
+
+## Config, Android capabilities and documentation audit (2026-09-27, shipped in v0.1.34)
+
+A second audit pass, scoped to the **build configuration, the Android capability
+set, and the documentation**. No user-facing feature was added or removed. None
+of this is built or device-tested; `version` / `versionCode` are deliberately
+untouched and still say `0.1.33` / `1068`.
+
+### The three Android config copies disagreed about the shipped version
+
+- `tauri.conf.json` said `0.1.33` / **1068** / `autoIncrement=false`.
+- `gen/android/app/tauri.properties` said `0.1.32` / **1065** — and
+  `build.gradle.kts:40-41` reads **that** for the APK's real `versionName` and
+  `versionCode`.
+- `gen/android/app/src/main/assets/tauri.conf.json` said `0.1.32` / **1085** /
+  `autoIncrement=true`.
+
+So building the Gradle project directly shipped `versionCode` **1065**, *below* the
+1068 in `tauri.conf.json` — which F-Droid and Play reject as a downgrade. All three
+now agree. `BUILDING.md` gained a section on not building the Gradle project
+directly, and on reading `versionCode` back with `aapt2 dump badging`.
+
+The asset copy of the config also carried a **weaker CSP** — missing
+`object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'none'`. It now
+carries the identical full policy. Which copy the Android runtime actually applies
+is still **not established** (the Rust side compiles the source config in via
+`generate_context!`); both now carry the same string, so it cannot matter until
+the next divergence.
+
+### Android permissions and capabilities
+
+- **Removed** `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO` and `READ_EXTERNAL_STORAGE`.
+  There is no local photo library; every photo comes from the API or the system
+  document picker via `<input type="file">`, which needs none of them. They only
+  widened the store listing's permission list. Verified that removing them does
+  not break the file picker: Tauri's `RustWebChromeClient` references
+  `Manifest.permission.CAMERA` but never `READ_MEDIA_*`, and the non-capture path
+  is `FileChooserParams.createIntent()` — the system document picker.
+- **Declared explicitly** `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION`. They
+  were already reaching the merged manifest by AAR merging from
+  `tauri-plugin-geolocation`; declaring them in the app's own manifest makes the
+  permission set auditable in one file and stops it changing silently on a plugin
+  bump.
+- **Removed** `geolocation:allow-watch-position` from `capabilities/mobile.json`.
+  It was granted and unused — `grep -rn "watchPosition\|clearWatch" src/` returns
+  nothing; the frontend only calls `getCurrentPosition` / `checkPermissions` /
+  `requestPermissions`. In a location-based dating app's webview, a granted
+  continuous-location capability handed to script is not a reasonable default.
+- **Narrowed `res/xml/file_paths.xml`.** It declared `<external-path path="." />`,
+  making the entire shared-storage tree servable as a `content://` URI by the app's
+  FileProvider. It is now scoped to `<external-files-path>` plus `<cache-path>`.
+
+  **The finding this came from was wrong about one thing, and the correction
+  matters:** the provider is *not* unused. The finding's grep missed generated
+  Tauri code. `RustWebChromeClient.onShowFileChooser` (`:274`) writes the pick into
+  `getExternalFilesDir(DIRECTORY_PICTURES)` and wraps it in a `content://` URI from
+  the provider's authority (`:469-473`) — and the app uses `<input type="file">` in
+  four places (chat composer, album manager, profile-photo manager, and the
+  `Input` primitive). Deleting the provider would have broken the file picker on
+  the next build. It was narrowed instead.
+
+### R8 could have silently stripped the Android bridges
+
+`app/proguard-rules.pro` was 21 lines of entirely commented-out boilerplate, while
+the release build type has `isMinifyEnabled = true`. `MainActivity` registers
+three JavaScript bridges reachable **by name only** (`:205-207`):
+`__AndroidInsets`, `__DiscreetMode`, `__BackgroundService`. Nothing in Kotlin or JS
+references their methods by symbol, so R8 sees no call sites. The one
+`@JavascriptInterface` keep rule in the Tauri consumer rules is scoped to the
+single class `org.opengrind.Ipc`, so it covered none of them. Added
+`-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }`.
+
+A keep rule is not proof it took effect and the failure is silent, so `BUILDING.md`
+gained a device smoke-test checklist for the release APK. **No GrindrX release has
+ever been device-tested for this.**
+
+### Build configuration
+
+- `svelte.config.js` regex-scrapes the spoofed Grindr client version out of
+  `headers.rs`. A rustfmt reformat or a rename made both matches return `""` and
+  the app shipped a malformed User-Agent **with no error and no log**. It now
+  throws a build error naming the constant and the file, and tolerates spacing
+  changes and a `pub` modifier. The deeper fix — a machine-readable source of
+  truth — is out of scope and noted as such.
+- The literal `OpenGrind/` is gone from the version string, replaced at build time
+  with `GrindrX/`, and the cosmetic runtime `.replace(/OpenGrind/gi, "GrindrX")` in
+  Settings → GrindrX is removed. The previous "last Open Grind string removed" fix
+  only patched one of the two places the string surfaced.
+- `tauri.conf.json`'s WebView `userAgent` was `GrindrX/0.1.0
+  (+…/dominus/open-grind)` — 33 minor versions stale and pointing at the upstream
+  repo. Now `GrindrX/0.1.33 (+https://git.dominusaxis.com/dominus/grindrx)`.
+- `tsconfig.json`'s `compilerOptions.types` was `["@types/leaflet",
+  "@types/lodash-es"]`. `types` takes package *names*, so **neither resolved** —
+  and a non-empty `types` disables automatic `@types/*` inclusion, so it was
+  silently turning off every other ambient global type. Now `["leaflet",
+  "lodash-es"]`, both verified to resolve.
+- `highlightsFor()` looked up a plain object literal with `VERSION_HIGHLIGHTS[v]`,
+  which returns **inherited** members for keys like `toString`, `constructor` and
+  `__proto__`. The `??` fallback never fired for those and returned a function,
+  which `{#each items as item (item)}` in the What's-New dialog would throw on.
+  Not reachable today (the argument comes from `getVersion()`), but unsound — now
+  `Object.hasOwn`.
+- `bunfig.toml`'s `[test] preload` is dead config: it is only read by `bun test`,
+  which the project forbids. Kept, with a comment, because it is the thing that
+  turns an accidental `bun test` into an error message instead of a wall of bogus
+  failures.
+- Added `packageManager: bun@1.3.11` and switched the documented install to
+  `bun install --frozen-lockfile`.
+- **No `[profile.release]` in `src-tauri/Cargo.toml`** — so no LTO, and no
+  `strip`. Not changed (out of scope for this pass); the exact recommended block is
+  written up in `BUILDING.md`.
+
+### New
+
+- **`.github/workflows/ci.yml`.** There was no CI of any kind: 244 frontend and 17
+  Rust tests existed, passed locally, and nothing re-ran them. The workflow
+  documents in-place that the Rust leg builds for the *host*, so it does not
+  compile the Android-only `cfg` blocks at all.
+- **`THIRD_PARTY_NOTICES.md`.** Leaflet's BSD-2-Clause requires its notice to be
+  reproduced in binary redistributions, and `import "leaflet/dist/leaflet.css"`
+  bundles its stylesheet into the APK with the header stripped. Licence texts for
+  eight bundled packages were copied verbatim from `node_modules/`. The **Rust**
+  tree is explicitly *not* covered — `cargo deny` / `cargo-about` has never been
+  run.
+- **`src/lib/styles/reduced-motion.css`.** `prefers-reduced-motion` appeared
+  nowhere in the app, while shadcn-svelte / vaul-svelte / bits-ui ship
+  transition-heavy primitives. **It is not imported yet** — `src/routes/+layout.svelte`
+  belongs to another batch; the one-line import is recorded in the file's header.
+
+### Documentation that did not match reality
+
+- **`KEYS.md` told users to verify the wrong certificate.** It published upstream
+  Open Grind's governance key (`28:05:FD:D8:…:C3:65:8C`), which no GrindrX APK has
+  ever been signed with, while `README.md` published the real one
+  (`22:D6:88:9E:…:8D:4C:01`) and cross-referenced `KEYS.md` for "More". A user
+  following the security page got a mismatch and had every reason to conclude the
+  APK was tampered with. `KEYS.md` and `BUILDING.md` now carry the real
+  certificate, `BUILDING.md`'s copy-pasteable `EXPECTED=` no longer `exit 1`s
+  against every shipped APK, and its "Verifying a published release" section
+  pointed at the **wrong project's** release page (`git.opengrind.org/…/open-grind`)
+  and concluded the APK was "signed by Open Grind's governance key". Both
+  corrected. Known since v0.1.16; fixed now.
+- **`FDROID.md` said "the build does this"** about bumping `versionCode`. It does
+  not, and has not since `autoIncrementVersionCode` was turned off — which is
+  exactly what caused the version skew above. A maintainer trusting it would ship
+  a non-increasing code and F-Droid would silently never offer the update.
+- **The store listing advertised a radar map** that is not reachable: the Map tab
+  is commented out in `NavBar.svelte:60-64` ("Nearby"/Map tab removed per
+  request") and `/map` is reachable only by typing a URL. Removed, along with an
+  explicit "what GrindrX does NOT do" section. Also corrected: `full_description`
+  said "No ads, no analytics" while the app fires an unconditional launch ping.
+- **The in-app "Source Code" and "Report an Issue" links** pointed at
+  `git.dominusaxis.com/dominus/open-grind` — upstream, not this code. Repointed to
+  the canonical repo and the GitHub mirror.
+- **`GOVERNANCE.md` and `CODE_OF_CONDUCT.md`** are unmodified upstream documents
+  naming `@hloth` as "decision making authority" for a project the README
+  attributes to `@Tgbjr2025`. Both now carry a banner marking them inherited and
+  stating, part by part, what does not apply — including that `CODE_OF_CONDUCT`
+  currently points conduct reports at the wrong person.
+- **`CONTRIBUTING.md` said "AI-generated pull requests are not allowed."** The
+  v0.1.25–v0.1.33 work was agent-implemented, per this repository's own
+  `SESSION_STATE.md`. The section now describes what actually happened and flags
+  the policy choice as **DECISION NEEDED** rather than inventing one.
+- Deleted `src/lib/components/ToastUnimplemented.svelte` — zero references, and it
+  rendered the literal text `TODO: {feature} not implemented yet` linked to the
+  upstream tracker.
+- `README.md` and the store listing now state the anonymous launch ping, which was
+  previously undisclosed under a "tracker-free" claim. `THIRD_PARTY_NOTICES.md` is
+  linked from the README's licence section.
+
+### Reported, not changed
+
+Each of these is in a file owned by another batch, or is a product decision:
+
+- `src/routes/+layout.svelte` — the launch ping has no opt-out. **A
+  Settings → Privacy toggle is a product decision, not a docs fix.**
+- `src/routes/+error.svelte:138` — "Report an issue" points at the **upstream**
+  repo, same as `Socials.svelte` did.
+- `src/routes/+error.svelte:122-132` — "Copy error" copies `page.error?.message`
+  and the adjacent button invites the user to paste it into a public tracker. The
+  finding described this as leaking 120 chars of the raw response body; **that is
+  already fixed** — `src/lib/api/index.ts:170-179` restricts the message to the
+  server's own `code`/`message`. What remains is a server-controlled `message` plus
+  an internal API path going to a public tracker, and a "redact before copy"
+  default would still be the right call.
+- `src/lib/components/ui/**` — the `warning` prop in `LinkItem.svelte` drives a
+  `Dialog` and ~35 lines of snippet that its only consumer never passes.
+- `NavBar.svelte` — the orphan `/map` route, its `leaflet` / `sveaflet`
+  dependencies, and the three CSP tile hosts for OpenStreetMap and Carto remain as
+  dead weight. **Restore the tab, or delete the route, the deps and the CSP
+  entries — this is a product decision.**
+- `src-tauri/Cargo.toml` — the missing `[profile.release]`.
+- `vaul-svelte: "^1.0.0-next.7"` — a caret on a **pre-release**, so a future
+  stable `1.0.0` is pulled in silently. It is the drawer primitive behind every
+  bottom sheet. Not changed (dependency versions are out of scope).
+- `src-tauri/src/api/headers.rs` — batch B's file. `APP_VERSION` / `BUILD_NUMBER`
+  and the API `User-Agent` are correct and contain no `OpenGrind` token, so
+  nothing is left there. Noted only because `svelte.config.js` now scrapes that
+  file and will fail the build if its shape changes.
+
+---
+
 ## v0.1.33 — audit remediation: 9 batches, and a build that was broken (2026-09-26)
 
 A full line-by-line audit of the codebase, remediated in nine batches. The

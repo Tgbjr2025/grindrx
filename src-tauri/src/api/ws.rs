@@ -21,6 +21,10 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
 /// (common on Android Doze / captive portals) wedges the reconnect loop forever.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// B2: body used instead of the real content while the app lock is engaged.
+/// Must carry no user content — it is rendered on a locked screen.
+const LOCKED_NOTIFICATION_BODY: &str = "Open GrindrX to see your new activity";
+
 /// Outcome of `run_message_loop` / `connect_and_run`.
 /// Distinguishes a clean shutdown (command channel closed) from a
 /// transient disconnect (server close or network error) so the outer
@@ -257,6 +261,19 @@ async fn run_message_loop(
     let ws_reset_notify = state.ws_reset_notify.clone();
 
     loop {
+        // B1: the epoch is the ONLY thing that makes this socket stale, and it
+        // must be checked unconditionally. The `ws_reset_notify` arm below is a
+        // *lossy* wakeup: `Notify::notify_waiters()` stores no permit, so a
+        // `logout`/`login` that lands while this task is running another arm
+        // (JSON parse + `app.emit` + a platform notification, or a burst of
+        // inbound frames) never wakes it. Without this check the socket stays
+        // up, keeps emitting the previous account's `grindr:*` events to the
+        // WebView, and keeps posting that account's message previews to the
+        // notification shade until the server happens to close the socket.
+        if state.ws_epoch() != connected_epoch {
+            return WsOutcome::Disconnected(AppError::Auth("Session ended".to_owned()));
+        }
+
         // `biased` with the read arm first: a Pong already sitting in the queue
         // MUST be seen before the heartbeat tick declares the connection dead.
         // `tokio::select!` otherwise picks a ready branch at RANDOM, so a Pong
@@ -264,74 +281,86 @@ async fn run_message_loop(
         // perfectly healthy connection torn down (then fully reconnected).
         tokio::select! {
             biased;
-            msg = read.next() => match msg {
-                Some(Ok(Message::Text(text))) => {
-                    // ws-backoff-reset-on-handshake: a real frame from the
-                    // server (not just a completed handshake) is what proves
-                    // the connection is stable — reset here, not on connect.
-                    *backoff = Duration::from_secs(1);
-                    if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                        if let Some(event_type) = val["type"].as_str() {
-                            let safe_type = event_type.replace('.', "_");
-                            app.emit(&format!("grindr:{safe_type}"), &val).ok();
+            msg = read.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        // ws-backoff-reset-on-handshake: a real frame from the
+                        // server (not just a completed handshake) is what proves
+                        // the connection is stable — reset here, not on connect.
+                        *backoff = Duration::from_secs(1);
+                        if let Ok(val) = serde_json::from_str::<Value>(&text) {
+                            if let Some(event_type) = val["type"].as_str() {
+                                let safe_type = event_type.replace('.', "_");
+                                app.emit(&format!("grindr:{safe_type}"), &val).ok();
 
-                            // Background notifications. The WS loop keeps running while the
-                            // app is backgrounded — the Android foreground service keeps the
-                            // process (and thus this tokio task) alive — so we post system
-                            // notifications for message/tap events the user hasn't seen.
-                            if !app
-                                .state::<crate::state::AppState>()
-                                .is_foreground
-                                .load(Ordering::Relaxed)
-                            {
-                                // Only notify if someone ELSE sent this. senderId can arrive as
-                                // a JSON string or number depending on the event shape; handle
-                                // both so our own actions never self-notify.
-                                let sender_is_self = match &val["payload"]["senderId"] {
-                                    Value::String(s) => s.as_str() == our_profile_id,
-                                    Value::Number(n) => n.to_string() == our_profile_id,
-                                    _ => false,
-                                };
-                                if !sender_is_self {
-                                    match event_type {
-                                        "chat.v1.message_sent" => maybe_notify_message(app, &val),
-                                        "tap.v1.tap_sent" => maybe_notify_tap(app, &val),
-                                        _ => {}
+                                // Background notifications. The WS loop keeps running while the
+                                // app is backgrounded — the Android foreground service keeps the
+                                // process (and thus this tokio task) alive — so we post system
+                                // notifications for message/tap events the user hasn't seen.
+                                if !app
+                                    .state::<crate::state::AppState>()
+                                    .is_foreground
+                                    .load(Ordering::Relaxed)
+                                {
+                                    // Only notify if someone ELSE sent this. senderId can arrive as
+                                    // a JSON string or number depending on the event shape; handle
+                                    // both so our own actions never self-notify.
+                                    let sender_is_self = match &val["payload"]["senderId"] {
+                                        Value::String(s) => s.as_str() == our_profile_id,
+                                        Value::Number(n) => n.to_string() == our_profile_id,
+                                        _ => false,
+                                    };
+                                    if !sender_is_self {
+                                        match event_type {
+                                            "chat.v1.message_sent" => maybe_notify_message(app, &val),
+                                            "tap.v1.tap_sent" => maybe_notify_tap(app, &val),
+                                            _ => {}
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                Some(Ok(Message::Ping(data))) => {
-                    // The server pinging us is real bidirectional traffic too.
-                    *backoff = Duration::from_secs(1);
-                    if let Err(e) = write.send(Message::Pong(data)).await {
+                    Some(Ok(Message::Ping(data))) => {
+                        // The server pinging us is real bidirectional traffic too.
+                        *backoff = Duration::from_secs(1);
+                        if let Err(e) = write.send(Message::Pong(data)).await {
+                            return WsOutcome::Disconnected(AppError::Http(e.to_string()));
+                        }
+                    }
+                    Some(Ok(Message::Pong(_))) => {
+                        // A Pong answering our own heartbeat Ping is the "first
+                        // successful heartbeat round-trip" stability signal.
+                        *backoff = Duration::from_secs(1);
+                        // FIX 1: clear the flag — pong arrived in the normal message loop.
+                        waiting_for_pong = false;
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        // FIX 2: server close → reconnect, not exit. Deliberately
+                        // NOT a backoff-reset point — a Close (possibly the very
+                        // first frame, i.e. accept-then-close) is the disconnect
+                        // itself, not evidence of a stable connection.
+                        return WsOutcome::Disconnected(AppError::Http(
+                            "WS connection closed by server".to_owned(),
+                        ));
+                    }
+                    Some(Err(e)) => {
                         return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                     }
+                    Some(Ok(_)) => {
+                        // Any other frame kind (e.g. Binary) still proves liveness.
+                        *backoff = Duration::from_secs(1);
+                    }
                 }
-                Some(Ok(Message::Pong(_))) => {
-                    // A Pong answering our own heartbeat Ping is the "first
-                    // successful heartbeat round-trip" stability signal.
-                    *backoff = Duration::from_secs(1);
-                    // FIX 1: clear the flag — pong arrived in the normal message loop.
-                    waiting_for_pong = false;
-                }
-                Some(Ok(Message::Close(_))) | None => {
-                    // FIX 2: server close → reconnect, not exit. Deliberately
-                    // NOT a backoff-reset point — a Close (possibly the very
-                    // first frame, i.e. accept-then-close) is the disconnect
-                    // itself, not evidence of a stable connection.
-                    return WsOutcome::Disconnected(AppError::Http(
-                        "WS connection closed by server".to_owned(),
-                    ));
-                }
-                Some(Err(e)) => {
-                    return WsOutcome::Disconnected(AppError::Http(e.to_string()));
-                }
-                Some(Ok(_)) => {
-                    // Any other frame kind (e.g. Binary) still proves liveness.
-                    *backoff = Duration::from_secs(1);
+
+                // B1: re-check AFTER the frame work. Handling one frame is not
+                // instantaneous (JSON parse, `app.emit` into the WebView, and a
+                // platform notification), and a `logout` landing in that window
+                // has already been emitted to the WebView and already posted to
+                // the shade. Dropping here bounds that to a single frame
+                // instead of "until the server closes the socket".
+                if state.ws_epoch() != connected_epoch {
+                    return WsOutcome::Disconnected(AppError::Auth("Session ended".to_owned()));
                 }
             },
 
@@ -432,6 +461,13 @@ fn message_preview(val: &Value) -> String {
 /// can route a tap to /chat/{conversationId}.
 fn maybe_notify_message(app: &AppHandle, val: &Value) {
     let state = app.state::<crate::state::AppState>();
+    // B2 LOCK GATE: an engaged app lock means the device is very likely locked
+    // too, and Android renders a notification's `body` in full on the lock
+    // screen. Do not leak chat text. Do not remove without first setting the
+    // `grindx_messages` channel to VISIBILITY_PRIVATE/SECRET.
+    if state.is_locked() {
+        return;
+    }
     // Stay silent until the WebView has pushed the real preferences. They used
     // to default to `true` in Rust and were corrected only after an async file
     // read, so a message arriving during startup fired a notification the user
@@ -452,6 +488,11 @@ fn maybe_notify_message(app: &AppHandle, val: &Value) {
 /// The tap payload includes `senderDisplayName`, so we can use it as the title.
 fn maybe_notify_tap(app: &AppHandle, val: &Value) {
     let state = app.state::<crate::state::AppState>();
+    // B2 LOCK GATE: same as `maybe_notify_message` — the tap title is the
+    // sender's display name, which is also user content. Do not remove.
+    if state.is_locked() {
+        return;
+    }
     if !state.prefs_loaded.load(Ordering::SeqCst) {
         return;
     }
@@ -471,7 +512,25 @@ fn maybe_notify_tap(app: &AppHandle, val: &Value) {
 /// the (foreground) webview / a deep-link handler can record the target
 /// conversation; the native tap routing is handled in MainActivity via the
 /// notification intent's `conversationId` extra (see REPORT — needs frontend wiring).
+///
+/// B2 LOCK GATE (defence in depth): both callers already early-return while the
+/// app lock is engaged, but this is the one function that actually posts, so the
+/// gate is repeated here — a future caller that forgets it still cannot put chat
+/// text on a locked screen. Do not remove.
+///
+/// Visibility is deliberately NOT set here: `tauri-plugin-notification`'s
+/// `NotificationBuilder` has no `visibility()` setter (verified in 2.3.3 — it
+/// exists only on `ChannelBuilder`), so per-notification visibility is not
+/// reachable from Rust. The `grindx_messages` channel in
+/// `MainActivity.createNotificationChannel()` must be created with
+/// `setVisibility(Notification.VISIBILITY_PRIVATE)`; that is a Kotlin change and
+/// is tracked as a required follow-up.
 fn post_notification(app: &AppHandle, title: &str, body: &str, conversation_id: &str) {
+    let body = if app.state::<AppState>().is_locked() {
+        LOCKED_NOTIFICATION_BODY
+    } else {
+        body
+    };
     app.notification()
         .builder()
         .title(title)

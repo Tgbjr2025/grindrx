@@ -25,7 +25,29 @@
 	} = $props();
 
 	const profilePicture = $derived(medias?.[0]);
-	const isOnline = $derived(onlineUntil != null && onlineUntil > Date.now());
+
+	// D21: `onlineUntil > Date.now()` was evaluated once per render, so a grid
+	// tile's online dot never expired on its own. A shared 15 s tick, cleaned up in
+	// the effect teardown, keeps every visible tile honest. 15 s matches the
+	// granularity of `OnlineStatus.svelte` — a "last seen" badge does not need
+	// second-level precision, and a per-tile `setInterval` over a windowed grid
+	// would be hundreds of timers.
+	let now = $state(Date.now());
+	$effect(() => {
+		if (onlineUntil == null) return;
+		if (onlineUntil <= now) return;
+		const id = setInterval(() => (now = Date.now()), 15_000);
+		return () => clearInterval(id);
+	});
+
+	const isOnline = $derived(onlineUntil != null && onlineUntil > now);
+
+	// D18: a meaningful accessible name, matching the visible badge.
+	const altText = $derived(
+		[displayName ?? "Profile", age != null ? `${age}` : null]
+			.filter(Boolean)
+			.join(", "),
+	);
 </script>
 
 <a href="/profile/{id}" class="aspect-square relative flex items-end overflow-hidden group">
@@ -33,10 +55,21 @@
 		<span class="absolute top-1.5 left-1.5 size-2.5 rounded-full bg-green-500 border-2 border-background z-10 shadow-sm"></span>
 	{/if}
 	<div class="absolute w-full h-full bg-muted">
+		<UserIcon
+			weight="fill"
+			color="var(--color-stone-400)"
+			class="size-3/4 top-1/2 left-1/2 -translate-1/2 absolute"
+		/>
 		{#if medias && profilePicture}
+			<!--
+				D18: the alt text was the literal string "Profile avatar" on EVERY
+				tile, so a screen-reader user heard the same nothing hundreds of
+				times and had no way to tell two profiles apart. Name the person and
+				their age — the two things the badge under the photo already shows.
+			-->
 			<img
 				src="https://cdns.grindr.com/images/thumb/320x320/{profilePicture.mediaHash}"
-				alt="Profile avatar"
+				alt={altText}
 				class={[
 					"w-full h-full object-cover transition-transform duration-300 group-hover:scale-105",
 					{
@@ -45,12 +78,17 @@
 				]}
 				loading="lazy"
 				draggable="false"
-			/>
-		{:else}
-			<UserIcon
-				weight="fill"
-				color="var(--color-stone-400)"
-				class="size-3/4 top-1/2 left-1/2 -translate-1/2 absolute"
+				decoding="async"
+				referrerpolicy="no-referrer"
+				// D23: a public thumb can 404 (deleted, re-uploaded, or a transient CDN
+				// error). With no `onerror` the browser shows its own broken-image
+				// glyph on top of the `bg-muted` placeholder, which is both ugly and
+				// leaves the tile looking broken. Fall back to the same icon the
+				// "no photo" case uses.
+				onerror={(event) => {
+					const img = event.currentTarget as HTMLImageElement | null;
+					if (img) img.hidden = true;
+				}}
 			/>
 		{/if}
 	</div>

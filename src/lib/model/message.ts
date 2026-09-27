@@ -318,9 +318,28 @@ export function previewFromMessage(message: ApiResponseMessage | undefined): {
 	imageHash: string | null;
 } {
 	if (!message) return { type: "", text: null, albumId: null, imageHash: null };
+	// `unsent: true` is set optimistically by `markMessageAsUnsent` and by the
+	// retract handler, independently of the server having cleared `type`/`body`, so
+	// it must be consulted BEFORE the type switch. Without this the inbox row kept
+	// showing the real text of a message the user had just unsent.
+	//
+	// The `as string` widening is needed because `ApiResponseMessage["type"]` has
+	// no "Unsent" member in its inferred union — `unsentMessageSchema` produces it
+	// through a `z.string().transform()`, which lands in the *output* type only.
+	// At runtime the two conditions are equivalent-or-stricter:
+	// `unsentMessageSchema` pins `unsent: z.literal(true)` on every "Unsent"
+	// message, so the flag alone already covers it; the type test is belt and
+	// braces for a hand-built object that sets the type without the flag.
+	const isUnsent =
+		message.unsent === true || (message.type as string) === "Unsent";
+	if (isUnsent)
+		return {
+			type: "Unsent",
+			text: "Message unsent",
+			albumId: null,
+			imageHash: null,
+		};
 	switch (message.type) {
-		case "Unsent":
-			return { type: "Unsent", text: null, albumId: null, imageHash: null };
 		case "Text":
 			return {
 				type: "Text",
@@ -424,11 +443,25 @@ export function previewFromMessage(message: ApiResponseMessage | undefined): {
 				albumId: null,
 				imageHash: null,
 			};
+		case "Retract":
+			return {
+				type: "Retract",
+				text: "Message deleted",
+				albumId: null,
+				imageHash: null,
+			};
 		default:
-			// `Retract`, `Unknown` and `Generative` carry no renderable preview.
+			// `Unknown` and `Generative` carry no renderable payload, but returning
+			// `text: null` here made the inbox row render "Preview not available" —
+			// which reads as "this chat is broken", not "this message is empty". Every
+			// other type returns a real label, so return one here too. (The two
+			// renderer branches keyed on `preview.albumId` / `preview.imageHash` were
+			// already dead — `text` is non-null for every non-empty case — and have
+			// been deleted from `Conversation.svelte`.)
 			return {
 				type: message.type,
-				text: null,
+				text:
+					message.type === "Generative" ? "AI message" : "Unsupported message",
 				albumId: null,
 				imageHash: null,
 			};

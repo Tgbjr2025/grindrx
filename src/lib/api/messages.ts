@@ -1,13 +1,12 @@
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
+import { throwForStatus } from "$lib/api/http";
 import {
 	type ApiResponseMessage,
 	apiResponseMessageSchema,
 	messageSchema,
 } from "$lib/model/message";
-// Dead import removed: `unixTimestampMsSchema` was imported but never referenced
-// in this module (message timestamp parsing lives in $lib/model/message).
 import type { Conversation } from "$lib/model/conversation";
 
 // The send endpoints (sendMessage/sendProfilePhotoMessage) only need
@@ -17,7 +16,15 @@ import type { Conversation } from "$lib/model/conversation";
 // marked "failed" in the UI, and tapping retry then double-sent it. This
 // lenient shape mirrors the read path's tolerance (coerceApiResponseMessage)
 // instead of requiring the exact modeled message shape.
-const sendMessageResponseSchema = z.object({ messageId: z.string() });
+//
+// `messageId` is accepted as a number too: the goal here is leniency, and a
+// numeric id on an otherwise-2xx send would reproduce the exact failure the
+// lenient shape exists to prevent (a marked-failed bubble the user then
+// double-sends by retrying). Normalised to a string — `messageId` is the dedup
+// key everywhere, so the same id in two types must not become two messages.
+const sendMessageResponseSchema = z.object({
+	messageId: z.union([z.string(), z.number()]).transform(String),
+});
 
 const conversationMessagesSchema = z.object({
 	lastReadTimestamp: z.number().nonnegative().nullable().catch(null),
@@ -40,10 +47,52 @@ const conversationMessagesSchema = z.object({
 });
 
 /**
+ * Stable 32-bit FNV-1a hash of a payload, rendered base36.
+ *
+ * Used ONLY to make the synthetic id of an unparseable message distinct per
+ * payload. It is not a security primitive and needs no distribution guarantees
+ * beyond "different inputs usually differ"; FNV-1a is one multiply and one xor
+ * per byte, which matters because this runs over the whole message array on
+ * every conversation load.
+ */
+function hashPayload(raw: unknown): string {
+	const text =
+		typeof raw === "string" ? raw : safeStringify(raw);
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) {
+		hash ^= text.charCodeAt(i);
+		// hash *= 16777619, kept in 32-bit range without BigInt.
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return hash.toString(36);
+}
+
+function safeStringify(raw: unknown): string {
+	try {
+		return JSON.stringify(raw) ?? String(raw);
+	} catch {
+		// Circular / unserialisable. `String(raw)` is still stable per call for
+		// primitives; for objects it degrades to "[object Object]", which the
+		// caller's `index` disambiguator covers.
+		return String(raw);
+	}
+}
+
+/**
  * Parse a single API message, degrading gracefully to an `Unknown` message
  * (preserving the routing/overlay fields) instead of throwing when the body
  * shape is unexpected. This keeps a single exotic message from making an entire
  * conversation fail to load.
+ *
+ * SYNTHETIC ID: when the payload has no usable `messageId`, the fallback used to
+ * be `unparsed-${index}-${timestamp}`. `index` is a POSITION, not an identity,
+ * and the WebSocket caller passed a hardcoded `0` — so two different malformed
+ * payloads landing in the same place (the single WS event, or a list whose
+ * earlier entries were dropped/reordered by a concurrent poll) collapsed onto
+ * one id. `messageId` is the dedup key throughout the chat state, so they
+ * became ONE message and one of the two was silently dropped. The id is now
+ * derived from a hash of the raw payload, so distinct payloads get distinct ids;
+ * `index` is retained only to separate two *byte-identical* payloads.
  */
 export function coerceApiResponseMessage(raw: unknown, index: number): ApiResponseMessage {
 	const parsed = apiResponseMessageSchema.safeParse(raw);
@@ -63,7 +112,7 @@ export function coerceApiResponseMessage(raw: unknown, index: number): ApiRespon
 		messageId:
 			typeof r.messageId === "string" && r.messageId.length > 0
 				? r.messageId
-				: `unparsed-${index}-${typeof r.timestamp === "number" ? r.timestamp : 0}`,
+				: `unparsed-${hashPayload(raw)}-${index}`,
 		conversationId: typeof r.conversationId === "string" ? r.conversationId : "",
 		senderId: typeof r.senderId === "number" ? r.senderId : 0,
 		timestamp: typeof r.timestamp === "number" ? r.timestamp : 0,
@@ -86,10 +135,14 @@ export async function getConversationMessages({
 	const messages = await fetchRest(
 		`/v5/chat/conversation/${conversationId}/message?` + params.toString(),
 		{ method: "GET" },
-	).then((res) => {
-		if (res.status >= 400) throw new Error(`Messages fetch failed: ${res.status}`);
-		return res.jsonParsed(conversationMessagesSchema);
-	});
+	).then((res) =>
+		// No `res.status >= 400` pre-check here: it ran BEFORE `.json()`, so
+		// `classifyResponseBody` never classified the body and every server
+		// failure surfaced as a bare `Error("Messages fetch failed: 400")` with
+		// no `status`/`code` for callers to branch on. `jsonParsed` raises
+		// `ApiHttpError` for any non-2xx itself — see `isApiHttpError(err, 400)`.
+		res.jsonParsed(conversationMessagesSchema),
+	);
 	return {
 		...messages,
 		messages: messages.messages.map(coerceApiResponseMessage),
@@ -149,9 +202,12 @@ export async function sendProfilePhotoMessage({
 			},
 		},
 	});
-	if (res.status >= 400) {
-		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
-	}
+	// The previous `res.status >= 400` pre-check threw
+	// `new Error(\`HTTP ${res.status}: ${res.text().slice(0, 200)}\`)` — a raw
+	// server body pasted into a user-facing `Error.message` that the composer
+	// toasts verbatim. `jsonParsed` classifies the body first and raises
+	// `ApiHttpError`, which keeps the raw body in `.body` (logs) and the message
+	// to the server's own message/code.
 	return res.jsonParsed(sendMessageResponseSchema);
 }
 
@@ -204,7 +260,8 @@ export async function reactToMessage({
 			reactionType,
 		},
 	});
-	if (res.status >= 400) throw new Error(`Reaction failed: ${res.status}`);
+	// No body is read on this path, so nothing downstream can raise for us.
+	throwForStatus(res, "/v4/chat/message/reaction");
 	return res;
 }
 
@@ -215,17 +272,18 @@ export async function deleteMessageForMe({
 	conversationId: Conversation["data"]["conversationId"];
 	messageId: ApiResponseMessage["messageId"];
 }) {
-	return await fetchRest(`/v4/chat/message/delete`, {
+	const path = `/v4/chat/message/delete`;
+	return await fetchRest(path, {
 		method: "POST",
 		body: {
 			conversationId,
 			messageId,
 		},
 	}).then((res) => {
-		if (res.status >= 400) {
-			console.error("Failed to delete message, status:", res.status);
-			throw new Error("Failed to delete message");
-		}
+		// The raw body used to be pasted into a `console.error` AND the
+		// user-visible message; `ApiHttpError` keeps the status/code in the
+		// message and the body available for logs.
+		throwForStatus(res, path);
 	});
 }
 
@@ -236,16 +294,16 @@ export async function unsendMessage({
 	conversationId: Conversation["data"]["conversationId"];
 	messageId: ApiResponseMessage["messageId"];
 }) {
-	return await fetchRest(`/v4/chat/message/unsend`, {
+	const path = `/v4/chat/message/unsend`;
+	return await fetchRest(path, {
 		method: "POST",
 		body: {
 			conversationId,
 			messageId,
 		},
 	}).then((res) => {
-		if (res.status >= 400) {
-			console.error("Failed to unsend message:", res.status, res.text().slice(0, 200));
-			throw new Error("Failed to unsend message");
-		}
+		// Same as deleteMessageForMe: the previous failure log concatenated up
+		// to 200 characters of the raw server body.
+		throwForStatus(res, path);
 	});
 }

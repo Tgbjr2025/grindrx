@@ -43,7 +43,16 @@
 		}
 	});
 
-	let contentScroll = $state(0);
+	// Two booleans rather than a 0..1 ratio. The old ratio was
+	// `scrollTop / (scrollHeight - clientHeight)`, which is 0/0 = NaN when the
+	// container is not scrollable — and EVERY `NaN < x` / `NaN > x` comparison is
+	// false, so both scroll borders silently vanished. The border conditions were
+	// also inverted: the header border showed while scrolling DOWN (when you are
+	// past the top) and the footer border while scrolling UP.
+	let canScrollUp = $state(false);
+	let canScrollDown = $state(false);
+
+	let applying = $state(false);
 </script>
 
 {#snippet col1()}
@@ -130,7 +139,8 @@
 			class={[
 				"p-4 border border-x-0 border-t-0 border-transparent transition-colors",
 				{
-					"border-muted": contentScroll > 0,
+					// Shown once you are PAST the top (was inverted).
+					"border-muted": canScrollUp,
 				},
 			]}
 		>
@@ -140,9 +150,9 @@
 			class="flex max-md:flex-col *:flex-col gap-8 lg:gap-12 *:flex-1 *:gap-4 flex-1 px-4 w-full **:break-inside-avoid overflow-auto max-h-full min-h-0 shrink py-1 pb-4"
 			onscroll={(event) => {
 				if (event.target instanceof HTMLDivElement) {
-					contentScroll =
-						event.target.scrollTop /
-						(event.target.scrollHeight - event.target.clientHeight);
+					const range = event.target.scrollHeight - event.target.clientHeight;
+					canScrollDown = range > 0 && event.target.scrollTop < range;
+					canScrollUp = range > 0 && event.target.scrollTop > 0;
 				}
 			}}
 		>
@@ -164,19 +174,32 @@
 			class={[
 				"p-4 sm:items-end border border-x-0 border-b-0 border-transparent transition-colors",
 				{
-					"border-muted": contentScroll < 1,
+					"border-muted": canScrollDown,
 				},
 			]}
 		>
+			<!--
+				D23: `onclick` was fire-and-forget — it called the async
+				`onUpdateFilters()` and then set `open = false` in the same tick. If the
+				write failed, the toast fired against an already-closed sheet and nothing
+				on screen reflected that the filters had NOT been saved. Now the sheet
+				only closes once the write resolves, and stays open (with the error
+				toast) when it does not.
+			-->
 			<Button
 				type="submit"
+				disabled={applying}
 				onclick={() => {
+					if (applying) return;
+					applying = true;
 					filters = filtersChanges;
-					onUpdateFilters();
-					open = false;
+					Promise.resolve(onUpdateFilters())
+						.then(() => (open = false))
+						.catch((error: unknown) => console.error(error))
+						.finally(() => (applying = false));
 				}}
 			>
-				Apply
+				{applying ? "Applying…" : "Apply"}
 			</Button>
 		</Sheet.Footer>
 	</Sheet.Content>

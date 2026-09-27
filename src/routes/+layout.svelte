@@ -82,8 +82,13 @@
 		// Re-lock on any backgrounding, plus after a short grace period in the
 		// background so a brief app switch (notification shade, permission dialog)
 		// does not demand the PIN again.
+		//
+		// The grace was 30 s, which defeated the feature for its realistic case:
+		// press Home, and an attacker picks the phone up 10 s later — no re-lock.
+		// 2 s is enough to absorb a shade pull or a permission dialog (both of
+		// which return in well under a second of the user acting) and no more.
 		let backgroundedAt: number | null = null;
-		const RELOCK_GRACE_MS = 30_000;
+		const RELOCK_GRACE_MS = 2_000;
 
 		const syncForeground = () => {
 			const foreground = document.visibilityState === "visible";
@@ -104,6 +109,18 @@
 		};
 		document.addEventListener("visibilitychange", syncForeground);
 
+		// `visibilitychange` alone is not enough: on Android the WebView can be
+		// torn down or backgrounded without a final visibilitychange being
+		// delivered, and the app can then be resumed from the recents list
+		// without ever having been observed as hidden. `pagehide` is the reliable
+		// "this document is going away" signal, and there is no grace period to
+		// apply to it — the moment we lose the foreground is the moment the
+		// attacker has the phone.
+		const lockOnPageHide = () => {
+			if (isLockEnabled()) lockNow();
+		};
+		window.addEventListener("pagehide", lockOnPageHide);
+
 		// Request notification permission on Android 13+
 		isPermissionGranted()
 			.then((granted) => {
@@ -113,6 +130,7 @@
 
 		return () => {
 			document.removeEventListener("visibilitychange", syncForeground);
+			window.removeEventListener("pagehide", lockOnPageHide);
 		};
 	});
 

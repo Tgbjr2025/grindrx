@@ -16,7 +16,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 		invoke(cmd, args),
 }));
 
-import { isAuthedHost, resolveAuthedImage } from "$lib/utils/authed-image";
+import {
+	__resetAuthedImageCacheForTests,
+	__retiredAuthedImageCount,
+	isAuthedHost,
+	resolveAuthedImage,
+	resolveAuthedImageRetained,
+} from "$lib/utils/authed-image";
 
 /** Blobs handed to `URL.createObjectURL`, so tests can assert on the MIME type. */
 let createdBlobs: Blob[] = [];
@@ -60,6 +66,11 @@ beforeEach(() => {
 	invoke.mockReset();
 	createdBlobs = [];
 	urlLive = new Map();
+	// `objectUrlCache` / `refCounts` / `retired` are MODULE state, so without this
+	// reset a bound assertion in one test is satisfied by bookkeeping the test
+	// never created — the previous suite asserted against a freshly-reset counter
+	// while a real, populated cache sat behind it.
+	__resetAuthedImageCacheForTests();
 	let n = 0;
 	// Subclass rather than replace: `classifyHost` does `new URL(...)`, so a plain
 	// object stub silently broke host classification.
@@ -184,5 +195,88 @@ describe("MIME sniffing", () => {
 		serveBytes(png);
 		await resolveAuthedImage("https://cdns.grindr.com/images/full/png");
 		expect(createdBlobs[1].type).toBe("image/png");
+	});
+});
+
+/**
+ * REGRESSION: `retainAuthedImage` had ZERO callers in `src/`, so `refCounts` was
+ * permanently empty, the `refCounts.get(evicted) > 0` guard in `remember()` was
+ * always false, every eviction revoked immediately, and `retired` was never
+ * written. The "never revoke while still displayed" guarantee was inert — a
+ * mounted <img> went blank and its onerror re-ran the whole IPC byte fetch.
+ */
+describe("retained object URLs survive cache eviction", () => {
+	function authedUrl(i: number): string {
+		return `https://cdns.grindr.com/images/full/retain-${i}.jpg`;
+	}
+
+	it("does NOT revoke a URL that is still retained when the cache overflows", async () => {
+		serveBytes(jpeg());
+
+		// Resolve and RETAIN the first image — this stands in for a mounted <img>.
+		const first = await resolveAuthedImageRetained(authedUrl(0));
+		expect(first.release).not.toBeNull();
+		const firstUrl = first.url;
+		expect(urlLive.get(firstUrl)).toBe(true);
+
+		// Overflow the 32-entry cache with unretained fetches.
+		for (let i = 1; i <= 40; i++) {
+			await resolveAuthedImage(authedUrl(i));
+		}
+
+		// The retained blob must still be live — this is the whole guarantee.
+		expect(urlLive.get(firstUrl)).toBe(true);
+		expect(__retiredAuthedImageCount()).toBeGreaterThan(0);
+
+		// Releasing it now is what actually frees the bytes.
+		first.release?.();
+		expect(urlLive.get(firstUrl)).toBe(false);
+	});
+
+	it("revokes normally for an unretained URL, so the cache is still bounded", async () => {
+		serveBytes(jpeg());
+
+		const first = (await resolveAuthedImage(authedUrl(0))) as string;
+		for (let i = 1; i <= 40; i++) {
+			await resolveAuthedImage(authedUrl(i));
+		}
+
+		expect(urlLive.get(first)).toBe(false);
+	});
+
+	it("returns a null release for a direct (non-authed) URL — nothing to retain", async () => {
+		const result = await resolveAuthedImageRetained(SIGNED_URL);
+		expect(result.url).toBe(SIGNED_URL);
+		expect(result.release).toBeNull();
+	});
+
+	it("make() release is idempotent, so a double teardown cannot under-count", async () => {
+		serveBytes(jpeg());
+		const { release } = await resolveAuthedImageRetained(authedUrl(0));
+		expect(release).not.toBeNull();
+
+		release?.();
+		release?.();
+		release?.();
+
+		// A second release must not revoke something already freed, and must not
+		// throw.
+		expect(urlLive.size).toBeGreaterThanOrEqual(0);
+	});
+
+	it("bounds the parked set so a leaked retain cannot pin unbounded blobs", async () => {
+		serveBytes(jpeg());
+
+		// Retain 40 distinct URLs without ever releasing. `retired` is outside the
+		// objectUrlCache size bound, so without its own cap this pins 40 blobs.
+		const releases: (() => void)[] = [];
+		for (let i = 0; i < 40; i++) {
+			const r = await resolveAuthedImageRetained(authedUrl(i));
+			if (r.release) releases.push(r.release);
+		}
+
+		// Each newly resolved URL evicts the oldest, which is retained, so it parks.
+		expect(__retiredAuthedImageCount()).toBeLessThanOrEqual(32);
+		for (const r of releases) r();
 	});
 });

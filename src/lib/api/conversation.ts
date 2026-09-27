@@ -1,6 +1,7 @@
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
+import { throwForStatus } from "$lib/api/http";
 import {
 	type Conversation,
 	fullConversationSchema,
@@ -40,13 +41,13 @@ export async function markConversationAsRead({
 	conversationId: string;
 	messageId?: string;
 }) {
-	const res = await fetchRest(
-		`/v4/chat/conversation/${conversationId}/read/${messageId}`,
-		{
-			method: "POST",
-		},
-	);
-	if (res.status >= 400) throw new Error(`Failed: ${res.status}`);
+	const path = `/v4/chat/conversation/${conversationId}/read/${messageId}`;
+	const res = await fetchRest(path, {
+		method: "POST",
+	});
+	// Raised the shared `ApiHttpError` instead of `Error("Failed: 400")` so a
+	// caller can branch on `.status` rather than on message text.
+	throwForStatus(res, "/v4/chat/conversation/{conversationId}/read/{messageId}");
 	return res;
 }
 
@@ -58,6 +59,6 @@ export async function deleteConversationForMe({
 	const res = await fetchRest(`/v4/chat/conversation/${conversationId}`, {
 		method: "DELETE",
 	});
-	if (res.status >= 400) throw new Error(`Failed: ${res.status}`);
+	throwForStatus(res, "/v4/chat/conversation/{conversationId}");
 	return res;
 }

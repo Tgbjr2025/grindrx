@@ -4,13 +4,121 @@ import z from "zod";
 
 import { ApiHttpError } from "$lib/api";
 import { getPreferences } from "$lib/app-data/preferences.svelte";
+import { defaultFilters } from "$lib/components/filters/filters";
 import type { cascadeV3QuerySchema } from "$lib/model/grid/cascade/query/v3";
 import {
+	cacheProfile,
+	clearProfileCache,
 	getGrid,
 	type GridProfile,
 	profileCache,
 	resolvePartialBatch,
 } from "./grid";
+
+type GridSearchFilters = typeof defaultFilters;
+type CascadeQuery = z.infer<typeof cascadeV3QuerySchema>;
+
+/**
+ * The live Grindr API stores `weight` in GRAMS (e.g. 86182.65 ≈ 86.18 kg), but
+ * the weight slider is specified and stored in KILOGRAMS (`filterWeightSchema`
+ * / `defaultFilters.weight === [40, 273]`). This is the single conversion point.
+ *
+ * It used to be missing: `weightGramsMin`/`weightGramsMax` were fed the raw kg
+ * slider array, so the request asked for profiles weighing 40-273 GRAMS and the
+ * filter could never match anyone. Keep this as the ONLY kg->grams conversion
+ * for the grid query — `WeightFilter.svelte`'s `KG_TO_GRAMS` is display-only.
+ */
+export const KG_TO_GRAMS = 1000;
+
+export function weightKgRangeToGrams(
+	range: readonly number[] | undefined,
+): { min: number; max: number } | null {
+	if (!range || range.length < 2) return null;
+	const [min, max] = range;
+	if (min === undefined || max === undefined) return null;
+	return { min: min * KG_TO_GRAMS, max: max * KG_TO_GRAMS };
+}
+
+/**
+ * Maps the persisted grid filters onto the `/v3/cascade` query.
+ *
+ * Extracted as a pure function (and unit-tested) because this mapper is where
+ * unit/param mismatches hide: it is 60 lines of field-by-field translation with
+ * no other observable behaviour, so a mistake in it is invisible until a filter
+ * silently returns the wrong people.
+ */
+export function buildCascadeQuery(
+	geohash: string,
+	exploreGeohash: string | null,
+	gridSearchFilters: GridSearchFilters | undefined,
+): CascadeQuery {
+	const weightGrams = gridSearchFilters?.weightEnabled
+		? weightKgRangeToGrams(gridSearchFilters.weight)
+		: null;
+
+	return {
+		nearbyGeoHash: geohash,
+		...(exploreGeohash && { exploreGeoHash: exploreGeohash }),
+		favorites: gridSearchFilters?.isFavorite || undefined,
+		onlineOnly: gridSearchFilters?.isOnline || undefined,
+		rightNow: gridSearchFilters?.isRightNow || undefined,
+		...(gridSearchFilters?.ageEnabled && {
+			ageMin: gridSearchFilters?.age[0],
+			ageMax: gridSearchFilters?.age[1],
+		}),
+		...(gridSearchFilters?.genderEnabled && {
+			genders: gridSearchFilters?.genders,
+		}),
+		...(gridSearchFilters?.positionEnabled && {
+			sexualPositions: gridSearchFilters?.positions,
+		}),
+		...(gridSearchFilters?.photosEnabled &&
+			gridSearchFilters?.photos.includes("has-photos") && {
+				photoOnly: true,
+			}),
+		...(gridSearchFilters?.photosEnabled &&
+			gridSearchFilters?.photos.includes("has-albums") && {
+				hasAlbum: gridSearchFilters?.photos.includes("has-albums"),
+			}),
+		...(gridSearchFilters?.photosEnabled &&
+			gridSearchFilters?.photos.includes("has-face-pics") && {
+				faceOnly: true,
+			}),
+		...(gridSearchFilters?.tribesEnabled && {
+			tribes: gridSearchFilters?.tribes,
+		}),
+		...(gridSearchFilters?.bodyTypesEnabled && {
+			bodyTypes: gridSearchFilters?.bodyTypes,
+		}),
+		...(gridSearchFilters?.heightEnabled && {
+			heightCmMin: gridSearchFilters?.height[0],
+			heightCmMax: gridSearchFilters?.height[1],
+		}),
+		...(weightGrams && {
+			weightGramsMin: weightGrams.min,
+			weightGramsMax: weightGrams.max,
+		}),
+		...(gridSearchFilters?.relationshipStatusesEnabled && {
+			relationshipStatuses: gridSearchFilters?.relationshipStatuses,
+		}),
+		...(gridSearchFilters?.acceptNSFWPicsEnabled &&
+			gridSearchFilters?.acceptNSFWPics !== undefined && {
+				nsfwPics: gridSearchFilters?.acceptNSFWPics,
+			}),
+		...(gridSearchFilters?.lookingForEnabled && {
+			lookingFor: gridSearchFilters?.lookingFor,
+		}),
+		...(gridSearchFilters?.meetAtEnabled && {
+			meetAt: gridSearchFilters?.meetAt,
+		}),
+		notRecentlyChatted:
+			gridSearchFilters?.haventChattedTodayEnabled || undefined,
+		...(gridSearchFilters?.healthPracticesEnabled && {
+			sexualHealth: gridSearchFilters?.healthPractices,
+		}),
+		fresh: gridSearchFilters?.isFresh || undefined,
+	} satisfies CascadeQuery;
+}
 
 class GridState {
 	items = $state<GridProfile[]>([]);
@@ -69,6 +177,10 @@ class GridState {
 
 	#reset(): void {
 		this.items = [];
+		// A cached full profile is only valid for the area/filters that produced
+		// it. It was never invalidated, so after a location change or logout the
+		// grid could paint a profile's old name/photo straight out of this map.
+		clearProfileCache();
 		this.partialBatches = [];
 		this.nextPage = 0;
 		this.loadingMore = false;
@@ -105,12 +217,22 @@ class GridState {
 		}
 	}
 
-	async loadBatch(batchIndex: number): Promise<void> {
-		if (this.#loadingBatches.has(batchIndex)) return;
+	/**
+	 * Resolve one partial batch into full profiles.
+	 *
+	 * Returns whether the batch is now RESOLVED. The caller (Grid's partial
+	 * sentinel) used to fire-and-forget this and then disconnect its observer, so
+	 * a rejection left the tile a permanently pulsing skeleton with no way back:
+	 * the sentinel could never re-fire. Returning the verdict lets the caller
+	 * keep observing, and re-observe after a failure, so a transient error is
+	 * retried when the tile scrolls back into range (or is tapped).
+	 */
+	async loadBatch(batchIndex: number): Promise<boolean> {
+		if (this.#loadingBatches.has(batchIndex)) return true;
 		this.#loadingBatches.add(batchIndex);
 		try {
 			const batch = this.partialBatches[batchIndex];
-			if (!batch) return;
+			if (!batch) return true;
 			const profileIds = batch.batch.map((p) => p.profileId);
 			const uncachedIds: number[] = [];
 
@@ -139,7 +261,7 @@ class GridState {
 			);
 			const resolvedIds = new Set<number>();
 			for (const profile of resolved) {
-				profileCache.set(profile.id, profile);
+				cacheProfile(profile);
 				resolvedIds.add(profile.id);
 				const idx = indexById.get(profile.id);
 				if (idx !== undefined) this.items[idx] = profile;
@@ -152,10 +274,13 @@ class GridState {
 				// Drop all unresolved ids in one pass instead of N array splices.
 				this.items = this.items.filter((i) => !unresolved.has(i.id));
 			}
+			return true;
 		} catch (error) {
 			console.error(batchIndex, error);
 			toast.error("Failed to load profiles");
+			// Forget the in-flight mark so a retry is actually allowed.
 			this.#loadingBatches.delete(batchIndex);
+			return false;
 		}
 	}
 
@@ -165,68 +290,11 @@ class GridState {
 	): Promise<void> {
 		try {
 			const { gridSearchFilters } = await getPreferences();
-			const query = {
-				nearbyGeoHash: geohash,
-				...(exploreGeohash && { exploreGeoHash: exploreGeohash }),
-				favorites: gridSearchFilters?.isFavorite || undefined,
-				onlineOnly: gridSearchFilters?.isOnline || undefined,
-				rightNow: gridSearchFilters?.isRightNow || undefined,
-				...(gridSearchFilters?.ageEnabled && {
-					ageMin: gridSearchFilters?.age[0],
-					ageMax: gridSearchFilters?.age[1],
-				}),
-				...(gridSearchFilters?.genderEnabled && {
-					genders: gridSearchFilters?.genders,
-				}),
-				...(gridSearchFilters?.positionEnabled && {
-					sexualPositions: gridSearchFilters?.positions,
-				}),
-				...(gridSearchFilters?.photosEnabled &&
-					gridSearchFilters?.photos.includes("has-photos") && {
-						photoOnly: true,
-					}),
-				...(gridSearchFilters?.photosEnabled &&
-					gridSearchFilters?.photos.includes("has-albums") && {
-						hasAlbum: gridSearchFilters?.photos.includes("has-albums"),
-					}),
-				...(gridSearchFilters?.photosEnabled &&
-					gridSearchFilters?.photos.includes("has-face-pics") && {
-						faceOnly: true,
-					}),
-				...(gridSearchFilters?.tribesEnabled && {
-					tribes: gridSearchFilters?.tribes,
-				}),
-				...(gridSearchFilters?.bodyTypesEnabled && {
-					bodyTypes: gridSearchFilters?.bodyTypes,
-				}),
-				...(gridSearchFilters?.heightEnabled && {
-					heightCmMin: gridSearchFilters?.height[0],
-					heightCmMax: gridSearchFilters?.height[1],
-				}),
-				...(gridSearchFilters?.weightEnabled && {
-					weightGramsMin: gridSearchFilters?.weight[0],
-					weightGramsMax: gridSearchFilters?.weight[1],
-				}),
-				...(gridSearchFilters?.relationshipStatusesEnabled && {
-					relationshipStatuses: gridSearchFilters?.relationshipStatuses,
-				}),
-				...(gridSearchFilters?.acceptNSFWPicsEnabled &&
-					gridSearchFilters?.acceptNSFWPics !== undefined && {
-						nsfwPics: gridSearchFilters?.acceptNSFWPics,
-					}),
-				...(gridSearchFilters?.lookingForEnabled && {
-					lookingFor: gridSearchFilters?.lookingFor,
-				}),
-				...(gridSearchFilters?.meetAtEnabled && {
-					meetAt: gridSearchFilters?.meetAt,
-				}),
-				notRecentlyChatted:
-					gridSearchFilters?.haventChattedTodayEnabled || undefined,
-				...(gridSearchFilters?.healthPracticesEnabled && {
-					sexualHealth: gridSearchFilters?.healthPractices,
-				}),
-				fresh: gridSearchFilters?.isFresh || undefined,
-			} satisfies z.infer<typeof cascadeV3QuerySchema>;
+			const query = buildCascadeQuery(
+				geohash,
+				exploreGeohash,
+				gridSearchFilters,
+			);
 			this.currentQuery = query;
 			const result = await getGrid(query);
 			this.#loadingBatches.clear();

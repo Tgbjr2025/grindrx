@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { ChatCircleIcon, FlagIcon, HandWavingIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon, ProhibitIcon } from "phosphor-svelte";
+	import { ArrowLeftIcon, ArrowRightIcon, ChatCircleIcon, FlagIcon, HandWavingIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon, ProhibitIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
@@ -13,6 +13,7 @@
 	import { Skeleton } from "$lib/components/ui/skeleton";
 	import { getAdjacentProfileId } from "$lib/stores/grid-order.svelte";
 	import ReportDialog from "../../../chat/[conversationId]/message/ReportDialog.svelte";
+	import { profileCache } from "../../(root)/grid";
 	import AboutMe from "./AboutMe.svelte";
 	import Distance from "./Distance.svelte";
 	import EditProfileSheet from "./EditProfileSheet.svelte";
@@ -68,10 +69,70 @@
 
 	function handleProfileSaved() {
 		clearProfileCache(profileId);
+		// D23: the grid keeps its OWN `profileCache` (grid.ts) alongside the
+		// API one. Clearing only the API cache left the grid's copy holding the
+		// pre-save display name, so returning to the grid after renaming yourself
+		// showed the old name until the process restarted.
+		profileCache.delete(profileId);
 		refetchTick++;
 	}
 
 	let tapPickerOpen = $state(false);
+	let tapTrigger = $state<HTMLButtonElement | null>(null);
+	let tapMenu = $state<HTMLDivElement | null>(null);
+
+	/**
+	 * D21: the tap picker was a bare `<div>` with no `role="menu"`, no focus
+	 * management, no Escape and no outside-click dismiss — a menu reachable only
+	 * by guessing. Now: it is a real menu, focus enters it on open and returns to
+	 * the trigger on close, and both Escape and an outside pointer-down dismiss
+	 * it. No Popover/DropdownMenu component exists in `$lib/components/ui`, so
+	 * the handlers are added directly rather than pulling in a new dependency.
+	 */
+	function closeTapPicker(returnFocus = true) {
+		if (!tapPickerOpen) return;
+		tapPickerOpen = false;
+		if (returnFocus) tapTrigger?.focus();
+	}
+
+	$effect(() => {
+		if (!tapPickerOpen) return;
+		// Move focus to the first item so arrow/tab keys start inside the menu.
+		const first = tapMenu?.querySelector<HTMLElement>('[role="menuitem"]');
+		first?.focus();
+
+		function onKeyDown(event: KeyboardEvent) {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				event.stopPropagation();
+				closeTapPicker();
+				return;
+			}
+			if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+			const items = [
+				...(tapMenu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []),
+			];
+			if (items.length === 0) return;
+			event.preventDefault();
+			const index = items.indexOf(document.activeElement as HTMLElement);
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			items[(index + delta + items.length) % items.length]?.focus();
+		}
+
+		function onPointerDown(event: PointerEvent) {
+			const target = event.target as Node | null;
+			if (!target) return;
+			if (tapMenu?.contains(target) || tapTrigger?.contains(target)) return;
+			closeTapPicker(false);
+		}
+
+		document.addEventListener("keydown", onKeyDown, true);
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("keydown", onKeyDown, true);
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	});
 
 	// Documented Tap IDs (grindr-api/interest/taps#tap-id).
 	const TAP_EMOJIS: Record<TapType, string> = {
@@ -82,6 +143,7 @@
 
 	async function sendTap(type: TapType) {
 		tapPickerOpen = false;
+		tapTrigger?.focus();
 		try {
 			await sendTapWithType(profileId, type);
 			toast.success(`Tap sent! ${TAP_EMOJIS[type]}`);
@@ -91,6 +153,14 @@
 	}
 
 	let favoriteOverride = $state<boolean | null>(null);
+
+	// D21: `favoriteOverride` is an optimistic local value for ONE profile. It
+	// was never reset when `profileId` changed, so after favouriting A and
+	// swiping to B, B's heart rendered filled — B was not favourited at all.
+	$effect(() => {
+		void profileId;
+		favoriteOverride = null;
+	});
 
 	async function toggleFavorite(current: boolean) {
 		const next = !current;
@@ -185,14 +255,53 @@
 	}
 </script>
 
+<!--
+	D21: profile navigation was touch-only. `touch-action: pan-y` is REQUIRED here,
+	not cosmetic: without it the browser claims the gesture for horizontal panning
+	and the swipe handlers fight it (and pinch-zoom breaks). The prev/next buttons
+	below are the keyboard equivalent — a hardware keyboard, a switch device or a
+	drag-accessible user could not move between profiles at all before.
+-->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-	class="flex"
+	class="flex flex-col"
+	style="touch-action: pan-y;"
 	ontouchstart={onSwipeStart}
 	ontouchmove={onSwipeMove}
 	ontouchend={onSwipeEnd}
 	ontouchcancel={onSwipeEnd}
 >
+	<div
+		class="flex items-center justify-between gap-2 px-2 pt-2"
+		aria-label="Browse profiles"
+	>
+		<Button
+			size="sm"
+			variant="secondary"
+			class="gap-1"
+			disabled={prevProfileId === null}
+			aria-label="Previous profile"
+			onclick={() => {
+				if (prevProfileId !== null) goToProfile(prevProfileId);
+			}}
+		>
+			<ArrowLeftIcon class="size-4" />
+			Previous
+		</Button>
+		<Button
+			size="sm"
+			variant="secondary"
+			class="gap-1"
+			disabled={nextProfileId === null}
+			aria-label="Next profile"
+			onclick={() => {
+				if (nextProfileId !== null) goToProfile(nextProfileId);
+			}}
+		>
+			Next
+			<ArrowRightIcon class="size-4" />
+		</Button>
+	</div>
 	<main
 		class="w-full max-w-200 m-auto relative"
 		style="transform: translateX({swipeDx}px); transition: {swiping ? 'none' : 'transform 0.2s ease'};"
@@ -252,7 +361,14 @@
 							<HeartStraightIcon class="size-8" />
 						{/if}
 					</Button>
-					<Button size="icon-lg" class="size-14" href="/chat/{conversationId}">
+					<!-- D21: this icon-only button had no accessible name while all
+					     five of its siblings carry an `aria-label`. -->
+					<Button
+						size="icon-lg"
+						class="size-14"
+						href="/chat/{conversationId}"
+						aria-label="Chat with {displayName ?? "this profile"}"
+					>
 						<ChatCircleIcon weight="fill" class="size-8" />
 					</Button>
 					<div class="relative">
@@ -260,15 +376,33 @@
 							size="icon-lg"
 							class="size-14"
 							variant="outline"
-							onclick={() => (tapPickerOpen = !tapPickerOpen)}
+							bind:ref={tapTrigger}
+							onclick={() => (tapPickerOpen ? closeTapPicker() : (tapPickerOpen = true))}
 							aria-label="Send tap"
+							aria-haspopup="menu"
+							aria-expanded={tapPickerOpen}
+							aria-controls="tap-picker-menu"
 						>
 							<HandWavingIcon class="size-8" />
 						</Button>
 						{#if tapPickerOpen}
-							<div class="absolute bottom-full mb-2 right-0 flex gap-1 bg-popover border border-border rounded-xl shadow-lg p-1.5 z-50">
-								{#each [TAP_TYPES.FRIENDLY, TAP_TYPES.HOT, TAP_TYPES.LOOKING] as type}
+							<!--
+								D21: was a bare `<div>` with no role, no focus management, no
+								Escape and no outside-click dismiss. Now a real menu; the
+								Escape / outside-pointerdown / arrow-key handling lives in the
+								`$effect` above so it cannot drift out of sync with this markup.
+							-->
+							<div
+								id="tap-picker-menu"
+								bind:this={tapMenu}
+								role="menu"
+								aria-label="Tap type"
+								class="absolute bottom-full mb-2 right-0 flex gap-1 bg-popover border border-border rounded-xl shadow-lg p-1.5 z-50"
+							>
+								{#each [TAP_TYPES.FRIENDLY, TAP_TYPES.HOT, TAP_TYPES.LOOKING] as type (type)}
 									<button
+										type="button"
+										role="menuitem"
 										class="text-2xl leading-none p-2 rounded-lg hover:bg-accent transition-colors cursor-pointer"
 										onclick={() => sendTap(type).catch((e) => console.error(e))}
 										aria-label="Send tap {TAP_EMOJIS[type]}"
@@ -338,22 +472,22 @@
 					profileData={{
 						displayName,
 						aboutMe,
-						sexualPosition: sexualPosition ?? null,
-						bodyType: bodyType ?? null,
+						sexualPosition,
+						bodyType,
 						height,
 						weight,
-						ethnicity: ethnicity ?? null,
-						relationshipStatus: relationshipStatus ?? null,
+						ethnicity,
+						relationshipStatus,
 						lookingFor,
 						grindrTribes,
-						hivStatus: hivStatus ?? null,
-						sexualHealth: sexualHealthValue ?? [],
-						meetAt: meetAt ?? [],
-						nsfw: nsfw ?? null,
-						vaccines: vaccines ?? [],
+						hivStatus,
+						sexualHealth: sexualHealthValue,
+						meetAt,
+						nsfw,
+						vaccines,
 						socialNetworks: socialNetworks ?? {},
-						genders: genders ?? [],
-						pronouns: pronouns ?? [],
+						genders,
+						pronouns,
 					}}
 					onSave={handleProfileSaved}
 				/>
@@ -367,26 +501,26 @@
 							class="font-normal tracking-tight italic text-muted-foreground"
 						>
 							Someone
-						</span>{/if}{#if age !== null}<span class="font-normal text-foreground/70">, {age}</span>
+						</span>{/if}{#if age != null}<span class="font-normal text-foreground/70">, {age}</span>
 					{/if}
 				</h1>
 				<div class="flex items-center gap-3 text-sm mt-2 flex-wrap">
 					<OnlineStatus onlineUntil={onlineUntil ?? null} {seen} />
 					<Distance {distance} />
 				</div>
-				{#if sexualPosition !== null || height !== null || weight !== null || bodyType !== null}
+				{#if sexualPosition != null || height != null || weight != null || bodyType != null}
 					<div class="flex items-center gap-3 text-sm mt-2 flex-wrap text-muted-foreground">
-						{#if sexualPosition !== null && sexualPosition !== undefined}
+						{#if sexualPosition != null}
 							<SexualPosition {sexualPosition} />
 						{/if}
 						<Height {height} {weight} {bodyType} />
 					</div>
 				{/if}
 				<ProfileTags tags={profileTags} />
-				{#if aboutMe !== null}
+				{#if aboutMe != null}
 					<AboutMe>{aboutMe}</AboutMe>
 				{/if}
-				{#if (genders && genders.length > 0) || (pronouns && pronouns.length > 0) || ethnicity !== null || relationshipStatus !== null || (grindrTribes && grindrTribes.length > 0)}
+				{#if (genders && genders.length > 0) || (pronouns && pronouns.length > 0) || ethnicity != null || relationshipStatus != null || (grindrTribes && grindrTribes.length > 0)}
 					<div class="flex flex-col gap-2 mt-6">
 						<span class="uppercase text-[11px] font-semibold tracking-widest text-muted-foreground/70 px-0.5">Stats</span>
 						<Genders {genders} {pronouns} />
@@ -395,7 +529,7 @@
 						<RelationshipStatus {relationshipStatus} />
 					</div>
 				{/if}
-				{#if (lookingFor && lookingFor.length > 0) || (meetAt && meetAt.length > 0) || nsfw !== null}
+				{#if (lookingFor && lookingFor.length > 0) || (meetAt && meetAt.length > 0) || nsfw != null}
 					<div class="flex flex-col gap-2 mt-6">
 						<span class="uppercase text-[11px] font-semibold tracking-widest text-muted-foreground/70 px-0.5">
 							Expectations
@@ -405,7 +539,7 @@
 						<NSFWPics nsfwPics={nsfw} />
 					</div>
 				{/if}
-				{#if hivStatus !== null || lastTestedDateValue !== null || (sexualHealthValue && sexualHealthValue.length > 0)}
+				{#if hivStatus != null || lastTestedDateValue != null || (sexualHealthValue && sexualHealthValue.length > 0)}
 					<div class="flex flex-col gap-2 mt-6">
 						<span class="uppercase text-[11px] font-semibold tracking-widest text-muted-foreground/70 px-0.5">Health</span>
 						<HivStatus {hivStatus} />

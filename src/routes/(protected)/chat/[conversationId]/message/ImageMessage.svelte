@@ -32,7 +32,21 @@
 	// and re-invoke `fetch_authed_bytes`, re-fetching + re-decoding a multi-MB data
 	// URL on the WebView main thread on every poll -> UI lock. Track the last raw
 	// URL we resolved and early-return when it hasn't actually changed.
-	let lastResolvedUrl: string | undefined = $state(undefined);
+	//
+	// This MUST stay a plain `let`, not `$state`. `$state` makes the read of
+	// `lastResolvedUrl` a tracked dependency, and Svelte 5.55.5 self-schedules an
+	// effect that writes to a source it read
+	// (`internal/client/reactivity/sources.js`, the `untracked_writes` block).
+	// The effect therefore re-runs immediately after its first body: `update_effect`
+	// runs the teardown BEFORE the re-run body (`runtime.js`), so that pass's
+	// early return registers no teardown, the in-flight promise resolves, and
+	// `!cancelled` is false — `displayUrl` is NEVER set to the data URL. The
+	// inline `<img>` still worked (AuthedImage has its own onerror retry) which
+	// hid the bug, but `<a href={effectiveUrl}>` — which PhotoSwipe opens as a
+	// direct navigation with no auth header — stayed a 403 black box. It is only
+	// read and written inside this one effect, so it needs no reactivity at all;
+	// `AudioMessage.svelte` already uses a plain `let cancelled` for the same job.
+	let lastResolvedUrl: string | undefined;
 	$effect(() => {
 		const raw = message.url;
 		if (raw === lastResolvedUrl) return;

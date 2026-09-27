@@ -150,8 +150,39 @@ cd ~/fdroid && fdroid update
 ```
 
 That's it — the index is regenerated and re-signed in place, and F-Droid clients that have the repo
-added will show the update on their next refresh. Keep bumping `versionCode` each release (the build
-does this) so F-Droid recognises it as newer.
+added will show the update on their next refresh.
+
+**Bump `versionCode` in `src-tauri/tauri.conf.json` yourself, and read it back out of the built
+APK after every build.** Two things to know:
+
+- **The build does not do this for you.** `autoIncrementVersionCode` is `false` and an explicit
+  `versionCode` is set, so nothing increments it. (This paragraph used to say "the build does this",
+  which has been false since v0.1.33 and caused a non-increasing code to be shipped.)
+- **Even when it was `true`, it was unsafe.** It *overrides* the value in `tauri.conf.json` and
+  consumes one code per build invocation, and it is **non-monotonic** — a rebuild once produced a
+  *lower* `versionCode` than the build before it, which F-Droid reads as "not newer" and silently
+  never offers. It was turned off for that reason.
+
+So, per release:
+
+1. Set `version` and `bundle.android.versionCode` in `src-tauri/tauri.conf.json`. Bump the
+   `versionCode` yourself; it must be **strictly greater** than the currently published one
+   (v0.1.33 = 1068).
+2. Keep the two generated copies in step — see
+   [BUILDING.md → Do not build the Gradle project directly](./BUILDING.md#do-not-build-the-gradle-project-directly).
+   `app/tauri.properties` is the one `build.gradle.kts` actually reads for the shipped code, so
+   editing only `tauri.conf.json` and building the Gradle project directly ships a *different*
+   `versionCode` than you think.
+3. Verify from the artifact, not from the config:
+
+   ```bash
+   aapt2 dump badging ~/grindrx-artifacts/GrindrX-vX.Y.Z.apk | grep ^package
+   # package: name='com.grindrx.app' versionCode='1068' versionName='0.1.33' ...
+   ```
+
+   `fdroid update` reads the same values straight out of the APK, so this is the only check that
+   reflects what clients will actually be offered. If the number here is not higher than the
+   previous release, F-Droid will not show an update and nothing will warn you.
 
 ---
 

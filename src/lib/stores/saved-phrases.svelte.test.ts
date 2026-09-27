@@ -27,7 +27,7 @@ function createMemoryStorage(): Storage {
 		get length() {
 			return store.size;
 		},
-	} as Storage;
+	};
 }
 
 beforeEach(() => {
@@ -153,5 +153,79 @@ describe("saved-phrases store", () => {
 		const { getSavedPhrases } = await import("$lib/stores/saved-phrases.svelte");
 
 		expect(getSavedPhrases()).toEqual([]);
+	});
+
+	// `addSavedPhrase` returns `null` for BOTH "empty text" and "list is at the
+	// cap", which is why the drawer could not tell a no-op from a full list and
+	// silently did nothing. `savedPhraseLimitReached` is the distinguishing
+	// signal.
+	it("addSavedPhrase reports a full list via savedPhraseLimitReached", async () => {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+		const { SAVED_PHRASES_MAX, addSavedPhrase, getSavedPhrases, savedPhraseLimitReached } =
+			await import("$lib/stores/saved-phrases.svelte");
+
+		expect(savedPhraseLimitReached()).toBe(false);
+		// Fill to the cap.
+		for (let i = 0; i < SAVED_PHRASES_MAX; i++) {
+			expect(addSavedPhrase(`phrase ${i}`)).not.toBeNull();
+		}
+		expect(getSavedPhrases()).toHaveLength(SAVED_PHRASES_MAX);
+		expect(savedPhraseLimitReached()).toBe(true);
+
+		// At the cap the add is refused...
+		expect(addSavedPhrase("one too many")).toBeNull();
+		expect(getSavedPhrases()).toHaveLength(SAVED_PHRASES_MAX);
+
+		// ...while EMPTY text is still not "at the limit", so a caller can
+		// distinguish the two null causes.
+		expect(savedPhraseLimitReached()).toBe(true);
+	});
+
+	it("savedPhraseLimitReached is false for an empty list and reflects removals", async () => {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+		const { addSavedPhrase, removeSavedPhrase, savedPhraseLimitReached } =
+			await import("$lib/stores/saved-phrases.svelte");
+
+		expect(savedPhraseLimitReached()).toBe(false);
+		const created = addSavedPhrase("one");
+		expect(savedPhraseLimitReached()).toBe(false);
+		removeSavedPhrase(created?.id ?? "");
+		expect(savedPhraseLimitReached()).toBe(false);
+	});
+
+	// A localStorage quota failure (or private-mode write denial) was a
+	// `console.error` only, so a phrase looked saved and then vanished on the next
+	// reload with no explanation. It is now exposed reactively.
+	it("exposes a persistence failure reactively and clears it on the next success", async () => {
+		localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+		const failing: Storage = {
+			getItem: (key: string) => (key === STORAGE_KEY ? "[]" : null),
+			setItem: () => {
+				throw new DOMException("quota exceeded", "QuotaExceededError");
+			},
+			removeItem: () => {},
+			clear: () => {},
+			key: () => null,
+			length: 0,
+		};
+		vi.stubGlobal("localStorage", failing);
+
+		const { addSavedPhrase, getSavedPhrasesPersistError } = await import(
+			"$lib/stores/saved-phrases.svelte"
+		);
+		// Silence the deliberate console.error this test provokes.
+		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		expect(getSavedPhrasesPersistError()).toBeNull();
+		expect(addSavedPhrase("will not persist")).not.toBeNull();
+		expect(getSavedPhrasesPersistError()).toBeInstanceOf(Error);
+		expect(getSavedPhrasesPersistError()?.message).toContain("quota exceeded");
+
+		// A later successful write clears it.
+		vi.stubGlobal("localStorage", createMemoryStorage());
+		expect(addSavedPhrase("will persist")).not.toBeNull();
+		expect(getSavedPhrasesPersistError()).toBeNull();
+
+		spy.mockRestore();
 	});
 });

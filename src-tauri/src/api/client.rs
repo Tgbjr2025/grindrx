@@ -35,10 +35,18 @@ fn build_http_client(headers: HeaderMap) -> Result<Client, reqwest::Error> {
 
 pub struct GrindrClient {
     pub(super) http: RwLock<Client>,
-    pub(super) default_headers: RwLock<HeaderMap>,
     pub(super) session: RwLock<Option<Session>>,
     pub(super) refresh_lock: Mutex<()>,
     pub user_agent: RwLock<String>,
+    /// B5: `Some(reason)` when secure storage could not be reached at startup.
+    ///
+    /// `storage::init_keyring` only `eprintln!`s when `Store::new()` fails, so
+    /// `keyring_core::set_default_store` is never called and every `Entry::new`
+    /// returns `NoStore` forever. The app starts normally and every login then
+    /// fails with an opaque `AppError::Auth`. Recorded here at construction and
+    /// surfaced by the `auth_state` command. Read before the client is moved
+    /// into the `OnceLock`.
+    pub keyring_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,9 +75,14 @@ impl GrindrClient {
         };
         let user_agent = build_user_agent(&device, "Free");
         let headers = build_default_headers(&device, &user_agent);
+        // B5: stays `None` unless the keystore read below failed. `unused_mut` is
+        // allowed because on macOS-without-keychain the cfg strips the only
+        // assignment, leaving the binding immutable there.
+        #[allow(unused_mut)]
+        let mut keyring_error: Option<String> = None;
 
         // FIX 10: add request and connect timeouts so hung API calls don't freeze the app
-        let http = build_http_client(headers.clone())?;
+        let http = build_http_client(headers)?;
 
         #[cfg(all(target_os = "macos", not(feature = "keychain")))]
         let session = None;
@@ -79,7 +92,11 @@ impl GrindrClient {
         let session = match super::auth::AuthStorage::get_session_blocking() {
             Ok(s) => s,
             Err(e) => {
+                // B5: do not stay silent. Without a default store this is
+                // `NoStore` on every call and the user can never log in again
+                // in this process — record it so `auth_state` can say so.
                 eprintln!("[client] could not load session: {e}");
+                keyring_error = Some(e.to_string());
                 None
             }
         };
@@ -104,13 +121,21 @@ impl GrindrClient {
 
         Ok(Self {
             http: RwLock::new(http),
-            default_headers: RwLock::new(headers),
             session: RwLock::new(session),
             refresh_lock: Mutex::new(()),
             user_agent: RwLock::new(user_agent),
+            keyring_error,
         })
     }
 
+    /// B9 (`reload_session`): the `#[allow(dead_code)]` is correct and the
+    /// cfg still matches. This IS live on `target_os = "macos"` without the
+    /// `keychain` feature: there `new()` hardcodes `session = None` (the file
+    /// store in `storage.rs` is the credential backend, and reading it is a
+    /// blocking keystore call that cannot happen in the sync constructor), so
+    /// the only way the session reaches `GrindrClient` is this method, called
+    /// from the `setup` hook in `lib.rs`. It is dead code on every other target,
+    /// which is what the allow is for. Keep it and keep the allow.
     #[allow(dead_code)]
     pub async fn reload_session(&self) {
         match super::auth::AuthStorage::get_session().await {
@@ -124,10 +149,26 @@ impl GrindrClient {
 pub async fn rotate_api_params(
     state: tauri::State<'_, AppState>,
 ) -> Result<RotateResult, AppError> {
+    // B8: this is an unlimited synchronous-keystore-write primitive that any
+    // WebView caller can invoke in a tight loop, each write costing tens of
+    // milliseconds of JNI on Android. It SHOULD be rate-limited. A real limiter
+    // needs per-caller state (a cooldown timestamp in `AppState`) and that
+    // could not be compiled on the audit host, so it is NOT done here — treat
+    // this as a known gap, not as an intentional omission.
     let client = state.client()?;
 
     let device = DeviceInfo::default();
-    if let Err(e) = DeviceStorage::save(&device) {
+    // B4: `DeviceStorage::save` is a synchronous keystore write. This is an
+    // `async fn` on the shared runtime, so run it on the blocking pool. The
+    // sibling call in `GrindrClient::new()` is left synchronous on purpose:
+    // that constructor runs in Tauri's `setup` hook and cannot await.
+    let persisted = tauri::async_runtime::spawn_blocking({
+        let device = device.clone();
+        move || DeviceStorage::save(&device)
+    })
+    .await
+    .map_err(|e| AppError::Auth(format!("Keyring write task failed: {e}")))?;
+    if let Err(e) = persisted {
         eprintln!("[client] could not persist rotated device info: {e}");
     }
     let user_agent = build_user_agent(&device, "Free");
@@ -135,7 +176,6 @@ pub async fn rotate_api_params(
     let http = build_http_client(headers.clone())?;
 
     *client.http.write().await = http;
-    *client.default_headers.write().await = headers.clone();
 
     // FIX 6: return the newly generated values, not the old ones
     let new_ua = user_agent.clone();
@@ -145,6 +185,21 @@ pub async fn rotate_api_params(
         .unwrap_or("")
         .to_owned();
     *client.user_agent.write().await = user_agent;
+
+    // B8: the live WebSocket handshake still carries the OLD User-Agent, so REST
+    // and WS would present two different device identities to Grindr for the
+    // rest of the session. Bumping the epoch drops the socket (see
+    // `AppState::ws_epoch`).
+    //
+    // The `auth_notify` wakeup is REQUIRED, not optional: `run_ws_loop` treats
+    // this as `AppError::Auth` ("wait for the next login") and then blocks on
+    // `auth_notify.notified()`. Bumping the epoch alone would drop the socket
+    // and never bring it back for an already-logged-in user — turning a stale
+    // User-Agent into a permanently dead WebSocket. This is the same pair
+    // `login` uses. Epoch first, then notify, so the waiter observes the new
+    // value.
+    state.bump_ws_epoch();
+    state.auth_notify.notify_one();
 
     Ok(RotateResult {
         user_agent: new_ua,

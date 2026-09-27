@@ -71,6 +71,42 @@ fn is_safe_api_path(path: &str) -> bool {
     first[1..].chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
+/// B6: validate a WebView-supplied `mime_type` before it is interpolated into a
+/// hand-built multipart body. Accepts exactly `^image/[a-z0-9][a-z0-9.+-]{0,63}$`
+/// — an `image/` prefix and a single lowercase MIME token, no parameters, no
+/// whitespace, and therefore no CR/LF. Returns an owned `String` so the caller
+/// interpolates a value that provably cannot terminate the header line.
+///
+/// Rejects rather than silently substituting a default: a wrong Content-Type
+/// here is a caller bug worth surfacing, and the previous silent fallback to
+/// `image/jpeg` hid exactly the CRLF payloads this exists to stop.
+fn sanitize_image_mime(mime_type: &str) -> Result<String, AppError> {
+    let Some(subtype) = mime_type.strip_prefix("image/") else {
+        return Err(AppError::Http(format!(
+            "Unsupported image content type: {mime_type:?}"
+        )));
+    };
+    if subtype.is_empty() || subtype.len() > 64 {
+        return Err(AppError::Http(format!(
+            "Unsupported image content type: {mime_type:?}"
+        )));
+    }
+    let mut chars = subtype.chars();
+    // First character: alphanumeric only, so a subtype can never start with `.`
+    // or `-` (which would be a malformed token, not an injection).
+    if !chars.next().is_some_and(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::Http(format!(
+            "Unsupported image content type: {mime_type:?}"
+        )));
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-')) {
+        return Err(AppError::Http(format!(
+            "Unsupported image content type: {mime_type:?}"
+        )));
+    }
+    Ok(mime_type.to_owned())
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct RawResponse {
     pub status: u16,
@@ -110,7 +146,11 @@ impl GrindrClient {
         let response = request.send().await?;
 
         if !response.status().is_success() {
-            let json: serde_json::Value = response.json().await.unwrap_or_default();
+            // B3: was `response.json().await` with NO cap.
+            let bytes = stream_capped_body(response, MAX_AUTH_RESPONSE_BYTES)
+                .await
+                .unwrap_or_default();
+            let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
             // Keep the field i64 end-to-end. It used to be truncated with
             // `as i32`, which WRAPS: a server code of 4294967697 became 401,
             // and `authorization_header` treats 401/403 as "session invalid" and
@@ -126,7 +166,13 @@ impl GrindrClient {
             });
         }
 
-        response.json::<TResp>().await.map_err(Into::into)
+        // B3: was `response.json::<TResp>().await` with NO cap. `from_slice`
+        // needs an explicit error mapping: there is no `From<serde_json::Error>
+        // for AppError`, so `Into::into` (which worked for `reqwest::Error`)
+        // would not compile here.
+        let bytes = stream_capped_body(response, MAX_AUTH_RESPONSE_BYTES).await?;
+        serde_json::from_slice::<TResp>(&bytes)
+            .map_err(|e| AppError::Http(format!("Failed to decode response body: {e}")))
     }
 
     async fn request_raw(
@@ -312,13 +358,22 @@ pub async fn upload_image(
         .post(format!("{BASE_URL}/v5/chat/media/upload?takenOnGrindr=false"))
         .header("Authorization", authorization)
         .header("L-Grindr-Roles", grindr_roles_header_value())
+        // B6: no `safe_mime` validation needed here (unlike
+        // `upload_album_content`, which hand-builds a multipart body) —
+        // reqwest turns this into a `HeaderValue`, and `HeaderValue` rejects
+        // CR/LF, so a hostile `mime_type` cannot inject a header. Note this
+        // command also carries `audio/*` uploads, so the `image/` requirement
+        // must not be copied here.
         .header("Content-Type", &mime_type)
         .body(bytes)
         .send()
         .await?;
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    // B3: was `response.text().await` with NO cap on any upload path.
+    let body =
+        String::from_utf8_lossy(&stream_capped_body(response, MAX_UPLOAD_RESPONSE_BYTES).await?)
+            .into_owned();
 
     Ok(UploadImageResult { status, body })
 }
@@ -353,13 +408,15 @@ pub async fn upload_album_content(
         .decode(&image_base64)
         .map_err(|e| AppError::Http(format!("Failed to decode image base64: {e}")))?;
 
-    // Only send an image Content-Type; anything else would be sent to a
-    // multipart endpoint as an opaque blob. Default to JPEG when unknown.
-    let safe_mime = if mime_type.starts_with("image/") {
-        mime_type
-    } else {
-        "image/jpeg".to_owned()
-    };
+    // B6: this string comes from the WebView and is interpolated into a
+    // hand-built multipart body below. The old `starts_with("image/")` check let
+    // `image/jpeg\r\n\r\n--boundary\r\nContent-Disposition: ...` through, which
+    // injects an extra part into an AUTHENTICATED
+    // `POST /v1/albums/{id}/content` (e.g. to forge a second part or a field).
+    // Require exactly `image/` followed by a short lowercase MIME token.
+    // No new dependency: a hand-rolled char-class check, matching the style of
+    // `is_safe_api_path` above.
+    let safe_mime = sanitize_image_mime(&mime_type)?;
 
     let authorization = state
         .client()?
@@ -393,7 +450,10 @@ pub async fn upload_album_content(
         .await?;
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    // B3: was `response.text().await` with NO cap on any upload path.
+    let body =
+        String::from_utf8_lossy(&stream_capped_body(response, MAX_UPLOAD_RESPONSE_BYTES).await?)
+            .into_owned();
 
     Ok(UploadImageResult { status, body })
 }
@@ -466,13 +526,19 @@ pub async fn upload_profile_image(
         .post(url)
         .header("Authorization", authorization)
         .header("L-Grindr-Roles", grindr_roles_header_value())
+        // B6: safe without a `safe_mime` check (unlike `upload_album_content`,
+        // which hand-builds a multipart body) because reqwest validates this as a
+        // `HeaderValue`, which rejects CR/LF.
         .header("Content-Type", &mime_type)
         .body(bytes)
         .send()
         .await?;
 
     let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
+    // B3: was `response.text().await` with NO cap on any upload path.
+    let body =
+        String::from_utf8_lossy(&stream_capped_body(response, MAX_UPLOAD_RESPONSE_BYTES).await?)
+            .into_owned();
 
     Ok(UploadImageResult { status, body })
 }
@@ -489,7 +555,31 @@ const MAX_FETCH_BYTES: usize = 10 * 1024 * 1024;
 /// so this only needs to accommodate big JSON/msgpack payloads.
 const MAX_API_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
-async fn stream_capped_body(
+/// B3: cap for the JSON bodies read on the AUTH path (`request_json`, which
+/// backs `login` and `refresh_token`, and the `forgot_password` error body).
+/// These are small, fixed-shape JSON documents; 1 MiB is orders of magnitude
+/// more than any real one. `request_json` is `pub(super)`, so this cap is too
+/// (used by `api::auth`).
+pub(super) const MAX_AUTH_RESPONSE_BYTES: usize = 1024 * 1024;
+
+/// B3: cap for an upload command's response body. The requests are capped at
+/// ~22 MB of image bytes but the RESPONSE is a small JSON receipt
+/// (`{mediaId, mediaHash, url}` / `{contentId, contentUrl}`). 32 MiB is kept
+/// to preserve the previous unbounded behaviour's tolerance rather than to be
+/// justified by real payloads.
+const MAX_UPLOAD_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+
+/// B3: cap for the fixed-URL release / stats / telemetry fetches. These return
+/// small JSON documents; 256 KiB is generous (the GitHub releases list with
+/// `per_page=100` plus full changelog bodies is the largest, and is ~100s of KiB
+/// at most). Keeps a hostile or misconfigured upstream from streaming forever
+/// into a mobile process.
+const MAX_PUBLIC_JSON_BYTES: usize = 256 * 1024;
+
+/// Read a response body with a hard byte cap, including for chunked responses
+/// that declare no `Content-Length`. `response.bytes()` would buffer everything
+/// before the size could be checked. Shared by every non-media response path.
+pub(super) async fn stream_capped_body(
     response: reqwest::Response,
     max_bytes: usize,
 ) -> Result<Vec<u8>, AppError> {
@@ -655,6 +745,10 @@ pub async fn fetch_latest_release() -> Result<String, AppError> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(10))
+        // B3: refuse redirects. This request carries no Authorization header, so
+        // there is no token to leak, but following a 30x from a fixed third-party
+        // URL into an unbounded body is exactly what the caps below exist to stop.
+        .redirect(Policy::none())
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
     let response = http
@@ -669,7 +763,11 @@ pub async fn fetch_latest_release() -> Result<String, AppError> {
             response.status()
         )));
     }
-    Ok(response.text().await.unwrap_or_default())
+    // B3: was `response.text().await` with NO cap.
+    Ok(
+        String::from_utf8_lossy(&stream_capped_body(response, MAX_PUBLIC_JSON_BYTES).await?)
+            .into_owned(),
+    )
 }
 
 /// Aggregate download stats source: fetches the GitHub + Forgejo release lists
@@ -688,6 +786,8 @@ pub async fn fetch_download_stats() -> Result<String, AppError> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(10))
+        // B3: refuse redirects — see `fetch_latest_release`.
+        .redirect(Policy::none())
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
 
@@ -700,7 +800,11 @@ pub async fn fetch_download_stats() -> Result<String, AppError> {
             .await
         {
             Ok(resp) if resp.status().is_success() => {
-                resp.text().await.unwrap_or_else(|_| "null".to_owned())
+                // B3: was `resp.text().await` with NO cap.
+                match stream_capped_body(resp, MAX_PUBLIC_JSON_BYTES).await {
+                    Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                    Err(_) => "null".to_owned(),
+                }
             }
             _ => "null".to_owned(),
         }
@@ -720,6 +824,8 @@ pub async fn fetch_active_users() -> Result<String, AppError> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .connect_timeout(std::time::Duration::from_secs(8))
+        // B3: refuse redirects — see `fetch_latest_release`.
+        .redirect(Policy::none())
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
     let response = http
@@ -733,7 +839,11 @@ pub async fn fetch_active_users() -> Result<String, AppError> {
             response.status()
         )));
     }
-    Ok(response.text().await.unwrap_or_default())
+    // B3: was `response.text().await` with NO cap.
+    Ok(
+        String::from_utf8_lossy(&stream_capped_body(response, MAX_PUBLIC_JSON_BYTES).await?)
+            .into_owned(),
+    )
 }
 
 /// Fire-and-forget anonymous usage ping so active-user counts can be aggregated.
@@ -756,10 +866,42 @@ pub async fn send_usage_ping(id: String, version: String) -> Result<(), AppError
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .connect_timeout(std::time::Duration::from_secs(6))
+        // B3: refuse redirects — see `fetch_latest_release`.
+        .redirect(Policy::none())
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
     http.post(url).send().await?;
     Ok(())
+}
+
+/// B7: HTTP verbs the generic `request`/`request_public` bridges will forward.
+///
+/// `Method::from_str` accepts ANY token, so without this a compromised WebView
+/// could drive DELETE/PATCH/TRACE/arbitrary custom verbs at any `vN/...` path
+/// on grindr.mobi while the bridge attaches the user's bearer token. The Grindr
+/// API only needs these five; anything else is a bug or an attack.
+const ALLOWED_BRIDGE_METHODS: [Method; 5] = [
+    Method::GET,
+    Method::POST,
+    Method::PUT,
+    Method::PATCH,
+    Method::DELETE,
+];
+
+/// Parse and authorise the caller-supplied verb. Same error style as the
+/// neighbouring path guard.
+fn parse_bridge_method(method: &str) -> Result<Method, AppError> {
+    let parsed = Method::from_str(method).map_err(|_| AppError::Api {
+        code: 400,
+        message: format!("Invalid method: {method}"),
+    })?;
+    if !ALLOWED_BRIDGE_METHODS.contains(&parsed) {
+        return Err(AppError::Api {
+            code: 405,
+            message: format!("HTTP method not allowed: {method}"),
+        });
+    }
+    Ok(parsed)
 }
 
 #[derive(Deserialize)]
@@ -790,10 +932,9 @@ pub async fn request(
     let payload: RequestPayload = rmp_serde::from_slice(&bytes)
     	.map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
 
-    let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
-        code: 400,
-        message: format!("Invalid method: {}", payload.method),
-    })?;
+    // B7: `Method::from_str` accepts any token, so this also enforces the
+    // verb allow-list. Same error shape as the `is_safe_api_path` guard below.
+    let method = parse_bridge_method(&payload.method)?;
 
     // Guard against an XSS-compromised WebView pivoting the credentialed client
     // at arbitrary endpoints or other hosts via `path`.
@@ -837,10 +978,7 @@ pub async fn request_public(
     let payload: RequestPayload = rmp_serde::from_slice(&bytes)
     	.map_err(|e| AppError::Http(format!("Failed to decode request payload: {e}")))?;
 
-    let method = Method::from_str(&payload.method).map_err(|_| AppError::Api {
-        code: 400,
-        message: format!("Invalid method: {}", payload.method),
-    })?;
+    let method = parse_bridge_method(&payload.method)?;
 
     if !is_safe_api_path(&payload.path) {
         return Err(AppError::Http(format!(

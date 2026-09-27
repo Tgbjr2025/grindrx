@@ -14,9 +14,11 @@
 
 	const { data }: import("./$types").PageProps = $props();
 
-	// The composite version string is built as `OpenGrind/<v>\ngrindr3/...` (see
-	// svelte.config.js). Show it under the GrindrX brand instead of upstream's.
-	const displayVersion = version.replace(/OpenGrind/gi, "GrindrX");
+	// The composite version string is built as `GrindrX/<v>\ngrindr3/...` (see
+	// svelte.config.js). It is branded correctly at build time, so it is shown
+	// verbatim — it used to be rewritten here with a `.replace(/OpenGrind/gi, …)`,
+	// which patched only this one of the two places the string surfaces.
+	const displayVersion = version;
 
 	let tourOpen = $state(false);
 </script>

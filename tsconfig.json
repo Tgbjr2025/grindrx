@@ -10,7 +10,13 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler",
-		"types": ["@types/leaflet", "@types/lodash-es"]
+		// `types` takes PACKAGE NAMES resolved from node_modules/@types, not scoped
+		// paths. It was ["@types/leaflet", "@types/lodash-es"], which resolves to
+		// nothing AND, because a non-empty `types` disables automatic @types
+		// inclusion, silently turned off every other ambient global type in the
+		// project. Harmless today only because all globals come from explicit
+		// imports — but it is a trap. See THIRD_PARTY_NOTICES.md.
+		"types": ["leaflet", "lodash-es"]
 	}
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files

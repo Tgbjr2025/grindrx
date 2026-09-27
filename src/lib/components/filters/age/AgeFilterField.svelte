@@ -16,12 +16,18 @@
 	<FilterField>
 		<Checkbox id="filters-age" bind:checked />
 		<Label for="filters-age">Age</Label>
-		<span class="ml-auto min-w-0 truncate">
+		<!--
+			D23: this is the only place the chosen range is shown, and it never changed
+			for assistive tech. `aria-live="polite"` announces each new value as the
+			slider moves, without interrupting what is already being read.
+		-->
+		<span id="filters-age-value" class="ml-auto min-w-0 truncate" aria-live="polite">
 			{label}
 		</span>
 	</FilterField>
 	<div class="ps-7">
 		<AgeFilterSlider
+			labelledBy="filters-age-value"
 			bind:value={
 				() => value,
 				(v: number[]) => {

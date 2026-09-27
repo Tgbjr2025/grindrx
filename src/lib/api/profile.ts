@@ -34,6 +34,11 @@ export function clearProfileCache(profileId: number) {
 export function clearAllProfileCaches() {
 	myProfileCache = null;
 	profilesCache.clear();
+	// The minted-mediaId cache is the one profile-side cache that is PERSISTED, so
+	// dropping only the in-memory maps left a signed CDN URL (bearer-equivalent
+	// for its ~15 min lifetime) and the user's photo mediaHashes in localStorage
+	// across a sign-out.
+	clearMediaIdCache();
 }
 
 const inflight = new Map<number, Promise<Profile>>();
@@ -233,6 +238,24 @@ function persistMediaIdCache(): void {
  */
 export function invalidateCachedMediaId(key: string): void {
 	if (mediaIdCache.delete(key)) persistMediaIdCache();
+}
+
+/**
+ * Drop every cached minted mediaId, in memory AND in localStorage.
+ *
+ * The persisted value pairs the user's photo mediaHashes with SIGNED CloudFront
+ * URLs, which are bearer-equivalent for their ~15 minute lifetime, so it must
+ * not survive a sign-out. Idempotent, and safe to call when the cache was never
+ * populated.
+ */
+export function clearMediaIdCache(): void {
+	mediaIdCache.clear();
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(MEDIAID_CACHE_KEY);
+	} catch (err) {
+		console.error("[GrindrX] Failed to clear media id cache:", err);
+	}
 }
 
 /**

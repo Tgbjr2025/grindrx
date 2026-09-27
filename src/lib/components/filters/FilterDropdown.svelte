@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { CaretDownIcon } from "phosphor-svelte";
-	import { expoOut } from "svelte/easing";
-	import type { TransitionConfig } from "svelte/transition";
 
 	import FilterBoolean from "./FilterBoolean.svelte";
 
@@ -24,16 +22,8 @@
 	} = $props();
 
 	let expanded = $state(false);
+	const panelId = `filters-${id}-panel`;
 
-	const hide = (node: HTMLDivElement): TransitionConfig => {
-		const height = node.scrollHeight;
-		return {
-			duration: 400,
-			css: (t: number, u: number) =>
-				`height: calc(${t} * ${height}px); opacity: ${t}; margin-top: calc(${u} * -8px)`,
-			easing: expoOut,
-		};
-	};
 </script>
 
 {#snippet endAdornment()}
@@ -43,6 +33,8 @@
 	<FilterBoolean
 		{id}
 		endAdornment={endLabel !== undefined ? endAdornment : undefined}
+		ariaExpanded={expanded}
+		ariaControls={panelId}
 		bind:checked={
 			() => checked,
 			(v: boolean) => {
@@ -56,16 +48,29 @@
 		}
 	>
 		{label}
+		<!-- D23: the caret rotation is the only visual cue for the expand state;
+		     `aria-hidden` because the state is on the checkbox itself. -->
 		<CaretDownIcon
+			aria-hidden="true"
 			class={["transition-transform", { "-rotate-180": expanded }]}
 		/>
 	</FilterBoolean>
-	{#if expanded}
+	<!--
+		`grid` + `1fr`/`0fr` with an `overflow-hidden`/`min-h-0` child is the
+		measurement-free way to animate an unknown height. `--tw-` classes keep it in
+		step with the surrounding Tailwind styling.
+	-->
+	<div
+		class="grid transition-[grid-template-rows,opacity] overflow-clip shrink-0"
+		style:grid-template-rows={expanded ? "1fr" : "0fr"}
+	>
 		<div
-			class={["ps-6 pt-2 overflow-clip shrink-0", contentClass]}
-			transition:hide
+			id={panelId}
+			class={["min-h-0 ps-6 pt-2 overflow-clip shrink-0", contentClass]}
+			aria-hidden={!expanded}
+			inert={!expanded}
 		>
 			{@render children?.()}
 		</div>
-	{/if}
+	</div>
 </div>

@@ -44,22 +44,32 @@ const NOTES_PATH = "/v1/favorites/notes";
  * GET /v1/favorites/notes/{targetProfileId}. Returns the note + phone number for
  * a single favorite, defaulting to empty strings when the profile has no note
  * (the documented "empty for nonexistent notes" case) or the field is missing.
+ *
+ * DATA LOSS (fixed here): this used to be
+ * `try { data = res.json(); } catch { data = {}; }`. Every parse failure —
+ * a WAF interstitial, a truncated proxy body, a schema change that made the
+ * response a bare HTML page — was indistinguishable from "this favorite has no
+ * note", so the caller rendered an empty note for a note the server still had.
+ * The user then typed a replacement and PUT overwrote the pre-existing note,
+ * permanently, with no warning. Now ONLY a genuinely empty body (or a `{}` the
+ * server sent for a nonexistent note) reads as "no note"; a real parse failure
+ * propagates so the UI can show an error instead of an editable blank.
  */
 export async function getFavoriteNote(profileId: number): Promise<FavoriteNote> {
-	const res = await fetchRest(`${NOTES_PATH}/${profileId}`, { method: "GET" });
+	const path = `${NOTES_PATH}/${profileId}`;
+	const res = await fetchRest(path, { method: "GET" });
 	if (res.status >= 400) {
-		throw new ApiHttpError(res.status, res.text(), `${NOTES_PATH}/${profileId}`);
+		throw new ApiHttpError(res.status, res.text(), path);
 	}
-	// Parse defensively via `parseNote` rather than `jsonParsed`: an empty note
-	// can come back as `{}` (or an empty body), which the tolerant schema turns
-	// into empty strings instead of throwing.
-	let data: unknown;
-	try {
-		data = res.json();
-	} catch {
-		data = {};
+	// A 200 with a zero-length body is the server saying "nothing saved here".
+	// Anything else must actually parse.
+	if (res.text().trim() === "") {
+		return { notes: "", phoneNumber: "" };
 	}
-	return parseNote(data);
+	// Parse defensively via `parseNote` rather than `jsonParsed`: `parseNote` is
+	// total (it tolerates missing/wrong-typed FIELDS), while a body that is not
+	// JSON at all now throws instead of being read as an empty note.
+	return parseNote(res.json());
 }
 
 /**

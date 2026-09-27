@@ -12,15 +12,16 @@
 
 	import ContextMenu from "$lib/components/ContextMenu.svelte";
 	import { Button } from "$lib/components/ui/button";
-	import ReportDialog from "./ReportDialog.svelte";
 
 	let {
 		textContent,
 		reactionAvailable,
+		ourReactionTypes,
 		reportProfileId,
 		onDelete,
 		onUnsend,
 		onReact,
+		onReport,
 		// Pulled out of the rest-spread: reaching it as `props.onClose()` left it
 		// untyped, so every call site tripped no-unsafe-call. Its type comes from
 		// ComponentProps<typeof ContextMenu>, which already declares it.
@@ -31,11 +32,25 @@
 		    no-op is supplied at the call site. */
 		onClose?: () => void;
 		reactionAvailable?: boolean;
+		/** Reaction TYPES the current user already holds on this message, so the
+		    picker can mark them pressed instead of looking identical to unheld ones. */
+		ourReactionTypes?: number[];
 		reportProfileId?: number;
 		textContent?: string;
 		onDelete?: () => void;
 		onUnsend?: () => void;
 		onReact?: (reactionType: number) => void;
+		/**
+		 * Open the report dialog.
+		 *
+		 * `ReportDialog` is deliberately NOT rendered here. It used to be, and that
+		 * made the Report button a no-op: the handler did `onClose?.(); reportOpen =
+		 * true`, and `onClose` sets `contextMenuOpen = false` in the parent, which
+		 * unmounts this whole component in the SAME flush that mounts the dialog — so
+		 * the component holding `reportOpen` was destroyed before the dialog ever
+		 * rendered. The parent (`Message.svelte`) now owns the dialog.
+		 */
+		onReport?: () => void;
 	} = $props();
 
 	// The full documented reaction set. Previously the ONLY way to react was a
@@ -53,7 +68,7 @@
 		{ type: 6, emoji: "😢", label: "Sad" },
 	];
 
-	let reportOpen = $state(false);
+	const held = $derived(new Set(ourReactionTypes ?? []));
 </script>
 
 <ContextMenu {...props} onClose={onClose ?? (() => {})}>
@@ -71,10 +86,24 @@
 				aria-label="React to this message"
 			>
 				{#each REACTIONS as reaction (reaction.type)}
+					<!-- `size-11` (44px) rather than the previous `size-9` (36px): 36px
+					     is below the 44/48dp minimum target size (WCAG 2.5.5) and these
+					     are the primary touch targets for the whole reaction feature.
+					     The glyph keeps its old visual size. `aria-pressed` +
+					     the ring mark reactions the current user already holds, which
+					     previously looked identical to unheld ones. -->
 					<button
 						type="button"
-						class="size-9 flex items-center justify-center rounded-full bg-muted/80 text-lg leading-none hover:bg-accent transition-colors"
-						aria-label={reaction.label}
+						class={[
+							"size-11 flex items-center justify-center rounded-full text-lg leading-none transition-colors",
+							held.has(reaction.type)
+								? "bg-primary/90 ring-2 ring-primary"
+								: "bg-muted/80 hover:bg-accent",
+						]}
+						aria-label={held.has(reaction.type)
+							? `${reaction.label} (already reacted)`
+							: reaction.label}
+						aria-pressed={held.has(reaction.type)}
 						title={reaction.label}
 						onclick={() => {
 							onReact(reaction.type);
@@ -96,7 +125,13 @@
 								toast.success("Message copied to clipboard");
 								onClose?.();
 							})
-							.catch((error) => console.error(error));
+							// A failed clipboard write used to be `console.error` only,
+							// so the menu simply closed and the user believed the copy had
+							// happened. Say it failed.
+							.catch((error) => {
+								console.error("Failed to copy message", error);
+								toast.error("Couldn't copy to clipboard");
+							});
 					}}
 				>
 					<CopyIcon /> Copy message
@@ -128,8 +163,8 @@
 				<Button
 					variant="ghost"
 					onclick={() => {
+						onReport?.();
 						onClose?.();
-						reportOpen = true;
 					}}
 				>
 					<FlagIcon /> Report
@@ -138,10 +173,6 @@
 		</div>
 	{/snippet}
 </ContextMenu>
-
-{#if reportProfileId !== undefined}
-	<ReportDialog bind:open={reportOpen} profileId={reportProfileId} />
-{/if}
 
 <style lang="postcss">
 	@reference "$layout";

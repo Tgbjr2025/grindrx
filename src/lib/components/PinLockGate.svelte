@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { beforeNavigate } from "$app/navigation";
 	import { FingerprintIcon, LockKeyIcon } from "phosphor-svelte";
 
 	import { promptBiometric } from "$lib/api/biometric";
@@ -11,6 +12,13 @@
 		unlockWithBiometric,
 	} from "$lib/app-data/app-lock.svelte";
 	import { Button } from "$lib/components/ui/button";
+
+	// A8: this gate must outrank the Toaster, which svelte-sonner mounts in the
+	// ROOT layout (outside the lock) at z-index 999999999. At the old z-100 a
+	// toast raised while locked — including "Please log in to continue" from
+	// `$lib/api`'s invalid-session path — rendered straight through the lock
+	// screen.
+	const GATE_Z = "z-1000000000";
 
 	let pin = $state("");
 	let error = $state(false);
@@ -35,6 +43,22 @@
 	// whose Unlock button could never succeed.
 	const pinOn = $derived(isPinEnabled());
 	const biometricOn = $derived(isBiometricUnlockEnabled());
+
+	// A8: nothing may navigate while locked. This gate lives in
+	// `(protected)/+layout.svelte`, so a navigation to `/auth` unmounts it and
+	// the lock screen disappears entirely — which is reachable today, because
+	// the conversations state fetches while locked and `$lib/api` answers an
+	// invalid session with `toast("Please log in to continue")` +
+	// `goto("/auth/sign-in")`. Cancelling here keeps the gate mounted; the
+	// redirect then happens normally on the first request after unlock.
+	//
+	// ROOT-CAUSE INSTRUCTION for whoever owns `src/lib/api/index.ts`: that
+	// redirect must not fire while `isLocked()` is true. This guard is a
+	// backstop, not the fix — a toast can still be raised over the lock screen
+	// from any other module.
+	beforeNavigate((navigation) => {
+		if (isLocked()) navigation.cancel();
+	});
 
 	async function tryBiometric() {
 		if (!isLocked()) return;
@@ -68,8 +92,13 @@
 </script>
 
 {#if isLocked()}
+	<!--
+		A8: renders the gate and nothing else. The parent layout already withholds
+		the protected tree while locked, so this is the outermost thing on screen;
+		it must stay opaque and above every other layer, including toasts.
+	-->
 	<div
-		class="fixed inset-0 z-100 flex flex-col items-center justify-center gap-6 bg-background px-8"
+		class="fixed inset-0 {GATE_Z} flex flex-col items-center justify-center gap-6 bg-background px-8"
 	>
 		{#if pinOn}
 			<div class="flex flex-col items-center gap-3">

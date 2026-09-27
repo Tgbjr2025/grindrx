@@ -8,15 +8,19 @@
 	let {
 		meetAt = null,
 	}: {
-		meetAt?: MeetAtId[] | null;
+		meetAt?: MeetAtId[] | null | undefined;
 	} = $props();
 </script>
 
-{#if meetAt !== null && meetAt.length > 0}
+{#if meetAt != null && meetAt.length > 0}
 	<ProfileField>
 		<HouseIcon class="shrink-0" />
 		<ProfileValueLabel label="Meet At">
-			{meetAt.map((option) => meetAtOptions[option]).join(", ")}
+			<!-- D21: `.filter(Boolean)` — see HealthPractices.svelte. -->
+			{meetAt
+				.map((option) => meetAtOptions[option])
+				.filter(Boolean)
+				.join(", ")}
 		</ProfileValueLabel>
 	</ProfileField>
 {/if}

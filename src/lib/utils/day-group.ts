@@ -36,6 +36,10 @@ export function dayGroupLabel(
 ): string {
 	const days = differenceInCalendarDays(startOfDay(now), dayStart);
 	if (days === 0) return "Today";
+	// "Yesterday" used to render as a bare weekday name (e.g. a message from
+	// yesterday morning read "Friday" with no date, which is indistinguishable
+	// from five days ago). Calendar-day counting makes this exact and DST-safe.
+	if (days === 1) return "Yesterday";
 	if (days > 0 && days < 7) return format(dayStart, "EEEE");
 	return format(dayStart, "E, LLL d");
 }

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
+import { ApiHttpError, throwForStatus } from "$lib/api/http";
 import {
 	albumContentSchema,
 	albumDetailsSchema,
@@ -9,14 +10,68 @@ import {
 	albumMinSchema,
 } from "$lib/model/album";
 
+/**
+ * Per-item tolerant array.
+ *
+ * The album VIEW is a list endpoint, and it was the only one without the
+ * drop-and-log tolerance the rest of the client uses (`$lib/api/conversation`
+ * `conversationsSchema`, `$lib/api/messages` `coerceApiResponseMessage`,
+ * `$lib/api/grid` `searchProfiles`). With a strict `z.array(albumContentSchema)`,
+ * ONE drifted content item — a null `thumbUrl` on a processing photo, a
+ * `remainingViews` the server started sending as a string — threw the entire
+ * parse and left the album grid blank, which is the whole screen. Parse each
+ * entry independently and drop + log the ones that fail, so one bad photo costs
+ * one photo.
+ */
+function tolerantArray<TItem extends z.ZodType>(item: TItem, label: string) {
+	return z
+		.array(z.unknown())
+		.transform((raw) =>
+			raw.flatMap((entry) => {
+				const result = item.safeParse(entry);
+				if (result.success) return [result.data];
+				console.warn(`[GrindrX] dropping unparseable ${label}`, {
+					issue: result.error.issues[0],
+				});
+				return [];
+			}),
+		);
+}
+
+/**
+ * `albumDetailsSchema` declares `createdAt`/`updatedAt` as `z.string()`, but the
+ * album endpoints have also been observed sending them as epoch NUMBERS. That
+ * combination is catastrophic in a strict parse: EVERY album call throws, so
+ * the album grid, the private-photo picker and the album viewer all break at
+ * once, and no amount of per-item tolerance helps because the failure is in the
+ * envelope. Overridden here at the call site (the model file is not ours to
+ * change) so both shapes are accepted. No consumer reads these two fields as
+ * strings, so widening the type is safe.
+ */
+const tolerantAlbumDetailsShape = {
+	...albumDetailsSchema.shape,
+	createdAt: z.union([z.string(), z.number()]),
+	updatedAt: z.union([z.string(), z.number()]),
+};
+
+// DELIBERATE VERSION SPLIT — read before "fixing" either path:
+//   - `/v1/albums*`  — the MANAGEMENT surface: list my albums, create, rename,
+//     delete, add/remove content, list/revoke viewers.
+//   - `/v2/albums*`  — the VIEWING surface: read one album's content
+//     (`GET /v2/albums/{id}`) and create (`POST /v2/albums`).
+// They are not interchangeable and were not unified on purpose: `GET /v1/albums`
+// is the only route that returns the viewer's own album LIST, `POST /v2/albums`
+// is the only create route that answers `{ albumId }`, and `PUT /v2/albums/{id}`
+// is the documented rename. Changing a path here changes which API exists.
+
 const albumResponseSchema = z.object({
 	...albumMinSchema.shape,
-	...albumDetailsSchema.shape,
-	content: z.array(
-		z.object({
-			...albumContentSchema.shape,
+	...tolerantAlbumDetailsShape,
+	content: tolerantArray(
+		albumContentSchema.extend({
 			remainingViews: z.number().int().optional(),
 		}),
+		"album content item",
 	),
 });
 
@@ -34,8 +89,8 @@ const myAlbumSchema = z.object({
 	profileId: z.number().int(),
 	version: z.number().int().optional(),
 	isShareable: z.boolean().optional(),
-	...albumDetailsSchema.shape,
-	content: z.array(albumContentSchema),
+	...tolerantAlbumDetailsShape,
+	content: tolerantArray(albumContentSchema, "my-album content item"),
 });
 
 export type MyAlbum = z.infer<typeof myAlbumSchema>;
@@ -84,15 +139,20 @@ export async function shareAlbum({
 	profileId: number;
 	expirationType: AlbumExpirationType;
 }): Promise<void> {
-	const res = await fetchRest(`/v4/albums/${albumId}/shares`, {
+	const path = `/v4/albums/${albumId}/shares`;
+	const res = await fetchRest(path, {
 		method: "POST",
 		body: {
 			profiles: [{ profileId, expirationType }],
 		},
 	});
-	if (res.status >= 400) {
-		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
-	}
+	// The endpoint answers 200 with an EMPTY body, so nothing downstream can
+	// classify it for us. It also used to throw
+	// `HTTP ${res.status}: ${res.text().slice(0, 200)}`, pasting a raw server
+	// body into the "Failed to share N albums: …" toast. The templated path
+	// (rather than `path`) keeps the concrete album id out of a message that is
+	// surfaced to the user; the real path is what the logs get.
+	throwForStatus(res, "/v4/albums/{albumId}/shares");
 	// Intentionally returns nothing: the real chat message is delivered via the
 	// share itself and reconciled through the WebSocket message_sent event.
 }
@@ -100,13 +160,14 @@ export async function shareAlbum({
 // ---------------------------------------------------------------------------
 // Album management (create / rename / delete / content / viewers)
 //
-// Everything below was ADDED for the settings > Albums management page. The
-// functions above (getAlbumContent / getMyAlbums / shareAlbum) are untouched.
-//
-// Conventions mirrored from `shareAlbum`: go through `fetchRest`, then throw on
-// `res.status >= 400` with the HTTP status + a slice of the body. Response
-// bodies are validated with tolerant zod (safeParse) so a Grindr schema drift
-// degrades gracefully instead of throwing.
+// Conventions mirrored from `shareAlbum`: go through `fetchRest`, then
+// `throwForStatus(res, path)` from `$lib/api/http` — which raises the same
+// `ApiHttpError` as `$lib/api/prefs` and `$lib/api/favorites-notes`, instead of
+// this module's previous `throw new Error(\`Failed to ${action} (HTTP
+// ${res.status}): ${res.text().slice(0, 200)}\`)`, which concatenated a raw
+// server body into a user-facing message. Response bodies are validated with
+// tolerant zod (per-item `safeParse`, or a `.catch()` default) so Grindr schema
+// drift degrades gracefully instead of throwing.
 // ---------------------------------------------------------------------------
 
 /**
@@ -139,15 +200,22 @@ export function buildAlbumNameBody(name: string): { albumName: string } {
 	return { albumName: truncateToUtf8Bytes(String(name), ALBUM_NAME_MAX_BYTES) };
 }
 
+/**
+ * Shared "did the server accept this?" guard for the management calls, whose
+ * success bodies are empty (or a shape we deliberately fall back on).
+ *
+ * The `action` label stays in the LOG only — it used to be the user-facing
+ * message prefix, which meant the raw body was toasted as well.
+ */
 function throwIfError(
 	res: { status: number; text(): string },
 	action: string,
+	path: string,
 ): void {
 	if (res.status >= 400) {
-		throw new Error(
-			`Failed to ${action} (HTTP ${res.status}): ${res.text().slice(0, 200)}`,
-		);
+		console.error(`[GrindrX] Album request failed: ${action}`, res.status);
 	}
+	throwForStatus(res, path);
 }
 
 const createAlbumResponseSchema = z.object({ albumId: z.number().int() });
@@ -161,7 +229,7 @@ export async function createAlbum(name: string): Promise<{ albumId: number }> {
 		method: "POST",
 		body: buildAlbumNameBody(name),
 	});
-	throwIfError(res, "create album");
+	throwIfError(res, "create album", "/v2/albums");
 	const parsed = createAlbumResponseSchema.safeParse(res.json());
 	if (!parsed.success) {
 		throw new Error("Create-album response was missing an albumId");
@@ -189,7 +257,7 @@ export async function renameAlbum({
 		method: "PUT",
 		body: buildAlbumNameBody(name),
 	});
-	throwIfError(res, "rename album");
+	throwIfError(res, "rename album", `/v2/albums/${albumId}`);
 	const parsed = renameAlbumResponseSchema.safeParse(res.json());
 	// The server echoes the new name; if the shape drifts, fall back to what we
 	// sent so the caller still gets a usable result.
@@ -203,7 +271,7 @@ export async function renameAlbum({
  */
 export async function deleteAlbum(albumId: number): Promise<void> {
 	const res = await fetchRest(`/v1/albums/${albumId}`, { method: "DELETE" });
-	throwIfError(res, "delete album");
+	throwIfError(res, "delete album", `/v1/albums/${albumId}`);
 }
 
 const addContentResponseSchema = z.object({
@@ -240,7 +308,9 @@ export async function addAlbumContentFromBytes({
 		mimeType,
 	});
 	if (res.status < 200 || res.status >= 300) {
-		throw new Error(`HTTP ${res.status}: ${res.body.slice(0, 200)}`);
+		// Same reason as everywhere else: the raw body stays in `.body` for logs
+		// instead of being concatenated into a user-facing message.
+		throw new ApiHttpError(res.status, res.body, "/v1/albums/{albumId}/content");
 	}
 	// The documented success body is `{ contentId, contentUrl }`, but treat an
 	// empty/non-JSON 2xx as success-without-an-id rather than failing a photo
@@ -271,7 +341,11 @@ export async function removeAlbumContent({
 		`/v1/albums/${albumId}/content/${contentId}`,
 		{ method: "DELETE" },
 	);
-	throwIfError(res, "remove photo from album");
+	throwIfError(
+		res,
+		"remove photo from album",
+		`/v1/albums/${albumId}/content/${contentId}`,
+	);
 }
 
 /**
@@ -301,7 +375,7 @@ export function parseAlbumViewerIds(data: unknown): number[] {
  */
 export async function getAlbumViewers(albumId: number): Promise<number[]> {
 	const res = await fetchRest(`/v1/albums/${albumId}/shares`);
-	throwIfError(res, "load album viewers");
+	throwIfError(res, "load album viewers", `/v1/albums/${albumId}/shares`);
 	return parseAlbumViewerIds(res.json());
 }
 
@@ -339,5 +413,5 @@ export async function removeAlbumViewer({
 		method: "PUT",
 		body: buildRemoveViewerBody(profileId),
 	});
-	throwIfError(res, "remove viewer");
+	throwIfError(res, "remove viewer", `/v1/albums/${albumId}/unshares`);
 }

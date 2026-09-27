@@ -1,0 +1,113 @@
+name: CI
+
+# Before this file existed, nothing re-ran the test suite: 244 frontend tests and
+# 17 Rust tests existed and passed locally, and no workflow, Dockerfile, service
+# file or Fastfile ever executed them. This is the minimum that would have caught
+# a broken `svelte-check` or a red test before a release is tagged.
+#
+# It is intentionally small. It does NOT build an APK (that needs an NDK, a JDK
+# 17-21 and the four android Rust targets — see BUILDING.md), and it does not
+# sign anything.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (bun + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Keep in sync with "packageManager" in package.json.
+          bun-version: 1.3.11
+
+      # --frozen-lockfile: bun.lock is the only lockfile, so this is the step that
+      # actually enforces it. A plain `bun install` would silently re-resolve and
+      # rewrite bun.lock, which is exactly the drift CI exists to catch.
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run check
+
+      - name: Unit tests
+        run: bun run test:unit
+
+  rust:
+    name: Rust (cargo test --lib)
+    runs-on: ubuntu-latest
+    # !! READ THIS BEFORE TRUSTING A GREEN TICK HERE.
+    #
+    # `cargo test --lib` builds the lib for the HOST, so on ubuntu-latest it
+    # builds it for Linux desktop. That is NOT the same artifact the Android APK
+    # ships:
+    #   - `tauri-plugin-biometric` is behind
+    #     [target.'cfg(target_os = "android")'] / ios in src-tauri/Cargo.toml, so
+    #     it is not compiled at all here.
+    #   - The `keychain` feature and the platform keyring backends
+    #     (android-native-keyring-store, apple-native-keyring-store,
+    #     windows-native-keyring-store) are likewise not exercised.
+    #   - Nothing here is cross-compiled for aarch64-linux-android, so a target-
+    #     specific build break in the Android-only code is invisible to this job.
+    #
+    # flake.nix pins a Linux desktop devshell that provides the same toolchain
+    # this job approximates with the runner image; where that devshell is the
+    # verified path, run `nix develop -c cargo test --manifest-path
+    # src-tauri/Cargo.toml --lib` instead. It is a devshell, not an Android
+    # environment: the Nix androidenv could not resolve the Tauri plugin
+    # projects (see README "Note on the Nix flake" and memory/SESSION_STATE.md),
+    # so the APK itself is still built by hand on the macOS build host.
+    #
+    # TODO(operator): once a Linux container with the Android SDK/NDK is
+    # available, add a second job that runs
+    #   cargo check --target aarch64-linux-android
+    # so the Android-only cfg blocks are compiled at all.
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must match rust-toolchain.toml `channel`. Pinned explicitly (rather than
+      # letting rustup auto-read that file) so this job does not also try to
+      # download the 11 targets listed there, 4 of which are mobile-only and
+      # irrelevant to a host `cargo test --lib`.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+
+      # Caching keyed on Cargo.lock + the manifest. Not on the whole src-tauri
+      # tree: a content change there should not invalidate a dependency build.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Tauri needs the Linux webkit2gtk system libraries to *compile* the tauri
+      # crate, even with no windowing at test time.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
