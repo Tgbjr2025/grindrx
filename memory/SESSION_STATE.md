@@ -637,3 +637,52 @@ pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
   channel); several product decisions (telemetry opt-out, map restore-or-delete, AI-contribution
   policy) are flagged DECISIONS NEEDED in the report. A minimal `.github/workflows/ci.yml` was
   added but has never executed. — agent, operator Tom.
+
+- **2026-09-27 04:00 UTC — v0.1.34 built on the M1, signed, and shipped.** Operator Tom.
+  Commit **`5cda11f`** on `claude/grindrx-freeze-json-audit-gp4lnk`; tags `v0.1.34` and
+  `audit-v0.1.34-rollback-20260927` (at `89e2e41`, the last shipped state) — **PUSHED to both
+  remotes on the operator's explicit instruction** (R11 lift, same as v0.1.33). 167 files,
+  +10930/−1299. `flake.nix` deliberately left dirty (machine-specific).
+  **version 0.1.34, versionCode 1069** — a bump was mandatory, 1068 was already published.
+  **Built on the M1**, `BUILD_EXIT=0`, universal APK, all 4 ABIs, minSdk 28 / targetSdk 36.
+  **APK sha256 `00c8582f62a34ab4befe5b9df416ab82abc30a716b06159254b67d50762cff07`, 71,136,868 B**,
+  copied to both hosts and re-hashed (R5). Verified by raw probe, never assumed: `aapt2 dump
+  badging` + `apksigner verify --print-certs` against the **actual published v0.1.33 artifact** —
+  same package `com.grindrx.app`, same cert `22:D6:…:4C:01`, so it is an in-place upgrade.
+  **Also verified in the built manifest:** `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO`/
+  `READ_EXTERNAL_STORAGE` are **gone**, location perms present, `allowBackup`/
+  `usesCleartextTraffic` still correct.
+
+  **Shipped to:**
+  - **Forgejo** — `main` fast-forwarded `89e2e41 → 5cda11f`; branch + 2 tags; release id 52
+    published with both assets. **Downloaded the APK back from the release URL and re-hashed:
+    identical.** (Index number is 52, not 51 — 51 is v0.1.33.)
+  - **F-Droid** — `~/fdroid` index regenerated + re-signed. **v0.1.33 was never published to
+    F-Droid** (it stopped at v0.1.32/1065), so clients jump straight 0.1.32 → 0.1.34; 1069 > 1068
+    so that is correct, but worth knowing. Live index confirmed serving v0.1.34/1069 with the
+    matching hash. Backups: `~/bk_fdroid_20260927_035601`.
+  - **GitHub — PARTIAL.** Branch + `v0.1.34` + rollback tag are on GitHub and verified, and
+    `main` is **deliberately untouched** at `a547f8e` (diverged `anchor/` history; PR #49 remains
+    the merge path). **The release ASSETS could not be uploaded: no working GitHub API token
+    exists on either host.** The token embedded in the `github` remote URL authenticates *git*
+    (pushes succeed) but the REST API returns `401 Bad credentials` in both Bearer and basic
+    mode; `gh` is unauthenticated on OVH and not installed on the M1; `~/.config/gh/hosts.yml`
+    holds no token. `/releases/tag/v0.1.34` resolves but has **no APK and no sources.zip**.
+    **NEEDS a GitHub token with `repo` scope from the operator to finish.**
+
+  **Two build mistakes, recorded in `memory/FIX_NOTES_v0.1.34.md`:**
+  1. **`rsync --delete` on `src-tauri/gen/android/` deleted the M1's `keystore.properties`** — a
+     machine-local secret that exists nowhere else — so the second build came out **unsigned**.
+     Recovered from the stale `~/open-grind` checkout and verified with `keytool -list`
+     (alias `grindx`, `CN=GrindX, O=GrindX, C=US` = the published cert). **Never `--delete` a
+     build tree that may hold machine-local files.** It then had to go in
+     `gen/android/keystore.properties` (`rootProject.file(...)`), not `gen/android/app/`.
+  2. **The first build silently used the OLD Android manifest** because `gen/android/` had not
+     been synced, so the removed media permissions were still in the APK — caught only by
+     reading the *built* manifest, not from the exit code. A green build is not evidence the
+     right source was compiled.
+
+  **Still not device-tested.** **Still open:** the password-reset endpoint contradiction (needs a
+  live Grindr account), the PIN verifier in plaintext storage, the two stacked
+  keyboard-compensation mechanisms (highest-risk unresolved), and the
+  `MainActivity.createNotificationChannel` visibility + channel-id bump. — agent, operator Tom.
