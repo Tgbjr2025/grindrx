@@ -776,3 +776,37 @@ pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
   matching hash. Gates: 0 type errors / 4 warnings, 461 tests, eslint clean, `cargo check --lib`
   clean. **STILL not device-tested** — and this bug was itself only visible on a real screen, so
   the visual changes still need a human eye. — agent, operator Tom.
+
+- **2026-09-27 05:40 UTC — v0.1.37: the Download button was STILL broken in v0.1.35. My error, twice over.**
+  Operator Tom reported the update banner's Download button still did nothing on v0.1.35 — the
+  exact symptom v0.1.35's release notes claimed to have fixed. **It had not been fixed.**
+  v0.1.35 diagnosed the root cause correctly (`tauri-plugin-opener` 2.5.3's JS invokes
+  `plugin:opener|open_url` while its **Android** build registers the command as `open`; the
+  capability grants `open_url`, a name Android does not have) and built the right fix — a Rust
+  `open_external_url` command using the plugin's Rust API. **But it applied that fix to two of the
+  three call sites** (`Link.svelte`, `LocationMessage.svelte`) **and never touched
+  `UpdateBanner.svelte`**, line 91 of which still called the broken `openUrl` with an unhandled
+  promise. Two releases (v0.1.34, v0.1.35) shipped with the reported button untouched.
+  Verified the Rust half had in fact shipped correctly: `open_external_url` is present in the
+  v0.1.35 `libopen_grind_lib.so` (4 symbol refs), so the backend worked and the banner simply never
+  called it. **The failure was in my verification, not the diagnosis: I confirmed the fix existed in
+  the tree and in the binary, but never re-read the one file the user had named.**
+  **Fix:** `UpdateBanner.svelte` now routes through `openExternalUrl`, and on failure renders the
+  error and the raw release URL instead of failing silently.
+  **Guard added, because this is the second partial fix of the same fix:**
+  `src/lib/api/no-broken-opener.test.ts` fails the build if ANY file under `src/` imports
+  `@tauri-apps/plugin-opener` or calls `openUrl()`; it also asserts `openExternalUrl` and the Rust
+  `generate_handler!` registration still exist, and that it scanned >50 files, so it cannot rot into
+  passing vacuously (the hollow-test trap the audit found in the image-cache suite). Uses
+  `import.meta.glob` rather than `node:fs` because the project has no `@types/node`.
+  **Mutation-tested:** reintroducing the broken import makes it fail and name the file; reverting
+  makes it pass.
+  Commit **`0b0f8bf`**, tag `v0.1.37` + `audit-v0.1.37-rollback-20260927` (at `432766f` = v0.1.36).
+  **version 0.1.37, versionCode 1072**, built on the M1, `BUILD_EXIT=0`, universal, 4 ABIs, same
+  cert/package. **APK sha256 `8dd6fee0e937063df1ee59012382c6ce100ba8ad6553234311271e2674cec722`,
+  71,272,092 B.** Shipped to all three: Forgejo `main` -> `0b0f8bf` + release id 58; GitHub branch +
+  tags (main still `a547f8e`) + release id `397524055` (**downloaded back, sha256 identical**);
+  F-Droid **live** at 0.1.37/1072. Tests 461 → **465**; 0 type errors / 4 warnings; eslint clean;
+  `cargo check --lib` clean. **STILL not device-tested** — and this is the second fix in a row that
+  only a real phone could have caught, so **treat "the button works" as unverified until Tom says
+  so on hardware.** — agent, operator Tom.
