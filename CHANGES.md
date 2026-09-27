@@ -5,6 +5,41 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.37 — the Download button, actually fixed this time (2026-09-27)
+
+**versionCode 1072** (was 1071).
+
+### I shipped v0.1.35 claiming this was fixed. It was not.
+
+v0.1.35's release notes stated the update banner's Download button was fixed. **It was not** — it
+was still calling the broken `openUrl` on line 91 of `UpdateBanner.svelte`. The v0.1.35 pass
+diagnosed the root cause correctly and built the right fix, then applied it to **two of the three
+call sites** (`Link.svelte` and `LocationMessage.svelte`) and never touched the one the report was
+actually about.
+
+The Rust half was fine: `open_external_url` was verified present in the shipped v0.1.35
+`libopen_grind_lib.so` (4 symbol references). So the backend half shipped and worked, and the
+banner simply never called it. Two releases went out with the reported button untouched.
+
+**Fix:** `UpdateBanner.svelte` now routes through `openExternalUrl` and, on failure, shows the
+error and the raw link instead of failing silently.
+
+### A guard, because this happened twice
+
+`src/lib/api/no-broken-opener.test.ts` fails the build if **any** file in `src/` imports
+`@tauri-apps/plugin-opener` or calls `openUrl()`, and separately asserts that
+`openExternalUrl` and the Rust command registration still exist — so the guard cannot rot into
+passing vacuously. It also asserts it scanned a real number of files, which is precisely the
+hollow-test trap the audit found in the image-cache suite.
+
+The guard was **mutation-tested**: reintroducing the broken import makes it fail and name the
+file; removing it makes it pass. It uses `import.meta.glob` rather than `node:fs` because the
+project has no `@types/node` and a lint guard is not worth a dependency change.
+
+Tests 461 → **465**.
+
+---
+
 ## v0.1.36 — the grid was drawing a placeholder person on top of every photo (2026-09-27)
 
 **versionCode 1071** (was 1070). A **regression I introduced in v0.1.34**, not a pre-existing bug.
