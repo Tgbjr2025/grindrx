@@ -2,7 +2,7 @@
 
 > A privacy-focused Grindr client for Android — forked from [open-grind](https://git.opengrind.org/open-grind/open-grind), maintained by [@Tgbjr2025](https://github.com/Tgbjr2025).
 
-**Current release: v0.1.34** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
+**Current release: v0.1.35** · signed universal APK · `minSdk 28` / `targetSdk 36` · arm64-v8a, armeabi-v7a, x86, x86_64
 
 ---
 
@@ -17,15 +17,15 @@ The app also checks for updates on its own: when a newer release exists, an in-a
 ### Verify your download
 
 ```
-SHA-256 (GrindrX-v0.1.34.apk):  00c8582f62a34ab4befe5b9df416ab82abc30a716b06159254b67d50762cff07
-Size:                           71,136,868 bytes
+SHA-256 (GrindrX-v0.1.35.apk):  5636c3e0675b173a850344491735669848b656852c62ed416fb059377e4ba9b1
+Size:                           71,268,236 bytes
 certificate:                    22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
 ```
 
-`sha256sum GrindrX-v0.1.34.apk` and `apksigner verify --print-certs GrindrX-v0.1.34.apk`.
+`sha256sum GrindrX-v0.1.35.apk` and `apksigner verify --print-certs GrindrX-v0.1.35.apk`.
 
-> **Status:** v0.1.34 builds, is signed with the long-standing key, and carries a
-> higher `versionCode` (1069) than v0.1.33 (1068), so it upgrades in place. It has
+> **Status:** v0.1.35 builds, is signed with the long-standing key, and carries a
+> higher `versionCode` (1070) than v0.1.34 (1069), so it upgrades in place. It has
 > **not yet been tested on a physical device** — the fixes are verified at build
 > and test level only. Try it on a spare device first, and keep the previous APK
 > around until you have.
@@ -107,7 +107,9 @@ the bundled third-party components.
 
 **Meta**
 
-- In-app update notifications with changelog
+- In-app update notifications with changelog, and a **blocking "Update required" screen**
+  for versions with a fault that locks you out (it never blocks on a network failure,
+  only ever offers stable releases, and always provides a copy-link fallback)
 - **First-run feature tour** + per-version "What's new" (reopen from Settings → GrindrX)
 - Share GrindrX with a friend (native share sheet)
 - Downloads & active-users stats
@@ -210,7 +212,7 @@ password=your-password
 bun install --frozen-lockfile
 bun run lint        # eslint
 bun run check       # svelte-check (types)
-bun run test:unit   # vitest — 442 tests
+bun run test:unit   # vitest — 461 tests
 bun run test:rust   # cargo test --lib — 17 tests
 ```
 
