@@ -69,6 +69,20 @@
 		/** Square thumbnail (default) or the larger profile render. */
 		variant = "thumb",
 		class: className = "",
+		/**
+		 * Box model for the wrapper element that holds the placeholder and the
+		 * image. OVERRIDE THIS whenever the wrapper has to be taken out of flow.
+		 *
+		 * The default is `relative w-full h-full`, which makes the wrapper an
+		 * in-flow flex item. That is WRONG inside a `flex items-end` parent: the
+		 * item is not stretched on the cross axis, and `h-full` then resolves
+		 * against a content-derived height, so the tile collapses. Every caller
+		 * this component replaced used an ABSOLUTE wrapper for exactly that
+		 * reason, and switching to `relative` is what broke the grid in v0.1.38.
+		 * Pass `absolute w-full h-full overflow-hidden` where the parent sizes
+		 * the tile (the grid tiles, carousels, anything `aspect-*`).
+		 */
+		wrapperClass = "relative w-full h-full overflow-hidden",
 		imgClass = "",
 		/** Placeholder glyph; defaults to a person. */
 		children,
@@ -79,6 +93,8 @@
 		alt?: string;
 		variant?: "thumb" | "profile";
 		class?: string;
+		/** Box model for the wrapper. See the prop docs — the default is in-flow. */
+		wrapperClass?: string;
 		imgClass?: string;
 		children?: import("svelte").Snippet;
 		loading?: "lazy" | "eager";
@@ -166,7 +182,7 @@
 	}
 </script>
 
-<div class="relative w-full h-full overflow-hidden bg-muted {className}">
+<div class="{wrapperClass} bg-muted {className}">
 	{#if children}{@render children()}{:else}<UserIcon
 			weight="fill"
 			color="var(--color-stone-400)"

@@ -58,7 +58,13 @@
 	<CdnImage
 		hash={mediaHash}
 		alt=""
-		class="absolute top-0 left-0"
+		/**
+		 * The `<a>` above is `relative`, so an `absolute` wrapper fills it exactly.
+		 * This must NOT go in `class` — the wrapper already defaults to
+		 * `relative`, and `relative` + `absolute` on one element is a Tailwind
+		 * conflict resolved by CSS source order rather than by intent.
+		 */
+		wrapperClass="absolute w-full h-full overflow-hidden"
 		imgClass="bg-stone-700"
 		onload={measure}
 	/>
