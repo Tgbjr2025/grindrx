@@ -128,11 +128,13 @@
 			}}
 		>
 			{#each medias as { mediaHash, createdAt }}
-				<ImageCarouselItem
-					src="https://cdns.grindr.com/images/profile/1024x1024/{mediaHash}"
-					thumb="https://cdns.grindr.com/images/thumb/320x320/{mediaHash}"
-					{createdAt}
-				/>
+				<!--
+					Both URLs used to be built here by string substitution from a
+					raw, unvalidated hash. `ImageCarouselItem` now derives them from
+					the hash via the shared `publicCdnUrl` helper, which returns
+					null for anything that is not a valid 40-char public hash.
+				-->
+				<ImageCarouselItem {mediaHash} {createdAt} />
 			{/each}
 		</div>
 		<div

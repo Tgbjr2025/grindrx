@@ -40,7 +40,11 @@ function stripComments(code: string): string {
 const offenders: string[] = [];
 for (const [path, raw] of Object.entries(files)) {
 	if (/\.test\.ts$/.test(path)) continue;
-	const code = stripComments(raw);
+	// `import.meta.glob` with `query`/`import` is typed as `unknown` by Vite's
+	// ambient types when the `?raw` query is used, so narrow it here. Without
+	// this the file shipped a `svelte-check` error, which is the same
+	// "committed without a clean type-check" pattern this test exists to prevent.
+	const code = stripComments(String(raw));
 	if (/from\s+["']@tauri-apps\/plugin-opener["']/.test(code)) {
 		offenders.push(`${path} (imports the plugin)`);
 	}

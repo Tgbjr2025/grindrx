@@ -19,6 +19,12 @@ type GridSearchFilters = typeof defaultFilters;
 type CascadeQuery = z.infer<typeof cascadeV3QuerySchema>;
 
 /**
+ * Outcome of `loadBatch`, and what the caller should do with its observer.
+ * See the method doc for why `"in-flight"` cannot be folded into `"resolved"`.
+ */
+export type BatchState = "resolved" | "in-flight" | "failed";
+
+/**
  * The live Grindr API stores `weight` in GRAMS (e.g. 86182.65 ≈ 86.18 kg), but
  * the weight slider is specified and stored in KILOGRAMS (`filterWeightSchema`
  * / `defaultFilters.weight === [40, 273]`). This is the single conversion point.
@@ -151,6 +157,29 @@ class GridState {
 	#geohash: string | null = null;
 	#exploreGeohash: string | null = null;
 	#loadingBatches = new Set<number>();
+	/**
+	 * Monotonic counter identifying the current "grid generation".
+	 *
+	 * Every load-bearing async path captures it before its first `await` and
+	 * re-checks afterwards. Without it, picking a remote area and then tapping
+	 * "back to my location" let the FIRST (slower) response land last and
+	 * overwrite the second: `items` held profiles for the old area while
+	 * `currentQuery` described the new one, and `loadMore()` then paginated the
+	 * old area with the new query. Distances were referenced to the wrong
+	 * origin. Same class of bug in `loadMore` (a page-2 result appended after
+	 * `#reset()`) and in `loadBatch` (which filtered the NEW grid by the OLD
+	 * area's unresolved ids).
+	 */
+	#generation = 0;
+
+	/** The generation a fetch was started for; `null` once superseded. */
+	#currentGeneration(): number {
+		return this.#generation;
+	}
+
+	#isCurrent(generation: number): boolean {
+		return generation === this.#generation;
+	}
 
 	load(geohash: string, exploreGeohash: string | null = null): void {
 		if (
@@ -165,17 +194,24 @@ class GridState {
 		this.#geohash = geohash;
 		this.#exploreGeohash = exploreGeohash;
 		this.#reset();
-		void this.#fetchProfiles(geohash, exploreGeohash);
+		void this.#fetchProfiles(geohash, exploreGeohash, this.#currentGeneration());
 	}
 
 	refresh(): void {
 		if (!this.#geohash) return;
 		this.#reset();
 		this.scrollY = 0;
-		void this.#fetchProfiles(this.#geohash, this.#exploreGeohash);
+		void this.#fetchProfiles(
+			this.#geohash,
+			this.#exploreGeohash,
+			this.#currentGeneration(),
+		);
 	}
 
 	#reset(): void {
+		// Invalidate every in-flight fetch. Anything that resumes from an await
+		// now sees a stale generation and returns without writing.
+		this.#generation += 1;
 		this.items = [];
 		// A cached full profile is only valid for the area/filters that produced
 		// it. It was never invalidated, so after a location change or logout the
@@ -193,6 +229,7 @@ class GridState {
 
 	async loadMore(): Promise<void> {
 		if (this.loadingMore || !this.nextPage || !this.currentQuery) return;
+		const generation = this.#currentGeneration();
 		this.loadingMore = true;
 		try {
 			const batchOffset = this.partialBatches.length;
@@ -200,6 +237,10 @@ class GridState {
 				...this.currentQuery,
 				pageNumber: this.nextPage,
 			});
+			// A location change (or a refresh) reset the grid while this page was
+			// in flight. Appending now would splice page-2-of-the-old-area into
+			// page-1-of-the-new-area with a meaningless batch offset.
+			if (!this.#isCurrent(generation)) return;
 			for (const item of result.items) {
 				this.items.push(
 					item.type === "partial"
@@ -210,34 +251,47 @@ class GridState {
 			this.partialBatches.push(...result.partialBatches);
 			this.nextPage = result.nextPage;
 		} catch (error) {
+			if (!this.#isCurrent(generation)) return;
 			console.error(error);
 			toast.error("Failed to load more profiles");
 		} finally {
-			this.loadingMore = false;
+			// Only the load that is still current owns the `loadingMore` flag;
+			// `#reset()` has already cleared it otherwise.
+			if (this.#isCurrent(generation)) this.loadingMore = false;
 		}
 	}
 
 	/**
 	 * Resolve one partial batch into full profiles.
 	 *
-	 * Returns whether the batch is now RESOLVED. The caller (Grid's partial
-	 * sentinel) used to fire-and-forget this and then disconnect its observer, so
-	 * a rejection left the tile a permanently pulsing skeleton with no way back:
-	 * the sentinel could never re-fire. Returning the verdict lets the caller
-	 * keep observing, and re-observe after a failure, so a transient error is
-	 * retried when the tile scrolls back into range (or is tapped).
+	 * Returns the batch's state so the caller knows whether to stop observing:
+	 *  - `"resolved"` — the batch is loaded; the caller may disconnect.
+	 *  - `"in-flight"` — ANOTHER tile already started this batch; the caller must
+	 *    KEEP observing so a failure is still noticed and retried.
+	 *  - `"failed"` — this attempt failed; the caller must keep observing so a
+	 *    scroll back into range re-arms the retry.
+	 *
+	 * The second value is the fix for a real defect: this used to return
+	 * `boolean` and the dedup branch returned `true`. `getGrid` puts up to 150
+	 * partial profiles in ONE batch and `Grid.svelte` attaches an observer per
+	 * tile, so 150 tiles shared a `batchIndex`: tile #1 did the work and tiles
+	 * #2-150 took the dedup branch, were told "resolved", and permanently
+	 * disconnected — BEFORE the outcome was known. If #1 then failed, 149 tiles
+	 * showed a permanent `animate-pulse` skeleton with no way back, which is
+	 * exactly what the boolean was introduced to prevent.
 	 */
-	async loadBatch(batchIndex: number): Promise<boolean> {
-		if (this.#loadingBatches.has(batchIndex)) return true;
+	async loadBatch(batchIndex: number): Promise<BatchState> {
+		if (this.#loadingBatches.has(batchIndex)) return "in-flight";
 		this.#loadingBatches.add(batchIndex);
+		const generation = this.#currentGeneration();
 		try {
 			const batch = this.partialBatches[batchIndex];
-			if (!batch) return true;
+			if (!batch) return "resolved";
 			const profileIds = batch.batch.map((p) => p.profileId);
 			const uncachedIds: number[] = [];
 
 			// Index items by id once. A findIndex per id scans the whole items
-			// array, which grows with infinite scroll — O(n^2) per batch of up to
+			// array, which grows with infinite scroll — O(n²) per batch of up to
 			// 150 ids.
 			let indexById = new Map(
 				this.items.map((item, i): [number, number] => [item.id, i]),
@@ -253,6 +307,11 @@ class GridState {
 			}
 
 			const resolved = await resolvePartialBatch(uncachedIds);
+
+			// The grid was reset (location change / refresh) while this was in
+			// flight. Writing now would filter the NEW grid by the OLD area's
+			// unresolved ids, removing profiles the user is actually looking at.
+			if (!this.#isCurrent(generation)) return "failed";
 
 			// Rebuild the index: items may have shifted during the await (a
 			// concurrent loadMore append or another batch).
@@ -274,22 +333,25 @@ class GridState {
 				// Drop all unresolved ids in one pass instead of N array splices.
 				this.items = this.items.filter((i) => !unresolved.has(i.id));
 			}
-			return true;
+			return "resolved";
 		} catch (error) {
+			if (!this.#isCurrent(generation)) return "failed";
 			console.error(batchIndex, error);
 			toast.error("Failed to load profiles");
 			// Forget the in-flight mark so a retry is actually allowed.
 			this.#loadingBatches.delete(batchIndex);
-			return false;
+			return "failed";
 		}
 	}
 
 	async #fetchProfiles(
 		geohash: string,
 		exploreGeohash: string | null = null,
+		generation: number = this.#currentGeneration(),
 	): Promise<void> {
 		try {
 			const { gridSearchFilters } = await getPreferences();
+			if (!this.#isCurrent(generation)) return;
 			const query = buildCascadeQuery(
 				geohash,
 				exploreGeohash,
@@ -297,12 +359,17 @@ class GridState {
 			);
 			this.currentQuery = query;
 			const result = await getGrid(query);
+			// A newer load/refresh started while this was in flight: its response
+			// is the one the user is waiting for. Do not clobber it, and do not
+			// clear its `loading` flag.
+			if (!this.#isCurrent(generation)) return;
 			this.#loadingBatches.clear();
 			this.items = result.items;
 			this.partialBatches = result.partialBatches;
 			this.nextPage = result.nextPage;
 			this.loading = false;
 		} catch (err) {
+			if (!this.#isCurrent(generation)) return;
 			console.error(err);
 			this.error = toGridError(err, exploreGeohash);
 			this.errorIsExploreGate =

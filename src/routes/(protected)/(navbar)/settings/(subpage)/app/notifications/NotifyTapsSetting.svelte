@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { toast } from "svelte-sonner";
 
 	import { syncNotificationPrefs } from "$lib/api/notifications";
 	import {
@@ -23,10 +24,17 @@
 	bind:checked={
 		() => value,
 		(v: boolean) => {
+			const previous = value;
 			value = v;
 			setPreferences({ notifyTaps: v })
 				.then(() => syncNotificationPrefs())
-				.catch((e) => console.error("Failed to save preferences", e));
+				.catch((e) => {
+					// `setPreferences` rejects on a failed write. Put the switch
+					// back, or it shows "on" for a setting that was never saved.
+					console.error("Failed to save preferences", e);
+					value = previous;
+					toast.error("Couldn't save that setting.");
+				});
 		}
 	}
 />

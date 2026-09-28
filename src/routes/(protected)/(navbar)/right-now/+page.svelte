@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { ArrowsClockwiseIcon, LightningIcon, PlusIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, LightningIcon, PlusIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
+	import { throwForStatus } from "$lib/api/http";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
-	import { Button, buttonVariants } from "$lib/components/ui/button";
+	import CdnImage from "$lib/components/CdnImage.svelte";
+	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -52,7 +54,11 @@
 		try {
 			const body: Record<string, string> = { rightNowStatus };
 			if (rightNowText.trim()) body.rightNowText = rightNowText.trim();
-			await fetchRest("/v4/me/rightnow", { method: "POST", body });
+			const res = await fetchRest("/v4/me/rightnow", { method: "POST", body });
+			// `fetchRest` RESOLVES on every non-2xx (see its own docstring), so
+			// an unchecked await turns a 400/402/403/500 into a success toast and
+			// a closed drawer. `EditProfileSheet` was already fixed for this.
+			throwForStatus(res, "/v4/me/rightnow");
 			toast.success("Right Now posted!");
 			drawerOpen = false;
 			feedTick++;
@@ -67,7 +73,8 @@
 		if (clearing) return;
 		clearing = true;
 		try {
-			await fetchRest("/v4/me/rightnow", { method: "DELETE" });
+			const res = await fetchRest("/v4/me/rightnow", { method: "DELETE" });
+			throwForStatus(res, "/v4/me/rightnow");
 			toast.success("Right Now status cleared.");
 			drawerOpen = false;
 			feedTick++;
@@ -123,17 +130,7 @@
 							class="flex items-center gap-3 hover:bg-muted/60 active:bg-muted transition-colors rounded-2xl px-3 py-2.5"
 						>
 							<div class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center">
-								{#if imageHash}
-									<img
-										src="https://cdns.grindr.com/images/thumb/320x320/{imageHash}"
-										alt="{name}'s profile"
-										class="w-full h-full object-cover"
-										loading="lazy"
-										draggable="false"
-									/>
-								{:else}
-									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
-								{/if}
+																	<CdnImage hash={imageHash} alt="{name}'s profile" />
 							</div>
 							<div class="flex flex-col gap-0.5 min-w-0 flex-1">
 								<span class="font-semibold truncate">{name}</span>

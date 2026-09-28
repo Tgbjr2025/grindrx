@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { formatDistanceToNowStrict } from "date-fns";
-	import { ArrowsClockwiseIcon, EyeIcon, LockSimpleIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, EyeIcon, LockSimpleIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
@@ -181,17 +182,7 @@
 							<div
 								class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center relative"
 							>
-								{#if view.profileImageMediaHash}
-									<img
-										src="https://cdns.grindr.com/images/thumb/320x320/{view.profileImageMediaHash}"
-										alt="{view.displayName ?? 'Anonymous'}'s profile"
-										class="w-full h-full object-cover"
-										loading="lazy"
-										draggable="false"
-									/>
-								{:else}
-									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
-								{/if}
+																	<CdnImage hash={view.profileImageMediaHash} alt="{view.displayName ?? 'Anonymous'}'s profile" />
 								{#if !view.clickable}
 									<div
 										class="absolute bottom-0 right-0 m-0.5 rounded-full bg-black/60 p-0.5"

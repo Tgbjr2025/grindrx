@@ -13,7 +13,11 @@ import {
 	readAppDataFile,
 	writeAppDataFile,
 } from "$lib/app-data";
-import { getPreferences, setPreferences } from "$lib/app-data/preferences.svelte";
+import {
+	getPreferences,
+	PreferencesWriteError,
+	setPreferences,
+} from "$lib/app-data/preferences.svelte";
 
 const mockedExists = vi.mocked(existsAppDataFile);
 const mockedRead = vi.mocked(readAppDataFile);
@@ -138,23 +142,68 @@ describe("setPreferences", () => {
 		mockedExists.mockResolvedValueOnce(true);
 		mockedRead.mockResolvedValueOnce(UNDECODABLE_BYTES);
 
-		await setPreferences({ incognito: true });
+		// It now REJECTS rather than returning quietly — a caller that awaited
+		// this and toasted "saved" was lying.
+		await expect(setPreferences({ incognito: true })).rejects.toBeInstanceOf(
+			PreferencesWriteError,
+		);
 
 		expect(mockedWrite).not.toHaveBeenCalled();
 		expect(consoleError).toHaveBeenCalled();
 		consoleError.mockRestore();
 	});
 
-	it("swallows a write failure instead of rejecting", async () => {
+	it("REJECTS on a write failure so callers cannot report a false success", async () => {
+		// This used to be "swallows a write failure instead of rejecting", and the
+		// swallow is what let `LocationChange` toast "Browsing near X" for a write
+		// that never landed — the user was told they were browsing an area they
+		// were not, and the choice was gone on next launch. Callers that do not
+		// care must now say so with an explicit `.catch()`.
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
 		mockedExists.mockResolvedValueOnce(false);
 		mockedWrite.mockRejectedValueOnce(new Error("disk full"));
 
-		await expect(setPreferences({ incognito: true })).resolves.toBeUndefined();
+		await expect(setPreferences({ incognito: true })).rejects.toBeInstanceOf(
+			PreferencesWriteError,
+		);
 
 		expect(consoleError).toHaveBeenCalled();
+		consoleError.mockRestore();
+	});
+
+	it("keeps the write queue usable after a failure", async () => {
+		// A rejected write must not poison the chain, or one disk error would
+		// silently drop every preference change for the rest of the session.
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		mockedExists.mockResolvedValue(false);
+		mockedWrite.mockRejectedValueOnce(new Error("disk full"));
+
+		await expect(setPreferences({ incognito: true })).rejects.toBeInstanceOf(
+			PreferencesWriteError,
+		);
+		await expect(setPreferences({ notifyTaps: false })).resolves.toBeUndefined();
+
+		consoleError.mockRestore();
+	});
+
+	it("rejects with reason 'unreadable' when the file exists but will not decode", async () => {
+		// The pre-existing "don't clobber an undecodable file" guard, now
+		// reported instead of being a silent no-op.
+		const consoleError = vi
+			.spyOn(console, "error")
+			.mockImplementation(() => {});
+		mockedExists.mockResolvedValue(true);
+		mockedRead.mockResolvedValueOnce(UNDECODABLE_BYTES);
+
+		const err = await setPreferences({ incognito: true }).catch((e: unknown) => e);
+		expect(err).toBeInstanceOf(PreferencesWriteError);
+		expect((err as PreferencesWriteError).reason).toBe("unreadable");
+		expect(mockedWrite).not.toHaveBeenCalled();
+
 		consoleError.mockRestore();
 	});
 });

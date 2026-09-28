@@ -1,5 +1,262 @@
 # SESSION_STATE — grindrx-work
 
+**2026-09-28 08:03 UTC — AUDIT of the 0.1.38 WORKING TREE (uncommitted). Report only, nothing fixed.**
+
+**CORRECTION TO TOM'S PREMISE (R1): the latest version is NOT 1.37.** 1.37 is the last *tagged
+release* (`v0.1.37`, HEAD `9f680d4`). The working tree is at **`0.1.38` in all three version files**
+(`package.json`, `tauri.conf.json`, `Cargo.toml`), `versionCode 1073`, and there is a rollback tag
+`audit-v0.1.38-rollback-20260927`. **36 files modified (+1188/-648) and 4 untracked paths, all
+UNCOMMITTED and UNRELEASED.** The 0.1.38 work is the remediation of the v0.1.37 audit: a new tested
+`src/lib/profile-photos/` module, `utils/cdn.ts` + `cdn.test.ts`, `components/CdnImage.svelte`, and
+a rewritten Photos page. Audited the tree as it stands, since that is "the latest version".
+
+**Gates MEASURED on the 0.1.38 tree (R7), not inherited:**
+- `vitest run` → **510 passed / 43 files** (465/41 at v0.1.37). +45 tests, all in the new modules.
+- `svelte-check` → **0 errors / 4 warnings.** The 1 error v0.1.37 *shipped committed*
+  (`no-broken-opener.test.ts:43`) is **genuinely fixed** (verified by diff: `String(raw)` narrowing).
+- `eslint` on the 27 changed files → **8 errors in 2 files**, exit 1. **All 8 are PRE-EXISTING**
+  (`ImageCarousel.svelte:51,58,67` PhotoSwipe `gallery` unresolved type; `ProfileLink.svelte:25`
+  bits-ui `props.class` on `any`) — all on lines 0.1.38 did NOT touch. The 0.1.38-modified lines
+  are clean. They surface now only because 0.1.38 newly modified those two files. Do not report
+  "0.1.38 lint clean"; report "0.1.38 introduced 0 lint errors, 8 pre-existing ones are now in scope".
+- `cargo check --lib` → **exit 0, 0 errors** (run on the M1, see below). `cargo check --all-targets`
+  → **exit 0**. `cargo test --lib` → **17 passed / 0 failed** (was 3 in the v0.1.33 round, so the Rust
+  suite has grown). **The 50-line `auth.rs` and 18-line `error.rs` changes compile clean and their
+  tests pass — first time the Rust has been verified for this tree.** Given the v0.1.33 incident
+  where the Rust had *never* compiled, this was the audit's largest unverified gap and it is now closed.
+  Method (R5): the OVH tree was tar'd to a **fresh** `~/grindrx-check` on the M1 rather than touching
+  the M1's own checkout, which is dirty and stale at `e155a35` (= v0.1.33) — **R20 respected, M1
+  checkout left exactly as found, temp dir removed afterwards.** `auth.rs` sha256
+  `4570e6c8…f497` and `error.rs` `cb9dc04b…0b58` verified identical on both hosts. Note `cargo` is
+  NOT on the M1's default PATH — it needs `export PATH="$HOME/.cargo/bin:$PATH"`.
+- Full `eslint src` still does not finish on OVH. Unchanged gap.
+- **RELEASE-SAFETY CHECK PASSED (the `autoIncrementVersionCode` trap).** `autoIncrementVersionCode`
+  is now `false` with `versionCode 1073` pinned. Read back with `aapt2 dump badging` from every
+  released APK in `~/fdroid/repo`: 1059, 1060, 1061, 1062, 1063, 1064, 1065, (1066/1067 = v0.1.33),
+  1069, 1070, 1071, 1072 — **strictly monotonic, and 1073 > 1072, so a 0.1.38 build is a valid
+  in-place upgrade over v0.1.37.** `autoIncrementVersionCode: false` is what makes this safe; do
+  not re-enable it.
+
+**BOTH CRITICAL Photos-tab bugs are GENUINELY FIXED, and correctly.**
+- **F2 (wipe)** — fixed at three independent layers: `planWrite` refuses unless `load === "loaded"`
+  (`photos-state.ts:286`), `handleFileChosen` early-returns on `load !== "loaded"`
+  (`+page.svelte:142`), and the error screen now has a **Retry** button (`:345`). `loadFailed` no
+  longer clears the set, so a later success is still authoritative.
+- **F1 (vanishing photo under a green checkmark)** — the `primaryIsAssumed` write-refusal is gone
+  entirely. Ordering is now **persist-then-reload** (`+page.svelte:171` then `:180`), so the PUT
+  attaches the photo *before* the re-read can prune it — which is precisely the old bug. The toast
+  at `:181` is now gated on `persist()` actually returning `true`. Orphaned uploads on a full
+  profile are deleted from the CDN rather than left unreferenced (`:159`).
+- F3 delete affordance on the main photo: **fixed** (`⋯` button `:393`). F4/F5/F6/F7 **fixed**
+  (revision-guarded rollbacks, DELETE moved inside the `enqueue` chain, honest counter).
+- Coverage: the state machine is now a pure module with **269 lines of tests**, including an explicit
+  regression test for the wipe at `photos-state.test.ts:77`. This closes the structural gap that let
+  F1/F2 ship through 465 green tests.
+- **F8 is NOT fixed — it is re-documented as an accepted risk.** `state` is still carried and never
+  interpreted (`photos-state.ts:56-67`), on the honest grounds that the vendored docs mark the enum
+  `WIP` with no numeric values, so guessing could promote a rejected photo. Reasonable call, but it
+  is still open, not closed. **F10** (nav avatar, zero-reactive-dep `$derived`) is mitigated via
+  `clearAllProfileCaches()` in `persist()` (`:103`) but the structural zero-dep `$derived` pattern
+  remains in `ProfileLink.svelte:16` / `NavBar.svelte:20`.
+
+**All 10 board-wide HIGHs addressed** (spot-verified by direct read, not inherited): G1 dead regex →
+`isApiHttpError(err, 400)` (`AlbumPicker.svelte:191`); G2/G3-G5 generation+AbortController guards
+now present; G6 `auth.rs:355` 60s expiry buffer; G7 a keyring write is now
+`AppError::CredentialStore` and is explicitly **outside** the `auth_class` match, so it can no longer
+sign a user out; G9 `setPreferences` now **does** reject via `PreferencesWriteError`.
+
+**⚠ THE ONE OPEN RISK — and it now underwrites 13 call sites. THE §4 PROBE WAS RUN, AND IT
+CONTRADICTS THE ASSUMPTION 0.1.38 IS BUILT ON.** `authed-image.ts:7-8` says `cdns.grindr.com` is
+bearer-token gated; the vendored docs say the opposite. 0.1.38 **bet on the docs** — `cdn.ts`
+(`publicCdnUrl`) and `CdnImage.svelte` build bare unauthenticated URLs, and 13 sites were migrated
+to them. I ran the probe (read-only GET, no credentials, no token sent):
+`/images/thumb/320x320/<40-hex>` → **403**; `/images/profile/1024x1024/<40-hex>` → **403**; and
+**`https://cdns.grindr.com/` itself → 403** (`server: AmazonS3`, `x-cache: Error from cloudfront`).
+A bucket that 403s *every* path including its own root is the signature of a fully private bucket.
+**HONEST LIMIT: this is NOT conclusive.** S3 returns 403 (not 404) for a missing key when ListBucket
+is denied, so I had no real hash to test — the only 40-hex hash in the tree is the synthetic fixture
+in `cdn.test.ts:10`. I could not disprove that some other path prefix or behaviour serves public
+files. **But the weight of evidence is now clearly against the docs, and against 0.1.38's premise.**
+If the code comment is the correct one, this remediation has just migrated the majority of the app's
+images onto URLs that 403 — a regression that would hit hardest in exactly the screen Tom reported,
+and would be invisible to the build, the 510 tests, the clean type-check and the clean lint.
+**Resolving it needs one real `mediaHash` from a live account** (then one `curl` with no
+`Authorization` header). Until then, do NOT ship 0.1.38's image path as "verified".
+
+**PROBE FOLLOW-UP, SAME SESSION (sharpened).** Re-ran with a real Android Chrome `User-Agent`
+(ruling out a UA block) across every documented size — `profile/1024x1024`, `profile/320x320`,
+`thumb/320x320`, `thumb/75x75` — and the bucket root: **all 403**, body is
+`<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>` from S3. `AccessDenied`
+(not `NoSuchKey`/`InvalidURI`) on a *nonexistent* key is precisely what a private bucket returns, and
+403 on the distribution root means the distribution itself requires signed URLs / origin access.
+**The docs' "accessible without authorization" claim could not be reproduced under any probe I can
+run from this host.** Still not formally conclusive — no real hash exists anywhere in the tree, the
+vendored `media/` docs contain **no example URL at all**, and there is **no account session on this
+host** (`~/.config/grindrx` holds only the APK signing keystore; the app's token lives in the phone's
+Android Keystore). The S26 Ultra is **offline on Tailscale, last seen 13d ago** — the same window in
+which pings went silent, which corroborates that the silence is a *device-offline* artifact rather
+than proof of zero users.
+
+**READ THE DOCS DIFFERENTLY — this weakens the `authed-image.ts` comment rather than v0.1.38.**
+`docs/content/grindr-api/media/signed-cdn-files.md` shows the app uses **two different CDNs**:
+public profile media on `cdns.grindr.com` (hash-based) and **chat/album media on
+`d2wxe7lth7kp8g.cloudfront.net` with `?Signature=&Expires=&Key-Pair-Id=`** (15-min expiry). The
+comment at `authed-image.ts:7-8` ("Grindr chat/album media on `cdns.grindr.com` is bearer-token
+gated") **conflates the two hosts** — chat media is not on `cdns.grindr.com` at all. So the comment
+is a weaker authority than the audit assumed. But `classifyHost` (`authed-image.ts:26-32`) keys on
+`endsWith(".grindr.com")`, so it sends *public profile thumbs* down the bearer path (harmless if
+public, necessary if gated) and sends the *signed CloudFront* chat host down the `direct` path —
+where it is the signed URL, not a bearer, that does the work. That asymmetry is why this was never
+measured and why both halves "looked" right.
+
+**DECISION-RELEVANT ASYMMETRY (the actionable part): `AuthedImage` is safe in BOTH worlds.**
+If the CDN is public, an attached bearer is simply ignored; if it is gated, only the authed path
+renders. `CdnImage`/`publicCdnUrl` work in exactly ONE of the two worlds and is unverified in the
+other. So the low-risk shape is to **keep 0.1.38's real wins — `isPublicMediaHash` validation, the
+placeholder-on-missing-hash fix, the `{:else}` blank-avatar fix, `loadSucceeded`'s cap — and route
+the bytes through `AuthedImage`** rather than committing to bare URLs. Do not revert the validation
+work; only reconsider the transport. **This is advice, not a code change — nothing was edited.**
+
+**F8's "WIP" handling is CONFIRMED CORRECT by the upstream docs**: `signed-cdn-files.md` states
+MediaState is `WIP` and lists only `Pending` with no numeric values, so declining to branch on
+`state` (`photos-state.ts:56-67`) is right and should be left alone.
+
+**ACTIVE USERS: the tracker is DOWN, so there is no live number.** `grindx-ping.service` is
+**inactive (dead) since 2026-09-18 02:20 UTC — 10.2 days**; nothing is listening on `:4242`;
+`pings.jsonl` last written 2026-09-18 02:15. Computed with the server's own logic
+(`ping-server/server.js`): **active_1h 0, active_24h 0, active_7d 0.** That 0 is an artifact of a
+dead service, **not** evidence of zero users. The last real snapshot (at the newest ping) was
+**1h 5, 24h 62, 7d 261**. Lifetime: **4485 rows / 674 distinct install-ids / 1 malformed**, of which
+**649 (96%) report v0.1.32** — six releases stale. No ping has ever been recorded for v0.1.33–v0.1.36,
+which corroborates the long-standing "never device-tested" note. **The service was then RESTARTED at
+Tom's go-ahead — and real traffic immediately reappeared: `active_1h` went 0 → 2 within minutes,
+one of them on v0.1.37.** So the 13-day silence was a dead collector, not an absence of users, and
+**v0.1.37 has its first-ever recorded device ping.** The S26 Ultra is offline on Tailscale (last
+seen 13d ago), so this is some other install. Treat `total_known` as "distinct ids inside the 7-day
+window", which is why it reads 0 right after a restart (see below).
+
+**Nothing built, nothing installed, nothing pushed. No source file edited.** The ONE prod change:
+`grindx-ping.service` **restarted** at Tom's go-ahead — backed up
+(`ping-server/backups/pings.jsonl.bak.pre_restart.20260928_080703`), `nginx -t` OK, the
+`/grindrx/` → `:4242` route verified intact, end-to-end write verified over HTTPS
+(`ping` → 204, then `/stats` reflected it), then the self-test ping was **removed and the service
+restarted clean** — DB back to 4485 lines, `grep -c selftest` = 0. **Note: `/stats` correctly shows
+`total_known: 0` because `server.js:27` loads only pings inside a 7-day window and every stored ping
+is 10.2 days old — that is retention working as designed, not data loss; the 674 lifetime figure is
+only obtainable by reading `pings.jsonl` directly.** Only `memory/SESSION_STATE.md` +
+`memory/MEMORY.md` updated. Backups: `memory/*.bak.pre_v0.1.38audit.20260928_080325`. — agent,
+operator Tom.
+
+**2026-09-27 06:20 UTC — READ-ONLY AUDIT of v0.1.36. Nothing fixed. Report only.**
+Tom asked to "audit the 1.36 grindrx repo … some have to do with the profile pics selection in the
+photos tab but it needs an audit across the board." **Full report: `memory/AUDIT_REPORT_v0.1.37.md`
+— read it before touching the Photos tab or any image code.** I did **not** edit any source file,
+did not commit, did not push, did not build.
+
+**⚠ HEAD MOVED UNDER ME.** I started this audit at `432766f` (v0.1.36) and finished at **`9f680d4`**
+— another session committed the v0.1.37 Download-button fix (`0b0f8bf` + `9f680d4`) while I was
+working. Everything below is verified against `9f680d4` and **none of it is in those two commits**,
+but check the current HEAD before acting on this entry.
+
+**Gates measured, not inherited (R7), re-measured at `9f680d4`:** `vitest run` **465 passed /
+41 files** (461 at v0.1.36). `svelte-check` **1 error / 4 warnings** — the error is
+`src/lib/api/no-broken-opener.test.ts:43` (`import.meta.glob` with `query`/`import` types the value
+as `unknown`), and it is **now COMMITTED** in `0b0f8bf`, not WIP. v0.1.36's "0 errors / 4 warnings"
+claim did hold; **v0.1.37 does not.** Same "shipped without a clean type-check" pattern as the three
+Rust files in the v0.1.33 round, in a far less consequential file. `eslint` **clean** on all 10 files
+the findings touch, but the **full `eslint src` did not finish in 15 min on OVH** and was killed
+twice — treat "full lint clean" as unverified this session. `cargo check --lib` **NOT RUN** — no
+cargo on OVH, and the M1 checkout is stale at `e155a35` (= v0.1.33), so syncing would be a write.
+Honest gap, not a pass.
+
+**The reported bug is real and it is two of them, both CRITICAL, both in
+`settings/(subpage)/account/photos/+page.svelte`:**
+- **F1 — "Photo added." is a lie.** `persist()` refuses to write while `primaryIsAssumed` is set
+  (`:118-119`), a flag armed on **every cold load with ≥1 existing photo** (`:85-89`).
+  `handleFileChosen` discards that boolean (`:212`), reloads (`:218`), and toasts success (`:219`) —
+  and the reload's own `secondary.filter((h) => known.has(h))` (`:84`) **deletes the hash the user
+  just uploaded**, because `POST /v4/media/upload` only puts bytes on the CDN and does not attach
+  the photo to the profile. Net: *the photo vanishes under a green checkmark.* Same discarded
+  boolean in `move()` (`:174`), so **arrow-reorder is a silent no-op on a cold load**.
+  `makePrimary` (`:147-154`) already checks it — the pattern was applied to 1 of 3 call sites.
+- **F2 — one "Add photo" tap after a failed load WIPES every other profile photo.** `load()`'s
+  catch sets only `error` (`:90-94`), leaving `primaryHash = null` and `primaryIsAssumed = false`;
+  the Add button is not gated on `loading`/`error` (`:319-322`); so the upload is declared primary
+  (`:196-197`) and `setProfilePhotos` — which is **full-replacement** semantics — PUTs
+  `{ primaryImageHash: <new>, secondaryImageHashes: [] }`. No Retry button on the error screen
+  either (`:364-365`), unlike albums (`:279`). **Fix this one first.**
+- Plus 5 HIGH in the same file: the main photo has **no delete affordance** (F3, which makes the
+  `if (primaryHash === hash)` branch at `:237` dead code — and naively making it reachable crashes
+  the keyed `{#each}` at `:399` with `each_key_duplicate`, because `:238` never removes the
+  promoted hash from `secondary`); `deletePhoto`'s rollback omits `primaryIsAssumed` (F4, latent
+  until F3 is fixed — do F3+F4 together); optimistic rollbacks use a stale snapshot and can clobber
+  a concurrent mutation (F5); the DELETE is outside the `enqueue` write chain and races the PUT
+  (F6); silent truncation to 5 with a "6 of 5" counter (F7); `state` parsed then never read so a
+  **rejected** photo can be made primary (F8); the only profile-photo screen not using
+  `AuthedImage` (F9); the nav avatar never refreshes because `$derived(getMyProfile())` has **zero
+  reactive dependencies** (F10).
+
+**Why 465 tests, a clean type-check and a clean lint all missed it: the Photos tab has ZERO test
+coverage.** `grep -rln "setProfilePhotos\|getProfileUploadedPhotos\|primaryIsAssumed" --include=
+*.test.ts src/` returns nothing. 533 lines of state machine, no tests. This is the same structural
+gap that shipped the v0.1.34 grid regression (no component-test runner — `vite.config.mjs` sets
+`environment: "node"`), and the Photos tab is a far larger instance of it.
+
+**Board-wide, 10 more HIGH (all spot-verified by direct read, not taken on trust):** G1
+`AlbumPicker.svelte:182-184` `/^HTTP 400\b/` can never match `ApiHttpError`'s actual message
+(`api/index.ts:178-180`), so the stale-mediaId recovery is **dead code** and a photo whose minted id
+went stale can never be sent again — while `isApiHttpError(err, 400)` sits exported and unused
+(the codebase already fixed this pattern and documented the string-match as the bug, `http.ts:16-23`).
+G2 `ViewersDrawer.load()` has no generation guard → the drawer can list **album A's** viewers under
+album B's heading and revoke from the **wrong album**. G3/G4/G5 `grid-state.svelte.ts` has no
+generation guard in `load`/`loadMore`, and `loadBatch`'s dedup branch `return true`s 149 of every
+150 tiles, permanently disconnecting their retry observers. G6 `auth.rs:355-367` **sends the expired
+token** on any refresh failure that isn't 401/403 (transport/5xx fall through). G7 a **keyring
+write** failure is classified as "server rejected us" and silently signs the user out. G8 the
+capability files' "deliberately narrow / scoped to the preferences file" comments are **false** —
+`fs:allow-app-write` = `["write-all","scope-app"]`, and tauri-utils `acl/resolved.rs` **unions**
+the two scopes, so the WebView can create/delete/rename/watch any top-level file in the sandbox;
+`purge.ts:100-119` documents the opposite. G9 `setPreferences` **never rejects**
+(`preferences.svelte.ts:103-107`) so "Browsing near X" / "Incognito on" toasts can lie.
+G10 `right-now/+page.svelte:55-58,70-73` toasts success without inspecting the status, and
+`fetchRest` resolves on every non-2xx by design (`api/index.ts:266-269`).
+**Exhaustively re-diffed the Rust `invoke()` surface — 22 JS literals vs 20 `#[tauri::command]`s
+and the `invoke_handler!` list: no name mismatch, nothing registered-but-missing. The v0.1.35
+`open_url`/`open` class is genuinely fixed.** No hardcoded secrets found in `src/` or `src-tauri/src/`.
+
+**THE ONE THING THAT NEEDS A LIVE PROBE (R7) — do the image work only after this.** The codebase
+holds two contradictory beliefs about the same host. `src/lib/utils/authed-image.ts:7-8` says
+"Grindr chat/album media on `cdns.grindr.com` is bearer-token gated, so a plain `<img src>` gets a
+403 black box." The repo's own vendored docs say the opposite:
+`docs/content/grindr-api/media/index.md:7` "All CDN files are accessible without authorization …
+No security headers or Authorization need to be present in reuqest to CDN", and
+`public-cdn-files.md:1` "CDN files that are public are accessible directly using their hash". The
+app is split on the **byte-identical** URL: 14 sites go through `AuthedImage`/Rust, 13 use a raw
+`<img>`. **Both cannot be true.** It was never measured — the claim traces to a comment, and both
+`CHANGES.md:471` and `AUDIT_REPORT_v0.1.33.md:353` state nothing has run on a real phone. **One
+`curl` of a public profile thumb with no `Authorization` header settles it.** If the docs are right,
+`AuthedImage` is overhead and the raw sites are fine; if the comment is right, the **Photos tab is
+the one screen where you cannot see your own photos.**
+
+**Two claims in the v0.1.33 report did not survive re-verification — do not cite them.** Its C-4
+`VISIBILITY_PRIVATE` rationale is factually wrong (that is the platform default and it *does* redact
+on a secure lock screen; the Rust lock gate is the real control). Its "no `fs:default` is needed"
+claim is backwards (see G8).
+
+**v0.1.37 note (context, not mine):** `0b0f8bf`/`9f680d4` are a genuine fix for a re-reported dead
+Download button — v0.1.35 shipped the Rust `open_external_url` but never applied it to the one call
+site the report was about, which is the same "fixed the mechanism, missed the call site" pattern
+that produced v0.1.36's grid regression. It also adds a grep-as-a-test guard so `plugin-opener`'s
+broken `openUrl` cannot return. It carries the 1 committed svelte-check error above. `flake.nix`
+remains modified-but-uncommitted (the known OVH-only system-SDK workaround — **do not commit**).
+Backups before this session's state edits: `memory/MEMORY.md.bak.pre_v0.1.37audit.*` and
+`memory/SESSION_STATE.md.bak.pre_v0.1.37audit.*`.
+
+**Nothing built, nothing installed, nothing pushed** (R11). The only file this audit created is
+`memory/AUDIT_REPORT_v0.1.37.md` plus the MEMORY/SESSION_STATE updates. **STILL not device-tested —
+now three releases running (v0.1.34/.35/.36).** Fix order is §5 of the report; **F2 first.** — agent,
+operator Tom.
+
 **2026-08-30 v0.1.32 biometric as a STANDALONE app lock.** Tom wanted to open the app with a
 fingerprint (not just unlock a PIN). Restructured `app-lock.svelte.ts` to two independent gates
 (PIN + biometric); app locked when either on (`isLockEnabled`). Biometric can be the sole lock (no

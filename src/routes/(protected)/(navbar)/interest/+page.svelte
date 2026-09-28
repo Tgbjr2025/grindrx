@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { ArrowsClockwiseIcon, HeartIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, HeartIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
-	import { formatDistance } from "$lib/utils/distance";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import { Spinner } from "$lib/components/ui/spinner";
+	import { formatDistance } from "$lib/utils/distance";
 
 	// Only the fields the UI actually consumes (profileId, displayName,
 	// profileImageMediaHash, distance, tapType, isMutual) need to survive a
@@ -94,17 +95,7 @@
 							class="flex items-center gap-3 hover:bg-muted/60 active:bg-muted transition-colors rounded-2xl px-3 py-2.5"
 						>
 							<div class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center relative">
-								{#if tap.profileImageMediaHash}
-									<img
-										src="https://cdns.grindr.com/images/thumb/320x320/{tap.profileImageMediaHash}"
-										alt="{tap.displayName ?? 'Anonymous'}'s profile"
-										class="w-full h-full object-cover"
-										loading="lazy"
-										draggable="false"
-									/>
-								{:else}
-									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
-								{/if}
+																	<CdnImage hash={tap.profileImageMediaHash} alt="{tap.displayName ?? 'Anonymous'}'s profile" />
 								{#if tap.tapType !== null && tap.tapType !== undefined && tapEmoji[tap.tapType]}
 									<span class="absolute -bottom-0.5 -right-0.5 text-base leading-none">
 										{tapEmoji[tap.tapType]}

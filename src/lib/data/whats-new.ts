@@ -3,6 +3,11 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.38": [
+		"Fixed: adding a photo said \"Photo added\" and then deleted it. Your photos are no longer overwritten when the list can't be read.",
+		"Fixed: the main photo can now be changed and deleted, and reordering is saved.",
+		"Fixed: broken photos now show a placeholder instead of a broken-image icon.",
+	],
 	"0.1.37": [
 		"Fixed: the 'Download' button in the update banner still did nothing on Android. It now opens your browser, and says so if it can't.",
 	],
