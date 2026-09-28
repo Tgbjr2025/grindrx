@@ -65,6 +65,16 @@
 	<CdnImage
 		hash={profilePicture?.mediaHash ?? null}
 		alt={altText}
+		/**
+		 * The tile is `<a class="aspect-square relative flex items-end">`. An
+		 * in-flow wrapper here is a flex item that `items-end` does NOT stretch,
+		 * and its `h-full` then resolves against a content-derived height, so the
+		 * photo box collapses and the tile renders at the wrong size. This must
+		 * stay `absolute` to fill the `aspect-square` box, which is what every
+		 * call site did before `CdnImage` existed. Removing it is what broke the
+		 * grid layout in v0.1.38.
+		 */
+		wrapperClass="absolute w-full h-full overflow-hidden"
 		imgClass="transition-transform duration-300 group-hover:scale-105 {env.PUBLIC_ENABLE_BLUR_EFFECTS
 			? 'blur-2xl'
 			: ''}"
