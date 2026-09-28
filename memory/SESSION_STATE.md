@@ -1,6 +1,68 @@
 # SESSION_STATE — grindrx-work
 
-**2026-09-28 08:03 UTC — AUDIT of the 0.1.38 WORKING TREE (uncommitted). Report only, nothing fixed.**
+**2026-09-28 09:05 UTC — v0.1.38 BUILT, SIGNED, PUSHED AND RELEASED. This supersedes the audit entry below.**
+
+**Shipped `48d85c9`** on `claude/grindrx-freeze-json-audit-gp4lnk`, tag `v0.1.38` + `rollback-pre-v0.1.38`
+(= `9f680d4`). `flake.nix` deliberately still uncommitted (hardcodes an absolute path).
+
+**Signed APK:** `com.grindrx.app`, versionName 0.1.38, **versionCode 1073**, all 4 ABIs, minSdk 28 /
+targetSdk 36, 71,088,004 B, sha256 `ba05b778eb94023dd8740447c2380030757ecda1f711b41636fb28e2de078da9`,
+cert `22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01` — **matches v0.1.37, so it is a
+valid in-place upgrade.** Built on the M1 in a throwaway `~/grindrx-038` (the M1's own dirty checkout
+was left untouched, R20); `auth.rs`/`error.rs` sha256-verified identical on both hosts (R5).
+
+**⚠ TWO BUILD GOTCHAS THAT COST REAL TIME — READ BEFORE THE NEXT BUILD.**
+1. **The keystore copy is done by the NIX FLAKE SCRIPT, not by tauri.** `tauri android build` looks for
+   `src-tauri/gen/android/keystore.properties` (`rootProject.file("keystore.properties")` +
+   `hasKeystore` gate in `build.gradle.kts:27-28`). Setting `OPEN_GRIND_KEYSTORE_PROPERTIES` alone
+   does NOTHING outside Nix, and the build **succeeds while silently emitting
+   `app-universal-release-UNSIGNED.apk`**. The flake's `build-android` does the `cp` itself. Without
+   Nix you must copy it manually or you will ship an unsigned APK and not notice from the exit code.
+2. **AGP 8.13.2 rejects JDK 25 with the useless one-line `> 25.0.2`, and `PATH` is not enough** — a
+   stale Gradle daemon started under another JDK gets reused and the error looks identical. The M1 has
+   only JDK 25 and JDK 17 (no 21). Fix: `pkill -f GradleDaemon`, then **pin it in
+   `src-tauri/gen/android/gradle.properties`** with `org.gradle.java.home=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home`.
+   That is deterministic and survives daemon reuse. Also note `cargo` is NOT on the M1's default PATH.
+
+**Pushed (Tom's explicit go-ahead, R11 authorised for this operation):**
+- **Forgejo** `dominus/grindrx`: branch AND **`main`** both fast-forwarded `9f680d4..48d85c9`; 3 tags.
+- **GitHub** `Tgbjr2025/grindrx`: branch + 3 tags. **`main` deliberately untouched at `a547f8e`**
+  (diverged with the `anchor/` SMS history, not fast-forwardable; PR #49 remains the merge path).
+- **Release `v0.1.38` created on both**, each with `GrindrX-v0.1.38.apk` (71,088,004 B) and
+  `grindrx-v0.1.38-sources.zip` (2,237,064 B). Forgejo release id **60**,
+  https://github.com/Tgbjr2025/grindrx/releases/tag/v0.1.38.
+- **THE PHONE SHOWING NO UPDATE WAS NOT A BUG IN THE APP.** The update banner reads
+  `https://api.github.com/repos/Tgbjr2025/grindrx/releases/latest` (`rest.rs:744`), which needs a
+  GitHub **release object** — a pushed tag alone is invisible to it. It correctly reported `v0.1.37`
+  until the release was published. Now returns `v0.1.38`.
+
+**Verification — one gap, stated honestly.** The Forgejo asset was **downloaded back and sha256'd
+byte-identical** to the built artifact. The **GitHub** asset could NOT be: `release-assets.githubusercontent.com`
+returns HTTP 200 with **0 bytes** for every download from this host, and `curl -o <file>` silently
+fails to create files in this shell (use `>` redirection). GitHub's API does report the stored asset
+size as exactly 71,088,004 B, matching local. So the GitHub copy is size-confirmed and
+upload-confirmed but **not** byte-verified.
+
+**⚠ F-DROID IS INCOMPLETE — DO NOT CALL IT DONE.** The APK is placed at
+`~/fdroid/repo/GrindrX-v0.1.38.apk` and the metadata updated (user-facing warning about the two
+Photos data-loss bugs added to `com.grindrx.app.yml`; `changelogs/1073.txt` mirrored), **but the
+signed index was NOT regenerated**, so F-Droid clients will not list v0.1.38 yet.
+**`fdindexer` is not installed on this host, is not a PyPI package, and cannot be fetched** — its
+GitLab home is behind a Cloudflare JS challenge. Someone must run `fdindexer` on a host that has it.
+**Do NOT hand-edit `index-v2.json`/`index.jar`** — they are signed with `~/fdroid/keystore.p12` and
+hand-editing breaks the signature, which is worse than being stale.
+
+**Security note (not acted on):** both git remotes carry **credentials embedded in the URL** — a
+GitHub PAT (`ghp_…`, 40 chars) in `github` and a Forgejo password (40 hex) in `grindrx-forgejo`, in
+plaintext in `.git/config`. `gh auth` is NOT configured. They work, but a token in a remote URL leaks
+via config, logs and error messages; worth moving to a credential helper. Nothing was committed with
+them (the staged diff was scanned: 0 secret matches, and `*.jks`/`keystore.properties` are gitignored).
+
+**Gates (measured, not inherited):** vitest **510/43** · svelte-check **0 errors** · `cargo check
+--lib` and `--all-targets` **exit 0** · `cargo test --lib` **17/17** · eslint **8 errors, all
+pre-existing** on lines 0.1.38 does not touch. **Still not device-tested.** — agent, operator Tom.
+
+**2026-09-28 08:03 UTC — AUDIT of the 0.1.38 WORKING TREE (uncommitted at the time). Report only.**
 
 **CORRECTION TO TOM'S PREMISE (R1): the latest version is NOT 1.37.** 1.37 is the last *tagged
 release* (`v0.1.37`, HEAD `9f680d4`). The working tree is at **`0.1.38` in all three version files**

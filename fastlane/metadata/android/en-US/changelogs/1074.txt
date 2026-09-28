@@ -1,0 +1,9 @@
+Two grid and image fixes for problems v0.1.38 introduced.
+
+Grid tiles were rendering at the wrong size. A tile is a row flex box, and v0.1.38 made the photo wrapper an in-flow element instead of an absolutely positioned one, so the photo became a flex sibling of the name badge and shrank to fit beside it. The photo area now fills the tile again.
+
+Images also no longer wait on a network round trip before appearing. v0.1.38 fetched every image's bytes through the app's own network layer before showing it, so the grid filled in slowly and scrolled choppily. Photos now load the normal way, and only retry through the app's layer if the first attempt fails.
+
+Also fixes a photo box in the full-screen image viewer that could collapse to the wrong size.
+
+This release exists to be tested on a real phone. v0.1.38 was not device-tested and these are visual problems that the automated checks cannot catch, which is why the earlier placeholder regression also went unnoticed.
