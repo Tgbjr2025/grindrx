@@ -98,24 +98,34 @@ const PURGED_PREFERENCES = {
  * system refuses the delete.
  *
  * The app-data fs wrapper (`./index.ts`) exposes read/write/exists/rename only,
- * so the delete goes through the raw plugin. That is currently REJECTED at
- * runtime: `src-tauri/capabilities/default.json` grants `fs:allow-app-read`,
- * `fs:allow-app-write`, `fs:allow-exists` and `fs:allow-rename` (all scoped to
- * `$APPDATA/preferences.data`), and there is no `fs:allow-remove` /
- * `fs:allow-unlink`. Adding that one permission — scoped to
- * `$APPDATA/preferences.data` alone, keeping the capability narrow — makes the
- * delete below succeed and is the only outstanding blocker here.
+ * so the delete goes through the raw plugin.
  *
- * Until then we overwrite with defaults, which still destroys the previous
- * user's geohash and privacy toggles (the actual PII), and collect the failure
- * rather than skipping the step silently.
+ * The doc comment this replaces claimed the delete was REJECTED at runtime
+ * because the capability granted no `fs:allow-remove`. That was wrong in a way
+ * that mattered: `fs:allow-app-write` is the permission SET
+ * `["write-all", "scope-app"]`, and `write-all` DOES allow `remove` — so the
+ * delete was succeeding, the whole overwrite fallback below was dead code, and
+ * the comment documented a security posture that did not exist for a future
+ * reviewer to trust. The capability has been narrowed to the six bare command
+ * permissions it actually needs and now grants `fs:allow-remove` explicitly,
+ * scoped to the preferences files only — so the delete works AND the scope is
+ * the one this function assumes.
+ *
+ * The overwrite stays as a genuine fallback (a filesystem that refuses `remove`
+ * is possible), and the failure is now recorded in `failures` — the bare
+ * `catch {}` this replaced swallowed the error, so the purge's own completion
+ * log could claim success while the previous user's `preferences.data` was
+ * still on disk.
  */
 async function purgePreferencesFile(failures: string[]): Promise<void> {
 	try {
 		await remove(PREFERENCES_FILE, { baseDir: BaseDirectory.AppData });
 		return;
-	} catch {
-		// No `fs:allow-remove` in the capability set — fall through to overwrite.
+	} catch (removeErr) {
+		console.warn(
+			"[GrindrX] Could not delete the preferences file; overwriting it instead:",
+			removeErr,
+		);
 	}
 	try {
 		await writeAppDataFile(

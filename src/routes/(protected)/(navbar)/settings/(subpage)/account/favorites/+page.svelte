@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { HeartIcon, MapPinIcon, NotePencilIcon, UserIcon } from "phosphor-svelte";
+	import { HeartIcon, MapPinIcon, NotePencilIcon } from "phosphor-svelte";
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
@@ -8,6 +8,7 @@
 	import { getProfiles } from "$lib/api/profile";
 	import { assertOk } from "$lib/api/taps";
 	import { getPreferences } from "$lib/app-data/preferences.svelte";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
@@ -152,20 +153,7 @@
 				<Item.Root variant="outline">
 					<Item.Media>
 						<div class="relative size-10 shrink-0 rounded-xl overflow-hidden bg-muted">
-							{#if profile.profileImageMediaHash}
-								<img
-									src="https://cdns.grindr.com/images/thumb/320x320/{profile.profileImageMediaHash}"
-									alt="Profile avatar"
-									class="w-full h-full object-cover"
-									loading="lazy"
-									draggable="false"
-								/>
-							{:else}
-								<UserIcon
-									weight="fill"
-									class="size-3/4 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground"
-								/>
-							{/if}
+															<CdnImage hash={profile.profileImageMediaHash} alt="Profile avatar" />
 						</div>
 					</Item.Media>
 					<Item.Content class="min-w-0 flex-1">

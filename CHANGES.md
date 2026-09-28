@@ -5,6 +5,192 @@ added in this branch on top of upstream `open-grind/open-grind` main.
 
 ---
 
+## v0.1.38 — the Photos tab was lying about what it saved (2026-09-27)
+
+**versionCode 1073** (was 1072). An audit round (`memory/AUDIT_REPORT_v0.1.37.md`),
+then a full remediation. **2 CRITICAL, both in the Photos tab**, plus 10 HIGH
+board-wide. The root cause of why they survived three releases is recorded at the
+end of this entry, and it is the most important part.
+
+### The two criticals
+
+**1. "Photo added." was a lie — the photo was never sent, and then the app deleted it.**
+
+`persist()` refused to write whenever the app could not prove which photo was
+already the server's main one, and returned `false` instead of throwing. The
+add handler discarded that boolean, reloaded, and toasted success:
+
+```svelte
+await enqueue(() => persist());   // returns false — thrown away
+await load();                     // prunes the new hash back out
+toast.success("Photo added.");
+```
+
+An upload only puts bytes on the CDN; it does not attach the photo to the
+profile. So the reload — which prunes local state against the server's set —
+removed the hash the user had just picked. **The photo vanished under a green
+checkmark**, on every cold load of the tab that had at least one existing photo.
+The same discarded boolean made the arrow-reorder a silent no-op: the UI
+reordered, nothing was written, and it reverted on navigating away.
+
+**2. One "Add photo" tap after a failed load deleted every other profile photo.**
+
+A failed `load()` set only the error message, leaving `primaryHash = null` with
+the "don't guess" guard *disarmed*. The Add button was not gated on the error
+state. So the tap declared the new upload to be the main photo and issued:
+
+```
+PUT /v3/me/profile/images  { primaryImageHash: <new>, secondaryImageHashes: [] }
+```
+
+That endpoint is **full-replacement**. One tap on a flaky connection silently
+removed all of the user's profile photos. There was no Retry button on that
+screen either.
+
+**The fix is one invariant, and it is now the first thing the screen does:**
+never issue a replacement write until the current set has been successfully read.
+
+```ts
+export function planWrite(state: PhotosState): WritePlan {
+	if (state.load !== "loaded") return { ok: false, reason: "not-loaded" };
+```
+
+### Also fixed in the Photos tab
+
+- **The main photo had no delete or any other affordance.** That made the
+  `if (primaryHash === hash)` branch in `deletePhoto` unreachable, and left a
+  one-photo profile as a dead end. It is a button now.
+- **…and that branch was also wrong.** It promoted `secondary[0]` into
+  `primaryHash` *without removing it from `secondary`*, which renders the same
+  photo twice — and the grid is a **keyed** `{#each}`, so Svelte throws
+  `each_key_duplicate` on that in dev *and* prod. Fixed in the same change, not
+  after it.
+- **Incomplete rollbacks.** `deletePhoto` restored three of four state fields and
+  never `primaryIsAssumed`. Latent only because the branch above was dead; it
+  would have gone live the moment the main photo gained a delete button.
+- **Stale-snapshot rollbacks clobbered concurrent mutations.** "Move left"
+  followed by "make main photo", then a network failure on the first, restored
+  the pre-move ordering while leaving the new primary — an inconsistent pair the
+  *next* successful write persisted. Rollbacks are now gated on a monotonic
+  revision counter.
+- **The DELETE was outside the serialised write chain** and raced the PUT, so the
+  two could land in either order and silently undo each other. It is in the chain
+  now.
+- **Silent truncation to five secondaries** with a self-contradictory
+  "6 of 5 extra photos shown" counter. Clamped locally, with the overflow
+  surfaced rather than discarded by the server.
+- **`state` was parsed from the API and then never read**, so a photo rejected by
+  moderation could be promoted to main. The upstream docs mark the `MediaState`
+  enum `WIP` with no numeric values, so rather than guess an enum — and risk
+  blocking every legitimate photo — the value is carried with an explicit note
+  that it cannot be safely interpreted. **This one still needs a live account.**
+- **The nav avatar never updated** after a change here: `$derived(getMyProfile())`
+  has *zero* reactive dependencies, so it was evaluated once and cached for the
+  life of the WebView, over a 60 s cache nothing invalidated. Mutations now clear
+  the profile cache.
+- **The hand-rolled overlays are gone**, replaced by the repo's own
+  `alert-dialog` primitive. The delete dialog declared `role="alertdialog"` and
+  `aria-modal="true"` with no focus trap, no Escape, no focus move and no
+  `aria-describedby` — every one of those declarations was untrue. The albums
+  screen already used the primitive correctly.
+- Broken photos show a placeholder instead of the browser's broken-image glyph.
+
+### The 10 HIGH findings, board-wide
+
+| Area | Defect |
+|---|---|
+| `AlbumPicker` | The stale-`mediaId` recovery was **dead code**: `/^HTTP 400\b/` can never match `ApiHttpError`'s real message (`Request to … failed (HTTP 400: …)`). Once a minted `mediaId` went stale that photo could **never** be re-sent, and the cache is persisted to `localStorage`. The codebase had already fixed this pattern elsewhere, exported `isApiHttpError(err, 400)`, and documented the string-match as the bug. |
+| `ViewersDrawer` | No generation guard on the load. Open album A, then album B, and A's slower response landed last: the drawer headed **B** listed **A**'s viewers, and ✕ revoked B for someone who never had it while the real A-viewer kept access. A wrong-target *destructive* action from out-of-order async alone. |
+| Grid | No generation guard in `load`/`loadMore`. Pick a remote area, then tap "back to my location", and the first slower response overwrote the second: profiles for the old area under the new area's query, with distances referenced to the wrong origin. A page-2 result could also append after a reset. |
+| Grid | `loadBatch`'s dedup branch returned "resolved". A batch holds up to 150 partial profiles with one observer per tile, so ~150 tiles shared a `batchIndex`; the 149 that took the dedup branch disconnected their retry observers *before the outcome was known*. One failure then left 149 tiles pulsing for the session — the exact defect the boolean had been introduced to prevent. Now a tri-state. |
+| `auth.rs` | An **expired token was transmitted** on any refresh failure that was not 401/403: a transport error or a 5xx fell through and the dead token was attached to every request. |
+| `auth.rs` | A **keyring write failure was classified as "the server rejected us"** and silently signed the user out mid-session. The file's own comment described an intent the predicate did not implement. New `AppError::CredentialStore` variant separates the two. |
+| `auth.rs` | A successful refresh whose keystore write failed was **discarded**, leaving the server-invalidated token in place and producing an unbounded refresh loop against a rate-limited endpoint. Persistence is now best-effort; the minted session is the truth. |
+| `capabilities/*.json` | Both files claimed the fs grant was "scoped to the preferences file". It was not: `fs:allow-app-write` is the *set* `["write-all", "scope-app"]`, `write-all` allows `remove`/`rename`/`create`/…, and tauri-utils' ACL resolver **unions** a set's own scope with the capability's `allow` list rather than intersecting. The WebView could create, delete, rename and watch any top-level file in the whole sandbox. Replaced with the six bare command permissions the app actually calls. |
+| `preferences` | `setPreferences` swallowed every failure, so it could not reject — and five callers toasted success on top of it. `LocationChange` told the user "Browsing near X" and then re-read the **old** geohash: the user was told they were browsing an area they were not, and the choice was gone on next launch. It now raises `PreferencesWriteError`, and the three settings switches revert instead of claiming a save. |
+| Right Now | "Right Now posted!" fired on a path that could not fail visibly: `fetchRest` **resolves** on every non-2xx by design, and the status was never checked. |
+
+### Images
+
+Fourteen places hand-wrote `https://cdns.grindr.com/images/thumb/320x320/{hash}`
+into a raw `<img>` with no hash validation and no `onerror`, so a 404 drew the
+browser's broken-image glyph. They now share one helper and one component:
+
+- `src/lib/utils/cdn.ts` — `publicCdnUrl()` is the only place a CDN URL is built,
+  and it returns `null` for anything that is not a valid 40-char public hash.
+  The hash lands in the URL *path*, so a `/`, `?` or `#` would have redirected the
+  request to a different resource on an allow-listed host.
+- `src/lib/components/CdnImage.svelte` — placeholder behind, image in front,
+  both `position: relative` with `z-index: auto` so DOM order decides. That
+  ordering is the v0.1.34→v0.1.36 regression, and it is now structural rather
+  than something a future edit can repeat.
+- `CdnImage` resolves the validated URL through
+  `resolveAuthedImageRetained()` rather than handing it straight to a raw
+  `<img>`, so the bytes are fetched **with the bearer attached** and fall back
+  to the direct URL when that fetch yields nothing. This is deliberately
+  transport-agnostic — see the last section, which is why it is safe either way.
+  It also means the retained-blob cache is finally used for these sites, which
+  is what stops scroll-past-eviction blanking an image that is still on screen.
+
+### The thing that let all of this ship
+
+**The Photos tab had zero tests.** 533 lines of state machine, no coverage at
+all. 465 passing tests, a clean type-check and a clean lint all missed two
+critical data-loss bugs in the main flow.
+
+There is no component-test runner in this project (`vite.config.mjs` sets
+`environment: "node"` — no jsdom, no `@testing-library`), so the fix was to move
+the decision logic somewhere a plain `vitest` can reach: a pure state machine in
+`src/lib/profile-photos/photos-state.ts` with the page reduced to a thin shell
+over it. **28 tests, one per invariant** — including "a write is refused when the
+set was never read", "a refused write never reports success", "deleting the main
+photo cannot produce a duplicate key", and "a late failure cannot roll back a
+newer mutation".
+
+Total: **510 tests** (was 465), 0 type errors (v0.1.37 shipped with 1), and
+`cargo check --lib` / `cargo test --lib` 17/17 / `cargo check --lib --target
+aarch64-linux-android` all clean on the M1.
+
+### Still not device-tested
+
+Four releases running now. Everything compiles; nothing has run on hardware. The
+Photos-tab changes are exactly the class a build cannot catch — **install it and
+add a photo before telling anyone the wipe is fixed.**
+
+### The CDN question, and why this release does not bet on it
+
+The codebase held two contradictory beliefs about `cdns.grindr.com`:
+`authed-image.ts` says it is bearer-token gated, and the repo's own vendored
+Grindr docs say CDN files need no Authorization. Fourteen render sites were split
+down the middle on the byte-identical URL. It had never been measured.
+
+The probe was run for this release: every documented size, the bucket root, and
+a browser `User-Agent` were all tried, and **every one returns S3
+`AccessDenied`**. That is suggestive, not decisive — S3 also returns
+`AccessDenied` for a *missing* key when ListBucket is denied, and there is no
+real `mediaHash` anywhere in the tree, so a conclusive probe still needs one
+`curl` of a real public thumb with no `Authorization` header. The vendored docs
+are also weaker authority than they look: `signed-cdn-files.md` shows the app
+uses **two** CDNs, with chat/album media on a different host
+(`d2wxe7lth7kp8g.cloudfront.net`, `?Signature=&Expires=&Key-Pair-Id=`) under
+signed URLs, so the `authed-image.ts` comment's claim about `cdns.grindr.com`
+conflates the two hosts.
+
+**So this release does not choose.** `CdnImage` hands the validated URL to the
+retained authed resolver: the bytes are fetched with the bearer attached, and if
+that fetch returns nothing the component falls back to the direct URL, whose
+`onerror` then reveals the placeholder. If the CDN is public, the extra
+`Authorization` header is ignored and the bytes arrive. If it is gated, the
+bearer is exactly what makes it render. A raw `<img>` was correct only under one
+hypothesis; this is correct under both, at the cost of one IPC round trip per
+image that the blob cache amortises.
+
+That is a real behavioural change from what the branch originally proposed, and
+it is the reason the release does not have to be recalled if the probe comes
+back the other way.
+
+---
+
 ## v0.1.37 — the Download button, actually fixed this time (2026-09-27)
 
 **versionCode 1072** (was 1071).

@@ -1,7 +1,7 @@
 {
 	"$schema": "../gen/schemas/desktop-schema.json",
 	"identifier": "desktop-capability",
-	"description": "Desktop-only capability (opener). Filesystem access is scoped to the preferences file like the shared capability — broad fs:default is not needed, and a WebView compromise should not inherit full-disk read/write.",
+	"description": "Desktop-only capability. Filesystem access is scoped to the preferences file, using the same six bare command permissions as the shared capability and the same reason: the permission SETS (`fs:allow-app-read` / `fs:allow-app-write`) are `[\"read-all\"|\"write-all\", \"scope-app\"]`, and tauri-utils' ACL resolver UNIONS a permission set's own scope with the capability's `allow` list rather than intersecting them (acl/resolved.rs does `resolved_scope.allow.extend(allow)` for both). Granting the set therefore gave the WebView create/copy/remove/rename/truncate/write plus readDir/stat/watch over every top-level path in $APPDATA, $APPCONFIG, $APPCACHE and $APPLOG — not \"the preferences file\", which is what the previous description here claimed. No opener permission is granted: the app calls its own `open_external_url`, which uses the plugin's Rust API and is not ACL-gated, so `opener:default` (which includes the unused `allow-reveal-item-in-dir`) was dead weight.",
 	"windows": [
 		"main"
 	],
@@ -11,25 +11,40 @@
 		"windows"
 	],
 	"permissions": [
-		"opener:default",
-		{
-			"identifier": "fs:allow-app-read",
-			"allow": [
-				{
-					"path": "$APPDATA/preferences.json"
-				}
-			]
-		},
-		{
-			"identifier": "fs:allow-app-write",
-			"allow": [
-				{
-					"path": "$APPDATA/preferences.json"
-				}
-			]
-		},
 		{
 			"identifier": "fs:allow-exists",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-read-file",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-write-file",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-mkdir",
+			"allow": [
+				{
+					"path": "$APPDATA"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-remove",
 			"allow": [
 				{
 					"path": "$APPDATA/preferences.json"

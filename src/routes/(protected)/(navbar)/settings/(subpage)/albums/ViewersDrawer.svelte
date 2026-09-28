@@ -4,6 +4,7 @@
 
 	import { getAlbumViewers, type MyAlbum, removeAlbumViewer } from "$lib/api/album";
 	import { getProfiles } from "$lib/api/profile";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Drawer from "$lib/components/ui/drawer";
 	import * as Empty from "$lib/components/ui/empty";
@@ -28,11 +29,26 @@
 
 	let viewersState = $state<State>({ status: "idle" });
 	let removingId = $state<number | null>(null);
+	/**
+	 * Which album `viewersState` currently describes.
+	 *
+	 * Without this, opening album A and then album B let A's slower response
+	 * land last and overwrite B's list — so a drawer headed "Shared with · B"
+	 * listed A's viewers, and `handleRemove` (which uses the *current* `album`
+	 * prop) revoked B for someone who was never granted it while the real
+	 * A-viewer kept access. A wrong-target destructive action, from out-of-order
+	 * async alone.
+	 */
+	let viewersAlbumId = $state<number | null>(null);
+	/** Monotonic load counter; a result from a superseded load is discarded. */
+	let loadGeneration = 0;
 
 	async function load(albumId: number) {
+		const generation = ++loadGeneration;
 		viewersState = { status: "loading" };
 		try {
 			const ids = await getAlbumViewers(albumId);
+			if (generation !== loadGeneration) return;
 			if (ids.length === 0) {
 				viewersState = { status: "loaded", viewers: [] };
 				return;
@@ -46,6 +62,7 @@
 			} catch (err) {
 				console.error("Failed to resolve viewer profiles", err);
 			}
+			if (generation !== loadGeneration) return;
 			const byId = new Map(profiles.map((p) => [p.profileId, p]));
 			viewersState = {
 				status: "loaded",
@@ -59,6 +76,7 @@
 				}),
 			};
 		} catch (err) {
+			if (generation !== loadGeneration) return;
 			console.error("Failed to load album viewers", err);
 			viewersState = { status: "error", message: "Failed to load viewers" };
 		}
@@ -67,14 +85,20 @@
 	// (Re)load whenever the drawer opens for an album.
 	$effect(() => {
 		if (open && album) {
+			viewersAlbumId = album.albumId;
 			void load(album.albumId);
 		} else if (!open) {
+			// Invalidate any in-flight load so it cannot paint into a closed
+			// drawer (or into the next album's).
+			loadGeneration += 1;
 			viewersState = { status: "idle" };
+			viewersAlbumId = null;
 		}
 	});
 
 	async function handleRemove(viewer: Viewer) {
-		if (!album) return;
+		// Only ever revoke from the album this list was actually loaded for.
+		if (!album || album.albumId !== viewersAlbumId) return;
 		removingId = viewer.profileId;
 		try {
 			await removeAlbumViewer({ albumId: album.albumId, profileId: viewer.profileId });
@@ -128,17 +152,7 @@
 					<Item.Root variant="outline">
 						<Item.Media>
 							<div class="size-9 rounded-full overflow-hidden bg-muted flex items-center justify-center">
-								{#if viewer.thumbHash}
-									<img
-										src="https://cdns.grindr.com/images/thumb/320x320/{viewer.thumbHash}"
-										alt=""
-										class="size-full object-cover"
-										loading="lazy"
-										draggable="false"
-									/>
-								{:else}
-									<UsersIcon class="size-4 text-muted-foreground" />
-								{/if}
+								<CdnImage hash={viewer.thumbHash} alt="" />
 							</div>
 						</Item.Media>
 						<Item.Content class="min-w-0">

@@ -277,10 +277,18 @@
 	 * in its catch, so the state WOULD retry if asked — but nothing asked, and the
 	 * tile kept its `animate-pulse` skeleton for the rest of the session.
 	 *
-	 * Now the observer only disconnects on success; on failure it stays live, so
-	 * scrolling the tile out of and back into the 200px margin re-arms the retry.
-	 * A permanently failing batch therefore still shows a skeleton, but it is a
-	 * RETRYABLE one rather than a dead one, and the state is not lying about it.
+	 * Now the observer only disconnects on `"resolved"`; on `"failed"` it stays
+	 * live, so scrolling the tile out of and back into the 200px margin re-arms
+	 * the retry. A permanently failing batch therefore still shows a skeleton,
+	 * but it is a RETRYABLE one rather than a dead one.
+	 *
+	 * `"in-flight"` MUST also keep the observer live. A batch holds up to 150
+	 * partial profiles and one observer is attached per tile, so ~150 tiles
+	 * share a `batchIndex`: one does the work, the rest get `"in-flight"`. If
+	 * those disconnected on it, then tile #1's failure would leave 149 tiles
+	 * pulsing for the whole session — the exact defect D19 was fixing, just
+	 * reached a different way. Staying live costs nothing: the dedup branch is
+	 * a `Set.has()` check.
 	 */
 	function observePartial(node: HTMLElement, params: { batchIndex: number }) {
 		const observer = new IntersectionObserver(
@@ -288,8 +296,8 @@
 				if (!entries[0].isIntersecting) return;
 				gridState
 					.loadBatch(params.batchIndex)
-					.then((ok) => {
-						if (ok) observer.disconnect();
+					.then((outcome) => {
+						if (outcome === "resolved") observer.disconnect();
 					})
 					.catch((error) => {
 						// loadBatch already swallowed + toasted; keep observing so

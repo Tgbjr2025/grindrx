@@ -121,7 +121,8 @@ pub struct AuthStorage;
 
 impl AuthStorage {
     fn get_session_entry() -> Result<Entry, AppError> {
-        Entry::new("open-grind", "session").map_err(|e| AppError::Auth(e.to_string()))
+        Entry::new("open-grind", "session")
+            .map_err(|e| AppError::CredentialStore(e.to_string()))
     }
     /// Read the session from the OS keystore.
     ///
@@ -135,7 +136,7 @@ impl AuthStorage {
     pub async fn get_session() -> Result<Option<Session>, AppError> {
         tauri::async_runtime::spawn_blocking(Self::get_session_blocking)
             .await
-            .map_err(|e| AppError::Auth(format!("Keyring read task failed: {e}")))?
+            .map_err(|e| AppError::CredentialStore(format!("Keyring read task failed: {e}")))?
     }
 
     /// Synchronous keystore read, for the SYNC startup path only
@@ -146,18 +147,18 @@ impl AuthStorage {
         let session_bytes = match entry.get_secret() {
             Ok(bytes) => bytes,
             Err(keyring_core::Error::NoEntry) => return Ok(None),
-            Err(e) => return Err(AppError::Auth(e.to_string())),
+            Err(e) => return Err(AppError::CredentialStore(e.to_string())),
         };
         rmp_serde::decode::from_slice(&session_bytes)
-            .map_err(|e| AppError::Auth(e.to_string()))
+            .map_err(|e| AppError::CredentialStore(e.to_string()))
             .map(Some)
     }
     pub fn set_session(session: &Session) -> Result<(), AppError> {
         let session_bytes = rmp_serde::encode::to_vec(session)
-            .map_err(|e| AppError::Auth(format!("Failed to encode session: {e}")))?;
+            .map_err(|e| AppError::CredentialStore(format!("Failed to encode session: {e}")))?;
         Self::get_session_entry()?
             .set_secret(&session_bytes)
-            .map_err(|e| AppError::Auth(e.to_string()))
+            .map_err(|e| AppError::CredentialStore(e.to_string()))
     }
     /// Async keystore write, mirroring `get_session` above.
     ///
@@ -230,7 +231,21 @@ impl GrindrClient {
 
         // B4: synchronous JNI keystore write — keep it off the async runtime.
         // Cloned because the caller still needs to return the session.
-        AuthStorage::set_session_async(session.clone()).await?;
+        //
+        // NON-FATAL on purpose. This used to be `?`, which meant a keystore
+        // hiccup made `create_session` fail AFTER the server had already minted
+        // a valid session — so the caller never adopted it and kept using the
+        // old, now-invalidated one, and (before the `CredentialStore` split) the
+        // classifier read that as a rejected credential and wiped the session.
+        // The minted session is the truth; saving it is bookkeeping. Losing it
+        // only costs "you'll have to sign in again after a restart", which is a
+        // far better failure than a forced sign-out.
+        if let Err(e) = AuthStorage::set_session_async(session.clone()).await {
+            eprintln!(
+                "[GrindrX] Signed in but could not save the session to the keystore \
+                 ({e}); you may have to sign in again after a restart."
+            );
+        }
 
         Ok(session)
     }
@@ -318,6 +333,10 @@ impl GrindrClient {
 
         let session = self.create_session(&body).await?;
         let profile_id = session.profile_id.clone();
+        // Adopt the freshly minted session. `create_session` has already
+        // attempted the keystore write (non-fatally — see its comment), so there
+        // is nothing to do about persistence here; doing it again would be a
+        // second synchronous Keystore round trip inside the refresh lock.
         *self.session.write().await = Some(session);
 
         Ok(LoginResult { profile_id })
@@ -347,11 +366,18 @@ impl GrindrClient {
 
             if still_expired {
                 if let Err(e) = self.refresh_token_inner().await {
-                    // If the server rejected our refresh, the stored auth_token is
-                    // dead. Holding onto it would create a permanent silent-failure
-                    // loop where every future call re-refreshes, fails, and returns
-                    // the same expired token. Clear the session so the next API
-                    // call surfaces a real 401 and the frontend prompts re-login.
+                    // Only a REJECTED CREDENTIAL clears the session. The test used
+                    // to be `AppError::Auth(_)`, which also matched every keystore
+                    // and msgpack failure, so a transient Android Keystore
+                    // contention — documented in this same file as taking tens of
+                    // milliseconds and spiking under load — silently signed the
+                    // user out mid-session and deleted their stored credential.
+                    // Those are `AppError::CredentialStore` now.
+                    //
+                    // A transport failure or a 5xx is deliberately NOT fatal
+                    // either: it says nothing about our token's validity, and
+                    // clearing the session there would strand a user whose token
+                    // is fine behind one flaky request.
                     let auth_class = matches!(&e, AppError::Auth(_))
                         || matches!(&e, AppError::Api { code, .. } if *code == 401 || *code == 403);
                     if auth_class {

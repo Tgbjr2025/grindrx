@@ -1,7 +1,7 @@
 {
 	"$schema": "../gen/schemas/desktop-schema.json",
 	"identifier": "default",
-	"description": "Shared capability for all platforms. Deliberately narrow: the app only WRITES to the clipboard (invite links, copied message text) so clipboard read access is not granted, and opener is limited to open-url because the OS file/path openers are never used.",
+	"description": "Shared capability for all platforms. Deliberately narrow: the app only WRITES to the clipboard (invite links, copied message text) so clipboard read access is not granted, and the app uses its own `open_external_url` command (which calls the opener plugin's Rust API and is therefore not ACL-gated), so no opener permission is granted at all. Filesystem access is limited to the six commands `$lib/app-data` actually calls, scoped to the preferences files: see the note on the fs block below for why the permission SETS must not be used here.",
 	"windows": [
 		"main"
 	],
@@ -9,7 +9,7 @@
 		"core:default",
 		"os:default",
 		{
-			"identifier": "fs:allow-app-read",
+			"identifier": "fs:allow-exists",
 			"allow": [
 				{
 					"path": "$APPDATA/preferences.json"
@@ -20,7 +20,18 @@
 			]
 		},
 		{
-			"identifier": "fs:allow-app-write",
+			"identifier": "fs:allow-read-file",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				},
+				{
+					"path": "$APPDATA/preferences.data"
+				}
+			]
+		},
+		{
+			"identifier": "fs:allow-write-file",
 			"allow": [
 				{
 					"path": "$APPDATA/preferences.json"
@@ -34,13 +45,10 @@
 			]
 		},
 		{
-			"identifier": "fs:allow-exists",
+			"identifier": "fs:allow-mkdir",
 			"allow": [
 				{
-					"path": "$APPDATA/preferences.json"
-				},
-				{
-					"path": "$APPDATA/preferences.data"
+					"path": "$APPDATA"
 				}
 			]
 		},
@@ -55,7 +63,17 @@
 				}
 			]
 		},
-		"clipboard-manager:allow-write-text",
-		"opener:allow-open-url"
+		{
+			"identifier": "fs:allow-remove",
+			"allow": [
+				{
+					"path": "$APPDATA/preferences.json"
+				},
+				{
+					"path": "$APPDATA/preferences.data"
+				}
+			]
+		},
+		"clipboard-manager:allow-write-text"
 	]
 }

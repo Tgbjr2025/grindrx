@@ -3,6 +3,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { getMyAlbums, type MyAlbum } from "$lib/api/album";
+	import { isApiHttpError } from "$lib/api/http";
 	import {
 		getProfileUploadedPhotos,
 		invalidateCachedMediaId,
@@ -180,7 +181,14 @@
 	// instead of retrying the same stale id forever (see prepareAuthedUrlForSend
 	// / prepareSavedPhotoForSend's mediaId cache in $lib/api/profile).
 	function looksLikeInvalidatedMediaId(err: unknown): boolean {
-		return err instanceof Error && /^HTTP 400\b/.test(err.message);
+		// Was `/^HTTP 400\b/.test(err.message)`, which can NEVER match:
+		// `ApiHttpError`'s message is `Request to ${path} failed (HTTP 400: …)`,
+		// so the guard never fired and the cache entry was never evicted — a
+		// photo whose minted mediaId went stale could not be re-sent for the rest
+		// of the session (the cache is persisted to localStorage). `http.ts`
+		// documents this exact string-match as the bug it replaced and exports
+		// the type-safe predicate; use it.
+		return isApiHttpError(err, 400);
 	}
 
 	async function handleSendPhoto(photo: ProfilePhoto) {
