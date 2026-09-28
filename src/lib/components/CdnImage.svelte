@@ -30,7 +30,7 @@
 	 * both sides is what prevents a repeat. Do not make the placeholder
 	 * `absolute` without giving the image the same.
 	 *
-	 * ## Auth — why this resolves through Rust instead of a bare `<img src>`
+	 * ## Auth — direct first, authed only as a fallback
 	 *
 	 * The repo held two contradictory beliefs about `cdns.grindr.com`:
 	 * `authed-image.ts` says the host is bearer-token gated, and the vendored
@@ -41,20 +41,27 @@
 	 * for a MISSING key when ListBucket is denied, so a real `mediaHash` is
 	 * still needed for a conclusive answer.
 	 *
-	 * Committing to either belief is the trap: a bare `<img>` works only if the
-	 * docs are right, and the authed path is required only if the comment is
-	 * right. So this component does not choose. It hands the URL to
-	 * `resolveAuthedImageRetained`, which fetches the bytes through the Rust
-	 * `fetch_authed_bytes` command **with the bearer attached**, and — crucially
-	 * — falls back to the original URL when that fetch yields nothing
-	 * (`resolveAuthedImage` returns `null`, and the retained wrapper passes the
-	 * requested URL straight through). The `<img>` then 403s, `onerror` hides
-	 * it, and the placeholder shows.
+	 * Committing to either belief is the trap, so this component does not choose.
+	 * It renders the **direct** URL first — the browser streams it, exactly as it
+	 * always did, and the grid loads at full speed with no IPC — and only if that
+	 * errors does it retry through `resolveAuthedImageRetained`, which fetches the
+	 * bytes through the Rust `fetch_authed_bytes` command **with the bearer
+	 * attached**. If the retry also fails, the placeholder shows.
 	 *
-	 * That ordering is what makes it safe in BOTH worlds: if the CDN is public
-	 * the extra Authorization header is ignored and the bytes arrive; if it is
-	 * gated the bearer is what makes it render. The only cost is an IPC round
-	 * trip per image, which the retained blob cache amortises.
+	 * So it is correct in both worlds: if the CDN is public the first load
+	 * succeeds and nothing else happens; if it is gated the bearer is what makes
+	 * it render.
+	 *
+	 * ### Why this is DIRECT-first and not authed-first
+	 *
+	 * An authed-first version of this component shipped in v0.1.38 and it wrecked
+	 * the grid: every tile painted a placeholder and waited for an IPC byte fetch
+	 * before the photo appeared, and the retained-blob cache holds only
+	 * `MAX_ENTRIES = 32`, so scrolling made tiles evict and re-fetch each other.
+	 * The grid became a wall of placeholder people that slowly filled in. Paying
+	 * one full-resolution IPC round trip per tile on the hottest screen in the app
+	 * is only ever justified when the direct load has already failed — which is
+	 * exactly what this ordering does.
 	 */
 	let {
 		hash,
@@ -83,39 +90,69 @@
 	const src = $derived(publicCdnUrl(hash, variant));
 
 	/**
-	 * The URL actually handed to the `<img>`: a retained `blob:` when the authed
-	 * fetch succeeded, otherwise the direct URL. `null` while in flight, which
-	 * leaves the placeholder painting on its own.
+	 * The URL actually handed to the `<img>`.
+	 *
+	 * This starts as the DIRECT url so the browser streams the image the normal
+	 * way — that is the whole point, see the note below. It only becomes a
+	 * retained `blob:` if the direct load FAILED and the authed retry succeeded.
 	 */
 	let displaySrc = $state<string | null>(null);
+	/** Set once the direct URL has errored, so we only pay for one retry. */
+	let retried = $state(false);
+	/** A retained blob, when the authed fallback produced one. */
+	let releaseBlob: (() => void) | null = null;
 
+	// Reset whenever the requested URL changes.
 	$effect(() => {
+		void src;
+		displaySrc = src;
+		retried = false;
+		releaseBlob?.();
+		releaseBlob = null;
+	});
+
+	/**
+	 * The direct load failed. Retry exactly once through the authed resolver —
+	 * that is what makes this correct whether or not the CDN needs the bearer.
+	 * A second failure is terminal, so the retry is guarded by `retried`.
+	 */
+	function handleError(event: Event) {
+		if (src !== null && !retried) {
+			retried = true;
+			return;
+		}
+		hideBrokenImage(event);
+	}
+
+	/**
+	 * The authed retry, as an effect rather than inline in the error handler so
+	 * its lifecycle is real: the teardown cancels an in-flight resolve if this
+	 * URL changes or the component goes away, and releases the retained blob.
+	 * Done inline in `handleError` the `cancelled` flag was never set, so a fetch
+	 * that resolved after unmount retained a blob nothing would ever release.
+	 */
+	$effect(() => {
+		if (!retried) return;
 		const requested = src;
-		displaySrc = null;
 		if (requested === null) return;
 
-		// A cancellation flag, NOT reactive state: writing `$state` that this
-		// effect also reads would make the effect re-schedule itself.
 		let cancelled = false;
-		let release: (() => void) | null = null;
-
 		void resolveAuthedImageRetained(requested).then((result) => {
 			if (cancelled) {
 				result.release?.();
 				return;
 			}
-			release = result.release;
+			// A passthrough of the same URL would re-error immediately; only a
+			// genuinely different (blob) URL is worth retrying.
+			if (result.url === requested) return;
+			releaseBlob = result.release;
 			displaySrc = result.url;
 		});
 
-		// Release the blob when this URL stops being displayed. Without this the
-		// cache ref-count is always zero, so eviction revokes a blob a mounted
-		// `<img>` is still using — the image blanks and re-runs the whole IPC
-		// byte fetch.
 		return () => {
 			cancelled = true;
-			release?.();
-			release = null;
+			releaseBlob?.();
+			releaseBlob = null;
 		};
 	});
 
@@ -143,7 +180,7 @@
 			decoding="async"
 			draggable="false"
 			referrerpolicy="no-referrer"
-			onerror={hideBrokenImage}
+			onerror={handleError}
 			onload={onload}
 			class="relative w-full h-full object-cover {imgClass}"
 		/>
