@@ -119,6 +119,67 @@ export type OptimisticMessage = ApiResponseMessage & {
 
 type Profile = Awaited<ReturnType<typeof getConversation>>["profile"];
 
+/**
+ * The ambient things this class reaches for: the WebSocket singleton, the
+ * `ws:disconnected` Tauri event, `localStorage`, the clock, the id generator and
+ * the toast function.
+ *
+ * They are injected rather than imported so the state machine can be unit-tested
+ * in this project's `node` vitest environment (`vite.config.mjs` sets
+ * `environment: "node"`), which has no `localStorage`, no live socket and no
+ * deterministic clock — so all 12 public methods below were previously
+ * untestable. `AUDIT_REPORT_v0.1.37` recorded 2 CRITICAL + 5 HIGH findings in the
+ * Photos tab, and the tab had zero coverage.
+ *
+ * This is a SEAM, not a refactor. Every method keeps its body, its order and its
+ * in-place mutation of `this.messages`. The invariant that the `chat.v1.message_sent`
+ * echo replaces array slots under you — so no method may hold a message reference
+ * across an `await`, and every rollback re-finds by id — is load-bearing and stays
+ * contained in this one class on purpose. Splitting these methods across modules
+ * to shorten the file would re-introduce the detached-proxy bugs already fixed
+ * here; see the notes on `reactTo` and `markMessageAsUnsent` below.
+ *
+ * Defaults are the real singletons, so production behaviour is byte-identical.
+ */
+export interface ConversationStateDeps {
+	ws: Pick<typeof ws, "status" | "onConnected" | "on" | "onTyping">;
+	/**
+	 * Subscribe to the Tauri `ws:disconnected` event. Split out from `ws` because
+	 * it crosses the IPC boundary via a dynamic `import()`, which cannot be
+	 * reached through the socket object.
+	 */
+	listenWsDisconnected: (handler: () => void) => Promise<() => void>;
+	storage: Pick<Storage, "getItem" | "setItem">;
+	now: () => number;
+	newId: () => string;
+	toast: Pick<typeof toast, "error">;
+}
+
+/**
+ * Resolved per key, NOT via `{ ...DEFAULTS, ...overrides }`: a spread evaluates
+ * the real globals eagerly, so `localStorage` was read even when a test supplied
+ * its own `storage` — and this project's `node` vitest environment has none,
+ * which is the exact barrier this seam exists to remove. `??` short-circuits, so
+ * a global is only touched when that key was not overridden.
+ */
+function resolveDeps(
+	overrides: Partial<ConversationStateDeps> = {},
+): ConversationStateDeps {
+	return {
+		ws: overrides.ws ?? ws,
+		listenWsDisconnected:
+			overrides.listenWsDisconnected ??
+			((handler) =>
+				import("@tauri-apps/api/event").then(({ listen }) =>
+					listen<void>("ws:disconnected", () => handler()),
+				)),
+		storage: overrides.storage ?? localStorage,
+		now: overrides.now ?? (() => Date.now()),
+		newId: overrides.newId ?? (() => crypto.randomUUID()),
+		toast: overrides.toast ?? toast,
+	};
+}
+
 export class ConversationState {
 	messages: OptimisticMessage[] = $state([]);
 	profile: Profile | null = $state(null);
@@ -139,13 +200,14 @@ export class ConversationState {
 	isTypingProfileId: number | null = $state(null);
 
 	get wsStatus() {
-		return ws.status;
+		return this.#deps.ws.status;
 	}
 
 	readonly conversationId: string;
 	readonly ourProfileId: number;
 
 	#conversations: ConversationsState;
+	#deps!: ConversationStateDeps;
 	#readQueue: { messageId: string; timestamp: number }[] = [];
 	#readTimer: ReturnType<typeof setTimeout> | null = null;
 	#typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,11 +232,18 @@ export class ConversationState {
 		conversationId,
 		ourProfileId,
 		conversations,
+		deps,
 	}: {
 		conversationId: string;
 		ourProfileId: number;
 		conversations: ConversationsState;
+		/** Test seam. Omitted in production, where the real singletons are used. */
+		deps?: Partial<ConversationStateDeps>;
 	}) {
+		// Assigned before anything below can use it: the constructor body
+		// synchronously reads storage, subscribes to the socket and kicks off
+		// `#initialLoad`.
+		this.#deps = resolveDeps(deps);
 		this.conversationId = conversationId;
 		this.ourProfileId = ourProfileId;
 		this.#conversations = conversations;
@@ -183,7 +252,9 @@ export class ConversationState {
 			z.coerce
 				.number()
 				.int()
-				.safeParse(localStorage.getItem(`chat:read:${conversationId}`)).data ??
+				.safeParse(
+					this.#deps.storage.getItem(`chat:read:${conversationId}`),
+				).data ??
 			null;
 		void this.#initialLoad();
 
@@ -192,7 +263,7 @@ export class ConversationState {
 		);
 
 		// Start polling immediately if already disconnected when this state is created.
-		if (ws.status === "disconnected") {
+		if (this.#deps.ws.status === "disconnected") {
 			this.#startPolling();
 		}
 		// Always run the slow safety net, connected or not. It is idempotent and it
@@ -201,7 +272,7 @@ export class ConversationState {
 
 		// Listen for WS connect / disconnect to toggle polling. Keep the promises so
 		// destroy() can await + unlisten even if it runs before listen() resolves.
-		this.#removeWsConnectedListener = ws.onConnected(() => {
+		this.#removeWsConnectedListener = this.#deps.ws.onConnected(() => {
 			if (this.#destroyed) return;
 			this.#stopPolling();
 			// The safety net must be (re)started HERE, not only in the constructor:
@@ -219,21 +290,18 @@ export class ConversationState {
 		});
 		this.#removeWsConnectedListener.catch(console.error);
 
-		this.#removeWsDisconnectedListener = import("@tauri-apps/api/event").then(
-			({ listen }) =>
-				listen<void>("ws:disconnected", () => {
-					if (this.#destroyed) return;
-					this.#startPolling();
-					// Same hole as onConnected: the safety net must be restarted on
-					// every transition, or it only ever ran during construction.
-					// Its body is `if (ws.status === "connected")`, so while the
-					// socket is down it is a no-op timer and the 10s poll does the work.
-					this.#startSafetyNet();
-				}),
-		);
+		this.#removeWsDisconnectedListener = this.#deps.listenWsDisconnected(() => {
+			if (this.#destroyed) return;
+			this.#startPolling();
+			// Same hole as onConnected: the safety net must be restarted on
+			// every transition, or it only ever ran during construction.
+			// Its body is `if (ws.status === "connected")`, so while the
+			// socket is down it is a no-op timer and the 10s poll does the work.
+			this.#startSafetyNet();
+		});
 		this.#removeWsDisconnectedListener.catch(console.error);
 
-		this.#unlistenWs = ws.on(
+		this.#unlistenWs = this.#deps.ws.on(
 			"chat.v1.message_sent",
 			chatV1MessageSentEventSchema,
 			(event) => {
@@ -367,7 +435,7 @@ export class ConversationState {
 		// reactions/retracts arrive inline via chat.v1.message_sent above, and the
 		// recipient's read position comes from the REST message list
 		// (recipientReadTimestamp, set in #initialLoad / #reconcileMessages).
-		this.#unlistenWsTyping = ws.onTyping((event) => {
+		this.#unlistenWsTyping = this.#deps.ws.onTyping((event) => {
 			if (this.#destroyed) return;
 			if (event.conversationId !== this.conversationId) return;
 			if (event.profileId === this.ourProfileId) return;
@@ -438,7 +506,7 @@ export class ConversationState {
 	#startSafetyNet(): void {
 		if (this.#safetyTimer !== null) return;
 		this.#safetyTimer = setInterval(() => {
-			if (ws.status === "connected") void this.#reconcileMessages();
+			if (this.#deps.ws.status === "connected") void this.#reconcileMessages();
 		}, SAFETY_NET_INTERVAL_MS);
 	}
 
@@ -474,7 +542,7 @@ export class ConversationState {
 			const { messages, changed, fresh } = reconcile(
 				this.messages,
 				result.messages,
-				{ now: Date.now(), ourProfileId: this.ourProfileId },
+				{ now: this.#deps.now(), ourProfileId: this.ourProfileId },
 			);
 
 			if (!changed) {
@@ -573,7 +641,7 @@ export class ConversationState {
 			this.#syncCache();
 			return true;
 		} catch (err) {
-			toast.error("Failed to load more messages");
+			this.#deps.toast.error("Failed to load more messages");
 			console.error(err);
 			return false;
 		} finally {
@@ -602,16 +670,16 @@ export class ConversationState {
 		// resolving, so a user who typed and hit send immediately watched the field
 		// clear with no bubble, no toast and no error — the message just vanished.
 		if (!this.profile) {
-			toast.error("Still loading this conversation. Try again in a moment.");
+			this.#deps.toast.error("Still loading this conversation. Try again in a moment.");
 			return false;
 		}
-		const tempId = `pending-${crypto.randomUUID()}`;
+		const tempId = `pending-${this.#deps.newId()}`;
 		const optimistic: OptimisticMessage = {
 			...message,
 			messageId: tempId,
 			conversationId: this.conversationId,
 			senderId: this.ourProfileId,
-			timestamp: Date.now(),
+			timestamp: this.#deps.now(),
 			unsent: false,
 			reactions: [],
 			status: "pending" as const,
@@ -641,7 +709,7 @@ export class ConversationState {
 
 	async #sendOneAlbum(albumId: number, expirationType: AlbumExpirationType): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
-		const tempId = `pending-${crypto.randomUUID()}`;
+		const tempId = `pending-${this.#deps.newId()}`;
 		const isExpiring = expirationType !== "INDEFINITE";
 		// Optimistic pending message — coverUrl is empty until WS event confirms with real data.
 		const optimistic = {
@@ -661,7 +729,7 @@ export class ConversationState {
 			messageId: tempId,
 			conversationId: this.conversationId,
 			senderId: this.ourProfileId,
-			timestamp: Date.now(),
+			timestamp: this.#deps.now(),
 			unsent: false,
 			reactions: [] as Array<{ profileId: number; reactionType: number }>,
 			status: "pending" as const,
@@ -718,7 +786,7 @@ export class ConversationState {
 		createdAt: number | null;
 	}): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
-		const tempId = `pending-${crypto.randomUUID()}`;
+		const tempId = `pending-${this.#deps.newId()}`;
 		// For the inline optimistic bubble, prefer a small public THUMBNAIL when we
 		// have a 40-char public hash — this caps the main-thread decode size. The
 		// signed upload URL (full-res) is reserved for the real send body + lightbox.
@@ -740,7 +808,7 @@ export class ConversationState {
 			messageId: tempId,
 			conversationId: this.conversationId,
 			senderId: this.ourProfileId,
-			timestamp: Date.now(),
+			timestamp: this.#deps.now(),
 			unsent: false,
 			reactions: [],
 			status: "pending",
@@ -792,14 +860,14 @@ export class ConversationState {
 		length: number;
 	}): Promise<void> {
 		if (!this.profile) throw new Error("Conversation not loaded");
-		const tempId = `pending-${crypto.randomUUID()}`;
+		const tempId = `pending-${this.#deps.newId()}`;
 		const optimistic: OptimisticMessage = {
 			type: "Audio",
 			body: { mediaId, mediaHash, url, contentType, length, expiresAt: null },
 			messageId: tempId,
 			conversationId: this.conversationId,
 			senderId: this.ourProfileId,
-			timestamp: Date.now(),
+			timestamp: this.#deps.now(),
 			unsent: false,
 			reactions: [],
 			status: "pending",
@@ -863,7 +931,7 @@ export class ConversationState {
 			if (msg) msg.status = "error";
 			const latestSent = this.messages.find((m) => m.status === "sent");
 			this.#updatePreview(latestSent);
-			toast.error("Message failed to send — tap to retry");
+			this.#deps.toast.error("Message failed to send — tap to retry");
 		}
 	}
 
@@ -896,7 +964,7 @@ export class ConversationState {
 			messages: cachedMessages,
 			profile: this.profile,
 			pageKey: this.pageKey,
-			cachedAt: Date.now(),
+			cachedAt: this.#deps.now(),
 		});
 	}
 
@@ -983,7 +1051,7 @@ export class ConversationState {
 		queue.sort((a, b) => a.timestamp - b.timestamp);
 		const highest = queue[queue.length - 1];
 		this.lastReadTimestamp = highest.timestamp;
-		localStorage.setItem(
+		this.#deps.storage.setItem(
 			`chat:read:${this.conversationId}`,
 			String(highest.timestamp),
 		);
@@ -996,7 +1064,7 @@ export class ConversationState {
 				});
 			} catch (err) {
 				console.error("Failed to mark conversation as read", err);
-				toast.error("Failed to mark conversation as read");
+				this.#deps.toast.error("Failed to mark conversation as read");
 			}
 		}
 	}
