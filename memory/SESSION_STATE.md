@@ -1,6 +1,114 @@
 # SESSION_STATE — grindrx-work
 
-**2026-09-28 09:05 UTC — v0.1.38 BUILT, SIGNED, PUSHED AND RELEASED. This supersedes the audit entry below.**
+**2026-09-30 22:5x UTC — v0.1.40 BUILT AND SIGNED. NOT PUSHED, NOT DEVICE-TESTED. AWAITING OPERATOR GO ON BOTH.**
+
+**What this ship is:** a testability seam on `ConversationState` + the first 25 tests that class
+has ever had. **No user-visible behaviour change.** No layout, markup, image or CSS was touched —
+deliberately, because those are the paths that produced the v0.1.34→0.1.36 and v0.1.38
+regressions. Full detail in `memory/FIX_NOTES_v0.1.40.md`.
+
+**Why:** `ConversationState` (1,367 lines, the chat state machine — the app's most-used surface)
+had **zero** coverage on all 12 public methods. It was untestable because it reached for `ws`,
+`localStorage`, `Date.now()`, `crypto.randomUUID()`, `toast` and the Tauri `listen` import in its
+own constructor, and `localStorage` does not exist in this project's `node` vitest environment.
+`ConversationStateDeps` + `resolveDeps()` now inject those six; defaults are the real singletons,
+so `+page.svelte` is unchanged. Resolution is per key (`??`), NOT a spread — a spread evaluates
+`localStorage` eagerly and throws; found by running the suite, not by reading the code.
+
+**I explicitly did NOT split the class,** against my own earlier recommendation. Three comments in
+the file record a load-bearing invariant (the `chat.v1.message_sent` echo replaces array slots, so
+nothing may hold a message reference across an `await`; `reactTo` and `markMessageAsUnsent` each
+carry a fix for that detached-proxy bug). Splitting across modules means threading `messages`
+mutation over a boundary — how you re-ship a bug that already shipped twice. Line count was never
+the defect.
+
+**The tests were mutation-verified,** per the standing lesson that green gates prove nothing. All
+four historical bug classes are caught when reintroduced. Two findings worth keeping:
+(1) one of my own tests was **vacuous** — it replaced the array slot with an object already holding
+the expected post-revert values, so a no-op revert passed; it now installs a deliberately-wrong
+object. (2) mutating only the primary `current.reactions.splice` in `reactTo` is an **equivalent
+mutant** — the `idx === -1` fallback re-finds by profileId/reactionType and covers the detached
+case, so the code is more robust than its comment implies. Mutating both splices IS caught.
+
+**Gates:** vitest **535/44 files** (was 510/43 — +25) · svelte-check **0 errors**, same 4
+pre-existing warnings · eslint clean · vite build OK · `cargo check --lib` exit 0 · tauri android
+build exit 0.
+
+**APK:** `com.grindrx.app` **0.1.40**, **versionCode 1075** (1074 was published), all 4 ABIs,
+71,089,780 B, sha256 `47a3935eb861567ecf589b071df796b2807c56e6306c8dc4d727d96d9d18ae2e`, cert
+`22d6889e…4c01` (matches, valid in-place upgrade). Built on the M1 in `~/grindrx-038`; all four
+changed files sha256-verified identical on both hosts (R5), and the pulled APK re-verified
+byte-identical. `autoIncrementVersionCode` stays `false`. `/dist` added to `.gitignore` — a 71 MB
+APK was one `git add -A` away from being committed.
+
+**Build note for next time:** the M1 has **no `/nix`**, so BUILDING.md's Nix pipeline is not
+available. What works: `PATH=$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.nvm/versions/node/v20.20.2/bin`,
+`ANDROID_HOME=$HOME/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973`, and
+`JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home` — the
+Homebrew JDK is `openjdk.jdk` under `Cellar/`, NOT `openenv.jdk` under `opt/`; guessing it cost a
+full build cycle. gradle wants `JavaVersion.VERSION_17`.
+
+**BOTH v0.1.40 AND v0.1.39 ARE UNTESTED ON A DEVICE.** v0.1.39 has been sitting unverified since
+Sep 28. The chat checklist matters most this time, since chat is what changed: send text, send
+photo, send album, react, unsend+revert, delete+revert, read receipts. Then the standing list —
+grid tile size and image position, scroll smoothness, full-screen viewer, right-now / views /
+favourites thumbnails.
+
+**NOT PUSHED — R11.** Branch + tags + release are staged and awaiting explicit operator go. Also
+still open: the image/CDN question (13 sites on bare CDN URLs; probe says 403/`AmazonS3`, i.e.
+private bucket — needs one real `mediaHash` + live `curl`), the F-Droid index (`fdindexer`
+unavailable, unchanged since v0.1.38), and the missing component-test runner that is the root
+cause of the recurring visual regressions. `flake.nix` remains deliberately uncommitted.
+
+**2026-09-28 09:50 UTC — v0.1.39 SHIPPED to test two regressions I introduced in v0.1.38. THIS IS THE LIVE HEAD.**
+
+**I shipped v0.1.38 (`48d85c9`) and it broke the grid in two separate ways. Both were mine.**
+1. **Grid tile layout/size.** A tile is `<a class="aspect-square relative flex items-end ...">` — a ROW
+   flex box. v0.1.38's `CdnImage` made the image wrapper `relative` (in flow) where every call site
+   had used `absolute`, so the photo became a **second flex item beside the name badge** and shrank to
+   the leftover width. Fixed in `d500909` by restoring `absolute`. The wrapper's box model is now an
+   explicit `wrapperClass` prop (default stays in-flow) so the shared default is not changed under the
+   other 13 call sites. Also fixed a latent `relative`+`absolute` Tailwind conflict in
+   `ImageCarouselItem`.
+2. **Image load.** My transport fix made `CdnImage` fetch bytes through Rust IPC *before* rendering, so
+   every tile painted a placeholder and waited for `fetch_authed_bytes`; the blob cache is
+   `MAX_ENTRIES = 32`, so scrolling made tiles evict and re-fetch each other. Fixed in `c864e6a`:
+   render the **direct URL optimistically**, retry through `resolveAuthedImageRetained` **once** on
+   `onerror`, and only swap in the result if it is a genuinely different (blob) URL. **The safety
+   property is unchanged** — correct whether or not the CDN needs the bearer. The retry is an effect
+   so its teardown cancels an in-flight resolve; done inline, `cancelled` was never set and a fetch
+   landing after unmount leaked a blob.
+
+**Shipped `30e6a1e`**, tags `v0.1.39` + `rollback-pre-v0.1.39` (= `48d85c9`, i.e. v0.1.38).
+`flake.nix` still uncommitted, on purpose.
+**APK:** `com.grindrx.app` 0.1.39, **versionCode 1074** (1073 was already published, so a 1073 build
+would have been rejected as an upgrade), all 4 ABIs, 71,086,868 B, sha256
+`d31e123c7de28a2b5f84fba00e6371bfd312aa03…`, cert `22d6889e…4c01` (matches, valid in-place upgrade).
+Built on the M1 in `~/grindrx-038`; all three changed files sha256-verified identical on both hosts (R5).
+**Forgejo** branch + `main` fast-forwarded `48d85c9..30e6a1e`; release id **63**,
+https://git.dominusaxis.com/dominus/grindrx/releases/tag/v0.1.39. **GitHub** branch + tags; release
+published (this is the feed the update banner reads), assets uploaded and sizes confirmed.
+**Downloaded the Forgejo asset back: sha256 byte-identical.** The GitHub asset CDN again returns 0
+bytes from this host, so GitHub is size-confirmed only.
+**F-Droid:** APK + `changelogs/1074.txt` staged, **index still not regenerated** — `fdindexer` is
+unavailable here (not a PyPI package; its GitLab home is Cloudflare-walled) and its absence is
+**unchanged since v0.1.38**. F-Droid clients will not list v0.1.38 or v0.1.39 until someone runs it.
+
+**The lesson, recorded because it has now recurred three times:** this project has **no component-test
+runner** (`vite.config.mjs` sets `environment: "node"`), so *no gate catches layout or visual
+defects*. The v0.1.34→v0.1.36 placeholder regression shipped twice, and v0.1.38 shipped two more
+grid defects. 510 green tests, a clean type-check, clean lint, a successful `cargo check` and a
+successful APK build all passed while the most-used screen in the app was broken. **Stop treating
+green gates as evidence a visual change is correct — it is not evidence at all.** Either add a
+DOM/component test runner, or treat any change to image/layout markup as requiring a device pass
+before release.
+
+**AWAITING DEVICE TEST.** Please check: grid tile size and image position, scrolling smoothness, the
+full-screen image viewer, and the right-now / views / favourites thumbnails (same pattern, judged
+statically only). Gates for this build: vitest 510/43, svelte-check 0 errors, eslint clean on the
+three touched files, vite build OK, `cargo` unchanged from 48d85c9. — agent, operator Tom.
+
+**2026-09-28 09:05 UTC — v0.1.38 BUILT, SIGNED, PUSHED AND RELEASED. Superseded by v0.1.39 above; the audit entry below still stands.**
 
 **Shipped `48d85c9`** on `claude/grindrx-freeze-json-audit-gp4lnk`, tag `v0.1.38` + `rollback-pre-v0.1.38`
 (= `9f680d4`). `flake.nix` deliberately still uncommitted (hardcodes an absolute path).

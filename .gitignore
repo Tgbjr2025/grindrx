@@ -1,6 +1,8 @@
 .DS_Store
 node_modules
 /build
+# Signed release APKs are uploaded as release ASSETS, never committed (71 MB each).
+/dist
 /.svelte-kit
 /package
 .env
