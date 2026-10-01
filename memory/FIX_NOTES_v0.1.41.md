@@ -4,9 +4,15 @@
 **Branch:** `claude/grindrx-freeze-json-audit-gp4lnk`
 **Commit:** `22d4fa5` (pushed to `github` and `grindrx-forgejo`)
 **Base:** `501d2ed` (v0.1.40)
-**No version bump.** The version gate in `ci/check-release-version.sh` is unchanged and passing;
-this commit adds API modules and tests, not app behaviour. It will become v0.1.42 when a build
-actually ships these.
+**No version bump yet.** All three version files still declare **0.1.40 / versionCode 1075**, which is
+what `v0.1.40` shipped as (`482f9f6`, APK built 2026-09-30 22:50). The version gate in
+`ci/check-release-version.sh` passes because those three agree with each other.
+
+**This work IS the 0.1.41 line — it has simply not been bumped or built yet.** Nothing has consumed
+0.1.41: there is no `v0.1.41` tag, and `package.json` / `tauri.conf.json` / `Cargo.toml` all still read
+0.1.40. So before the next APK ships, all three must be bumped **together** (0.1.40 -> 0.1.41,
+versionCode 1075 -> 1076) or the gate will fail — that is exactly the class of mistake the gate was
+added to catch.
 
 ---
 
