@@ -28,6 +28,14 @@ export const MIN_PRECISION = 6;
 export const MAX_PRECISION = 12;
 /** Precision used by `encodeGeohash` — i.e. persisted and transmitted. */
 export const PERSISTED_PRECISION = 8;
+/**
+ * Precision used by {@link coarsenGeohash} — ~1.2 km x 0.6 km cells.
+ *
+ * Deliberately {@link MIN_PRECISION}, i.e. the coarsest length the app already
+ * treats as "somewhere in here" (see the movement-threshold note above). A
+ * third-party request is not worth a coordinate that fine.
+ */
+export const COARSENED_PRECISION = 6;
 
 const BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
 
@@ -36,6 +44,42 @@ export const geohashSchema = z
 	.min(MIN_PRECISION)
 	.max(MAX_PRECISION)
 	.regex(/^[0-9b-hjkmnp-z]+$/);
+
+/**
+ * Coarsen a geohash to its parent cell at `precision` (default
+ * {@link COARSENED_PRECISION}).
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT OPTIONAL: the one third-party endpoint that
+ * asks for a location (`GET /v3/assignment`, A/B bucket assignment) must not be
+ * handed the stored 8-character hash. Truncating a geohash to fewer characters
+ * yields the ENCLOSING cell — 6 characters is ~1.2 km x 0.6 km, the coarsest
+ * length this app still considers a location at all (it is the same threshold
+ * the GPS updater uses to decide "the user moved").
+ *
+ * Truncation rather than a snap-to-a-coarse-grid: it is exact, needs no
+ * floating point, cannot drift, and is idempotent — coarsening a coarsened hash
+ * returns it unchanged.
+ *
+ * THROWS on a hash {@link geohashSchema} rejects, or on a precision below
+ * {@link MIN_PRECISION}. Refusing to send is the point: an unparseable location
+ * is a bug to surface, never a guess to transmit.
+ */
+export function coarsenGeohash(
+	hash: string,
+	precision: number = COARSENED_PRECISION,
+): string {
+	if (!geohashSchema.safeParse(hash).success) {
+		throw new RangeError(
+			`coarsenGeohash: invalid geohash ${JSON.stringify(hash)}`,
+		);
+	}
+	if (!Number.isInteger(precision) || precision < MIN_PRECISION) {
+		throw new RangeError(
+			`coarsenGeohash: precision ${precision} must be an integer >= ${MIN_PRECISION}`,
+		);
+	}
+	return hash.slice(0, precision);
+}
 
 /**
  * Encode a coordinate to a geohash.
