@@ -1,5 +1,139 @@
 # SESSION_STATE — grindrx-work
 
+**2026-10-01 ~17:00 UTC — HANDOFF DOCS REBUILT. Branch at `6fc45a4`, pushed to both remotes. `main`
+untouched everywhere and 107 commits behind. Work session closed out.**
+
+**Full handoff: `README_HANDOFF.md` (rewritten) + `HANDOFF_MESSAGE.md` (regenerated bootstrap prompt).
+Both replace the 2026-06-28 versions, which described a 3-week-old state and predated the entire
+gap-work session.**
+
+**State at handoff:**
+- Branch `claude/grindrx-freeze-json-audit-gp4lnk` @ `6fc45a4` = `feat: wire hide/tags/views to UI,
+  build WP-8 assignment`. Pushed to `github` and `grindrx-forgejo`, in sync.
+- **668/668 tests, 54 files.** svelte-check 0 errors (4 pre-existing warnings). eslint clean on every
+  touched file.
+- `main` **untouched on all three remotes**: local `21d7538` (v0.1.8, May 25), github `a547f8e`,
+  forgejo `30e6a1e` (v0.1.39). local main is a **clean fast-forward** from HEAD
+  (`git merge-base --is-ancestor main HEAD` = true) and has simply never been advanced.
+- Backups: `/home/ubuntu/backups/grindrx-main-backup-20261001/` — four `git bundle` files, all
+  `git bundle verify` clean, plus `backup/{local,github,forgejo}-main-20261001` tags pushed to
+  GitHub so the backup exists off-box.
+
+**Shipped this session** (details in `memory/FIX_NOTES_v0.1.41.md`):
+WP-1 report (wired to the chat message menu — the ethical package, the one that mattered),
+WP-2 hide, WP-3 views/taps, WP-7 tags, WP-8 assignment. **All unprobed** — transcribed from the
+spec and vendored docs, never observed, because no signed-in session was ever available.
+`getViews`/`getReceivedTaps` deliberately unwired (see FIX_NOTES §4).
+
+**UNCOMMITTED — a cancelled agent's Firebase work, correct and worth keeping:**
+`src-tauri/gen/android/build.gradle.kts` (+1 google-services classpath),
+`src-tauri/gen/android/app/build.gradle.kts` (+24 conditional plugin application),
+`src-tauri/Cargo.lock` (+1), `src-tauri/gen/android/FIREBASE_SETUP.md` (new). The
+conditional-application guard is the important part: applying `google-services` unconditionally
+hard-fails on a missing config file and would block EVERY Android build, not just push. It uses
+`apply(plugin = ...)` because Kotlin DSL cannot call `file(...)` inside `plugins { }`. **Left
+uncommitted deliberately** so the operator can decide.
+
+**Firebase project `grindrx-3c0ae` / number 1051764546093 exists but NO Android app is registered
+and there is no google-services.json.** The operator must register with package name exactly
+`com.grindrx.app` and drop the file at `src-tauri/gen/android/app/google-services.json`. The Rust
+FCM bridge, `v5/push-settings` layer, settings UI and manifest permissions are all still to write —
+that is most of the work, and none of it is verifiable until the API returns.
+
+**Outage unchanged and still the top blocker:** `api.grindr.com` + `cdn.grindr.com` refuse the TLS
+handshake (CloudFront 552) from the s26 on two networks and from this box, while google/github/pypi
+return 200 from all three. 0.1.40 and 0.1.39 fail identically — that is what established it is not
+a code regression. Blocks: all 7 probe questions, WP-5, WP-6. WP-6 is highest value once clear.
+
+**Decided against, do not relitigate:** a merge/rebase of upstream's ~1,200 commits. Operator
+chose to **port features manually** instead, which is the right call — reviewable, individually
+verifiable, and no risk of losing the 107 commits of fork-specific work. Real measured gap, in
+priority order: `platform/` (801 LOC, Android-native, no API dependency, testable offline — best
+next task), `blur/` (600 LOC, calibration layer), onboarding (101), ShowDistanceSetting. **Skip
+`updates/`** — already ported (`fetch_latest_release`, `ForceUpdateGate`, `UpdateBanner`). **Skip
+`demo/`, `entitlements/` (that is bypass.ts — spec calls it real legal exposure), `credits/`,
+`util/`.**
+
+**Two spec corrections carried into the handoff:** (1) Trap 1 greps must cover all of `src/`, not
+just `src/lib/api` + `src-tauri/src` — WP-2 was misreported as wholly absent for exactly this
+reason; (2) the fork is already ad-free by omission, so the v3→v4 port makes 8 ad/upsell entities
+recognised for the first time and each must be explicitly ignored or XTRA upsell could render.
+
+**Housekeeping still outstanding:** README.md claims v0.1.38 while code is 0.1.40; tag `v0.1.24`
+missing on all remotes (commit `7222650` exists); `main` never fast-forwarded.
+
+**2026-10-01 15:2x UTC — WP-1/2/3/7 UI WIRING. 3 of the 4 symbols wired. TWO PREMISES IN THE BRIEF
+WERE WRONG, and acting on either one would have caused real damage. NOTHING COMMITTED (R11 + explicit
+operator instruction: the operator reviews and commits).**
+
+Wired the three API modules from `22d4fa5` to the interface. All work is in the working tree.
+
+**Gates, measured:** vitest **668 passed / 54 files**, 0 failures. svelte-check **0 errors**, same 4
+pre-existing warnings in files nobody touched. eslint **0 errors** on all 6 files created/changed
+(`src/routes` as a whole still carries its 71 pre-existing errors, none of them mine — verified
+per-file via the JSON reporter). Baseline before this session was 596/51.
+
+**Wired:**
+
+- **`hideProfile`** → `src/routes/(protected)/(navbar)/profile/[profileId]/+page.svelte:474` (Hide
+  button, `EyeSlashIcon`, in the same action `<nav>` as Block) + confirm dialog at
+  `+page.svelte:530`, handler `hideUser()` at `+page.svelte:79`. Logic in the new
+  `profile-actions.ts` (same dir) so "do not navigate away on failure" is a *tested* property, not
+  an accident of statement order — the profile screen is the surface that triggered the hide and
+  must still be there to retry.
+- **`recordProfileView`** → `+page.svelte:97`, a `$effect` that fires once per profile id. Wrapped
+  in `recordProfileVisit()` (`profile-actions.ts`) which returns `void`, attaches its own `.catch`,
+  dedupes per session, and skips non-integer ids and your own profile. Never awaited — `$lib/api/view`
+  forbids gating navigation on it.
+- **`getProfileTags`** → new `ProfileTagsSheet.svelte` (own profile only), opened by a `TagIcon`
+  button at `+page.svelte:554`, wired at `+page.svelte:569`. State machine in the new
+  `src/lib/profile-tags/tags-state.ts`; saves via `PATCH /v4/me/profile`.
+
+**`getViews` and `getReceivedTaps` DELIBERATELY LEFT UNWIRED — both endpoints already have richer,
+working, NavBar-reachable screens, and the committed functions would REGRESS them:**
+
+- `GET /v7/views/list` is already rendered at `src/routes/(protected)/(navbar)/views/+page.svelte`
+  (the NavBar "Views" tab), via its own inline zod schema. That screen carries `totalViewers`, the
+  masked `previews` bucket with a lock badge and the XTRA explainer, `viewedCount.totalCount`
+  ("Viewed you N× recently"), `isSecretAdmirer` and `profileImageMediaHash`. **`engagement.ts`'s
+  `engagementProfileSchema` models NONE of those** — it carries only `displayName`, `age`,
+  `distance`, `medias` and the one unverified guess `engagedAt`. Swapping `/views` onto `getViews()`
+  deletes five working affordances from a screen a user can reach in one tap.
+- `GET /v2/taps/received` is already rendered at `.../interest/+page.svelte` (NavBar "Interest"
+  tab), also inline. `engagement.ts` deliberately omits `tapType` ("the server is not known to send
+  one"), so the swap costs the tap-emoji badge and the "Mutual" chip.
+
+**This is the trap `hide.ts`'s own header warns about, pointing the other way: the committed
+`engagement.ts` is a deliberately DEGRADING unverified schema, and the two working screens are the
+richer real ones.** The real gap is not "no UI" — it is a DUPLICATE parse. The fix is one probe away
+and is a change to `engagement.ts` (`totalViewers`, `previews`, `viewedCount`, `isSecretAdmirer`,
+`tapType`, `isMutual` as `.optional().catch(null)`), which this session was instructed not to touch.
+Its header already says it is "the one place to split them". **Not done, not claimed.**
+
+**THE BRIEF'S PREMISE ABOUT THE "hidden" SCREEN WAS WRONG, and the direction of the error matters.**
+`settings/(subpage)/account/hidden/+page.svelte` is about **HIDES**, not bans. It reads `GET
+/v1/hides` (`{ hides: [{ profileId, displayName, mediaHash }] }`) and unhides with `DELETE
+/v1/hides/{id}`; its empty state is "Users you hide will appear here"; the nav labels the two
+screens "Blocked users" and "Hidden users" and `SettingsNavBar` titles them "Blocked Users" /
+"Hidden Users". Bans live in the separate `account/blocked` screen on `/v3.1/me/blocks`. Upstream
+agrees (`HiddenProfile.svelte`: "You hid this profile."). So the two concepts were already NOT
+conflated, and the correct move was the opposite of what the brief implied: the hide ACTION goes on
+the profile screen, and the existing Hidden screen was already the right undo path. The confirm
+dialog now says so explicitly, because Hide and Block are one tap apart and only Block deletes the
+conversation.
+
+**A SECOND WRITER IS ACTIVE IN THIS TREE.** `src/lib/model/geohash.ts` + its test and
+`src/lib/api/assignment.ts` + its test appeared and were edited at 15:05–15:07, mid-session, and are
+not mine. Net +23 of the 668. Do not commit them as part of this work; and per the multi-agent rule,
+re-read this file and `git status` before editing anything a concurrent session may also be touching.
+
+**Still unprobeable:** the `api.grindr.com` TLS outage from the previous session is unchanged, so
+every path and shape here is transcribed from `docs/ENDPOINT_GAP_SPEC.md`, not observed. The WP-3
+probe questions stand, and `views.ts`'s "do not upgrade a version number on a guess" warning is
+unresolved.
+
+---
+
 **2026-10-01 08:3x UTC — GAP WORK WP-1/2/3/7 COMMITTED AND PUSHED. Remaining packages blocked on an
 outage, not on effort.**
 
