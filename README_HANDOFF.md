@@ -196,6 +196,45 @@ the components behind them.
 
 ---
 
+## A SECOND FRONT WAS REQUESTED — iOS. It is not buildable from here.
+
+The operator asked to also produce an **iOS/Apple build, forked from open-grind, with GrindrX
+features coded into it.** That cannot be done from this box, and the premise does not hold. Both
+facts below were verified, not assumed.
+
+**1. Open-grind has never shipped an iOS build.** There is nothing to fork iOS *from*:
+- No `src-tauri/gen/ios` or `src-tauri/gen/apple` — the directories do not exist.
+- Upstream's `tauri.conf.json` has `bundle.targets = ["deb", "nsis", "app"]` — Linux, Windows and
+  macOS-**desktop**. No `ios` target, no iOS platform block.
+- No Xcode project, no Swift, no Apple tooling anywhere in its tree.
+- Its README says "Cross-platform", but that means desktop + Android.
+
+**2. This host cannot build for iOS at all.** `xcodebuild`, `xcrun`, `swiftc` and `lipo` are all
+absent and the host is Linux. Tauri's iOS target requires macOS + Xcode. Producing an `.ipa` also
+needs a paid Apple Developer account and a Mac to run it. No workaround exists.
+
+**So the iOS front needs a Mac host, not a different approach on this one.** The operator's global
+CLAUDE.md does list a Mac in the multi-host topology as the canonical build host, so the work is
+possible *there*.
+
+**If that front is picked up, the honest scope is larger than "port some features":**
+- `tauri ios init` — generates the entire iOS project
+- `tauri.conf.json` iOS platform block, Podfile / CocoaPods resolution
+- **A new bundle identifier.** The Android `com.grindrx.app` does not transfer to iOS.
+- An Apple Developer account and a provisioning profile for signing
+- Re-solving app-lock / biometrics — Android `BiometricPrompt` has no direct iOS equivalent
+- No iOS precedent exists anywhere in either tree to copy from
+
+**Also relevant:** Tauri iOS would call the *same* `/v3/cascade` endpoints, so this front is blocked
+by the same outage as Android. Porting before the API recovers would mean porting something that
+cannot be verified at all.
+
+**Recommendation recorded:** finish Android (register the Firebase app, port `platform/`, clear the
+outage, run the seven probes), then treat iOS as a separate Mac-hosted project. The decision is the
+operator's; this section exists so the next session does not lose an hour rediscovering these walls.
+
+---
+
 ## Backups taken before any of this
 
 `/home/ubuntu/backups/grindrx-main-backup-20261001/` — four `git bundle` files, all verified

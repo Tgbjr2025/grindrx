@@ -59,6 +59,22 @@ just `src/lib/api` + `src-tauri/src` — WP-2 was misreported as wholly absent f
 reason; (2) the fork is already ad-free by omission, so the v3→v4 port makes 8 ad/upsell entities
 recognised for the first time and each must be explicitly ignored or XTRA upsell could render.
 
+
+**A SECOND FRONT WAS REQUESTED AND DECLINED ON THIS HOST — iOS.** Operator asked for an iOS/Apple
+build forked from open-grind with GrindrX features coded in. Verified, not assumed: **open-grind has
+never shipped an iOS build** (no `src-tauri/gen/ios` or `gen/apple`; upstream `tauri.conf.json`
+`bundle.targets = ["deb","nsis","app"]` = desktop + Android only; no Xcode project or Swift anywhere;
+its README's "Cross-platform" means desktop). And **this host cannot build iOS at all** —
+`xcodebuild`, `xcrun`, `swiftc`, `lipo` all absent, host is Linux; Tauri iOS requires macOS+Xcode and
+an `.ipa` needs a paid Apple Developer account. The iOS front therefore requires the **Mac in the
+multi-host topology**, not a different approach here. If attempted there the real scope is larger
+than "port features": `tauri ios init`, iOS platform block, Podfile/CocoaPods, a **new bundle id**
+(the Android `com.grindrx.app` does not transfer), provisioning profile, and re-solving
+biometrics/app-lock (Android `BiometricPrompt` has no direct iOS equivalent). No iOS precedent exists
+in either tree. It would also call the same `/v3/cascade` endpoints, so it is blocked by the same
+outage as Android. **Recommendation recorded: finish Android, then treat iOS as a separate Mac-hosted
+project.** Operator's decision; documented so the next session does not rediscover these walls.
+
 **Housekeeping still outstanding:** README.md claims v0.1.38 while code is 0.1.40; tag `v0.1.24`
 missing on all remotes (commit `7222650` exists); `main` never fast-forwarded.
 

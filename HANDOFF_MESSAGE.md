@@ -110,4 +110,22 @@ IF YOU DO ONLY ONE THING:
       git checkout main && git merge --ff-only claude/grindrx-freeze-json-audit-gp4lnk
       git push github main && git push grindrx-forgejo main
   (Push it yourself. R11.)
+
+SECOND FRONT — iOS. THE OPERATOR ASKED FOR IT; IT CANNOT BE DONE FROM THIS BOX.
+  Do not burn the session on it. Both facts are verified, not assumed:
+  (a) Open-grind has NEVER shipped an iOS build, so there is nothing to fork iOS
+      from. Upstream has no src-tauri/gen/ios or gen/apple, and its
+      tauri.conf.json bundle.targets are ["deb","nsis","app"] — desktop and
+      Android only. Its README's "Cross-platform" means desktop, not iPhone.
+  (b) xcodebuild, xcrun, swiftc and lipo are all ABSENT here and the host is
+      Linux. Tauri iOS needs macOS + Xcode. An .ipa also needs a paid Apple
+      Developer account. No workaround exists.
+  This front needs the MAC in the multi-host topology, not a different approach
+  here. Real scope if attempted on a Mac: tauri ios init, an iOS platform block,
+  Podfile/CocoaPods, a NEW bundle identifier (the Android com.grindrx.app does
+  not transfer), a provisioning profile, and re-solving biometrics/app-lock.
+  There is no iOS precedent in either tree to copy from. And it calls the same
+  /v3/cascade endpoints, so it is blocked by the same outage as Android.
+  Recommendation: finish Android first; treat iOS as a separate Mac-hosted
+  project afterwards. Full detail in README_HANDOFF.md.
 ```
