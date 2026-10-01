@@ -32,7 +32,7 @@ If you do nothing else: read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`,
 
 | | |
 |---|---|
-| Working branch | `claude/grindrx-freeze-json-audit-gp4lnk` @ `6fc45a4` |
+| Working branch | `claude/grindrx-freeze-json-audit-gp4lnk` @ `a5915c1` |
 | Pushed to | `github` and `grindrx-forgejo`, both in sync |
 | `main` | **untouched on every remote.** local `21d7538` (v0.1.8), github `a547f8e`, forgejo `30e6a1e` |
 | Code version | `package.json` **0.1.40**, versionCode 1075 (version gate passes) |
@@ -47,8 +47,8 @@ If you do nothing else: read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`,
 
 | Name | Points at | State |
 |---|---|---|
-| `github` | `github.com/Tgbjr2025/grindrx.git` | branch at `6fc45a4`, `main` diverged |
-| `grindrx-forgejo` | `dominus/grindrx.git` (this box) | branch at `6fc45a4`, `main` = v0.1.39 |
+| `github` | `github.com/Tgbjr2025/grindrx.git` | branch at `a5915c1` (code at `6fc45a4`), `main` diverged |
+| `grindrx-forgejo` | `dominus/grindrx.git` (this box) | branch at `a5915c1` (code at `6fc45a4`), `main` = v0.1.39 |
 | `origin` | `dominus/open-grind.git` (this box) | **frozen at May 27 — NOT latest upstream** |
 
 **There is no `upstream` remote.** Latest open-grind is `f377bd0` (2026-09-30), cloned read-only to

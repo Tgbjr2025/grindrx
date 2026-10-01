@@ -1,6 +1,6 @@
 # SESSION_STATE — grindrx-work
 
-**2026-10-01 ~17:00 UTC — HANDOFF DOCS REBUILT. Branch at `6fc45a4`, pushed to both remotes. `main`
+**2026-10-01 ~17:00 UTC — HANDOFF DOCS REBUILT. Branch at `a5915c1`, pushed to both remotes. `main`
 untouched everywhere and 107 commits behind. Work session closed out.**
 
 **Full handoff: `README_HANDOFF.md` (rewritten) + `HANDOFF_MESSAGE.md` (regenerated bootstrap prompt).
@@ -8,7 +8,7 @@ Both replace the 2026-06-28 versions, which described a 3-week-old state and pre
 gap-work session.**
 
 **State at handoff:**
-- Branch `claude/grindrx-freeze-json-audit-gp4lnk` @ `6fc45a4` = `feat: wire hide/tags/views to UI,
+- Branch `claude/grindrx-freeze-json-audit-gp4lnk` @ `a5915c1` (code at `6fc45a4` = `feat: wire hide/tags/views to UI,
   build WP-8 assignment`. Pushed to `github` and `grindrx-forgejo`, in sync.
 - **668/668 tests, 54 files.** svelte-check 0 errors (4 pre-existing warnings). eslint clean on every
   touched file.
