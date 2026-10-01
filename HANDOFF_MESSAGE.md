@@ -20,7 +20,7 @@ BEFORE DOING ANYTHING:
 3. Read /home/ubuntu/grindrx-work/memory/rules.md and operate under R1-R11 at all times.
 
 CURRENT GIT STATE:
-  Branch: claude/grindrx-freeze-json-audit-gp4lnk @ 6fc45a4, pushed to BOTH
+  Branch: claude/grindrx-freeze-json-audit-gp4lnk @ a5915c1, pushed to BOTH
   `github` and `grindrx-forgejo`, in sync. main is UNTOUCHED on every remote and
   is 107 commits behind — it is a clean fast-forward, nobody has done it.
   There is NO remote named `upstream`. `origin` points at a stale May-27 mirror
