@@ -1,6 +1,61 @@
 # SESSION_STATE — grindrx-work
 
-**2026-09-30 22:5x UTC — v0.1.40 BUILT AND SIGNED. NOT PUSHED, NOT DEVICE-TESTED. AWAITING OPERATOR GO ON BOTH.**
+**2026-09-30 23:2x UTC — v0.1.40 DEVICE-TESTED BY OPERATOR: PASSED. Still not pushed.**
+
+**Operator confirmed the build is tested and working on the s26 (Android, arm64).** APK delivered
+over the tailnet to `/sdcard/Download/grindrx-0.1.40-universal.apk`, sha256
+`47a3935eb861567ecf589b071df796b2807c56e6306c8dc4d727d96d9d18ae2e` — identical across M1 (built),
+OVH (pulled) and the phone (received). Installed over the existing `com.grindrx.app` with an
+unchanged signing cert, so it was a clean in-place upgrade over versionCode 1074, not a fresh
+install.
+
+This clears the gate that had been open since v0.1.39 shipped on Sep 28. Both 0.1.39 and 0.1.40
+are now device-verified.
+
+**Follow-up commit `7e2dad9` is CI/test-only and does NOT affect the tested artifact:** `ci/`,
+`deny.toml`, `src/lib/components/cdn-image-layout.guard.test.ts`. Nothing in it reaches the build,
+so the device test applies to the APK from `482f9f6` (= tag `v0.1.40`) as shipped.
+
+**Ported from upstream open-grind this session** (`git.opengrind.org/open-grind/open-grind`,
+diverged from this fork 2026-05-19 at `fb23b91c`; 1209 commits apart, 156 ours):
+- `ci/check-release-version.sh` + `ci/version.sh` — asserts package.json / tauri.conf.json /
+  Cargo.toml versions agree and refuses `*-dev`. **Would have caught a real mistake made earlier
+  the same day**, where bumping `versionCode` without `version` produced an APK reading
+  `versionName 0.1.39 / versionCode 1075`. Verified exit 1 desynced / 0 in sync.
+- `src/lib/components/cdn-image-layout.guard.test.ts` — static guard for the v0.1.38 grid
+  regression. `CdnImage`'s default wrapper is deliberately in-flow; the two call sites whose parent
+  sizes the box (grid tile `ProfileMiniCard`, `ImageCarouselItem`) must pass `wrapperClass="absolute…"`.
+  Three mutations verified to fail it. Reads source via Vite `?raw` `import.meta.glob`, NOT
+  `node:fs` — the project has no `@types/node` and adding it to global tsconfig `types` would retype
+  the whole app for one test.
+- `deny.toml` — cargo-deny config, inert until cargo-deny is installed (not installed).
+
+**Deliberately NOT ported:** upstream's 87 Playwright e2e specs — they depend on a
+`PUBLIC_ENABLE_DEMO` mode built into THEIR app (`src/lib/demo`, 3,560 LOC) plus 2,087 LOC of
+support helpers wired to their DOM. Not a copy; a port needing app changes, and most specs would
+fail on features this fork lacks. Their `SECURITY.md` names their maintainers, not ours. Their Rust
+layer (141 files / 30,237 LOC vs 13 / 3,966 here) would be a rewrite.
+
+**Gates after both commits:** vitest **541/45 files** · svelte-check **0 errors**, same 4
+pre-existing warnings · eslint clean · `sh ci/check-release-version.sh` passes.
+
+**STILL OPEN, unchanged by any of this:**
+- **No component-test runner.** `vite.config.mjs` sets `environment: "node"`. The static guard
+  catches the ONE box-model mistake that shipped; it does not catch a layout or visual regression
+  generally. This remains the root cause and the biggest single gap vs upstream.
+- Image/CDN question — 13 sites on bare CDN URLs, probe says 403/`AmazonS3` (private bucket).
+- F-Droid index still not regenerated; `fdindexer` unavailable, unchanged since v0.1.38.
+- **CI does not run any of these gates automatically.** `ci/check-release-version.sh` exists but
+  nothing invokes it on commit or before a build. Upstream has `ci/lint.ts` + release-version
+  checking wired in. Porting the script without wiring the hook leaves it advisory.
+- No SECURITY.md (needs our contact details, not upstream's).
+- 1,209 commits of upstream work unpulled, ~370/month and accelerating.
+
+**NOT PUSHED — R11.** Branch, both tags and the release with the APK attached are staged and
+awaiting explicit operator go.
+
+---
+
 
 **What this ship is:** a testability seam on `ConversationState` + the first 25 tests that class
 has ever had. **No user-visible behaviour change.** No layout, markup, image or CSS was touched —
