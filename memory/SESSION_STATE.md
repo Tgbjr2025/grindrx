@@ -1,5 +1,52 @@
 # SESSION_STATE — grindrx-work
 
+**2026-10-01 08:3x UTC — GAP WORK WP-1/2/3/7 COMMITTED AND PUSHED. Remaining packages blocked on an
+outage, not on effort.**
+
+**Commit `22d4fa5`** on `claude/grindrx-freeze-json-audit-gp4lnk`, pushed to **both** `github` and
+`grindrx-forgejo`. `main` untouched on both remotes. Details: `memory/FIX_NOTES_v0.1.41.md`.
+
+Implements four of the eight packages in `docs/ENDPOINT_GAP_SPEC.md`:
+**WP-1** report a profile (v5 flags + right-now post) · **WP-2** hide (`POST /v1/me/hides/{id}`) ·
+**WP-3** views + received taps · **WP-7** tags. 14 files, 1,767 insertions, 28 new tests.
+**596/596 pass** (545 + 8 failing at session start). `svelte-check` 0 errors. `eslint` clean on
+the touched surface.
+
+**Two findings that change the spec's assumptions:**
+
+1. **The spec's Trap 1 greps are insufficient — they scan `src/lib/api` and `src-tauri/src` only.**
+   `GET /v1/hides` and `DELETE /v1/hides/{id}` already exist in a **route component**
+   (`src/routes/(protected)/(navbar)/settings/(subpage)/account/hidden/+page.svelte:45,59`). The
+   spec therefore reported WP-2 as wholly absent when the real gap was only the *hide* action.
+   Any future gap work must grep all of `src/`, not just the api layer.
+2. **This fork is already ad-free**, and not by suppression — its v3 `cascadeResponseSchema`
+   names no ad entity types, so they are dropped at parse. Upstream parses them (v4 names 8) and
+   renders none. **So the v3→v4 port in WP-6 makes ~8 ad/upsell entities recognised for the first
+   time; each must be explicitly ignored or the XTRA upsell could start rendering.** Add that as a
+   stated requirement before WP-6 is started.
+
+**BLOCKED — 4 of 8 packages, all on the same thing:** `api.grindr.com` and `cdn.grindr.com` are
+refusing the TLS handshake (CloudFront alert 552) from the s26 on wifi, from the s26 on a second
+network, and from this OVH box — while google.com/github.com return 200 from all of them. Verified
+across three networks; it is server-side and per-hostname, not an IP, network, TLS-stack or build
+issue. 0.1.40 and 0.1.39 both fail identically, which is what proved it was not a code regression.
+
+Because there is no reachable API, **no probe is possible**, and the spec gates WP-5 and WP-6 on a
+probe. **All 7 open probe questions in `FIX_NOTES_v0.1.41.md` §7 are therefore still open.** Every
+path, the report reason vocabulary, and the views pagination shape are transcribed from the spec
+and vendored docs, NOT observed.
+
+**WP-4** (push) needs an owner scope decision: settings surface only, or full delivery?
+
+**NOTHING IS WIRED TO UI YET.** These four modules exist as API surface with no call sites, so
+there is no device-visible change and no APK was built. Per the spec's definition of done, none of
+it may be called working until device-tested on the s26.
+
+**Also outstanding:** `main` is 104 commits behind on this branch (clean fast-forward, never
+advanced past 0.1.8 in May) and diverges from `github/main` by 32 commits of deliberately
+extracted "anchor" work that was moved to its own repo. Tag `v0.1.24` is missing on all three
+remotes although its commit `7222650` exists. `README.md` still says v0.1.38 while the code is 0.1.40.
+
 **2026-09-30 23:2x UTC — v0.1.40 DEVICE-TESTED BY OPERATOR: PASSED. Still not pushed.**
 
 **Operator confirmed the build is tested and working on the s26 (Android, arm64).** APK delivered
