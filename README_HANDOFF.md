@@ -32,14 +32,23 @@ If you do nothing else: read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`,
 
 | | |
 |---|---|
-| Working branch | `claude/grindrx-freeze-json-audit-gp4lnk` @ `a5915c1` |
+| Working branch | `claude/grindrx-freeze-json-audit-gp4lnk` @ `05410c7` (code at `6fc45a4`) |
 | Pushed to | `github` and `grindrx-forgejo`, both in sync |
 | `main` | **untouched on every remote.** local `21d7538` (v0.1.8), github `a547f8e`, forgejo `30e6a1e` |
-| Code version | `package.json` **0.1.40**, versionCode 1075 (version gate passes) |
+| **In-progress version** | **0.1.41.** This is the WP-1/2/3/7/8 gap work. **Not yet bumped, not tagged, not built.** |
+| Last shipped version | **0.1.40** / versionCode 1075 — tag `v0.1.40` = `482f9f6`, APK built 2026-09-30 22:50 |
+| Code version today | `package.json` / `Cargo.toml` / `tauri.conf.json` all still read **0.1.40 / 1075**; the version gate passes because they agree |
 | Untagged | `v0.1.24` — commit `7222650` exists, tag never created |
 | README drift | still claims **v0.1.38** |
 | Tests | **668 / 668 passing**, 54 files |
 | No git safety net on `main` until you fast-forward it | backups made — see §6 |
+
+**Version note for the next session.** The gap work sitting on this branch *is* the 0.1.41 line — there
+is no 0.1.42 and nothing has consumed 0.1.41. Before the next APK ships, all three of
+`package.json`, `src-tauri/tauri.conf.json` (`version` **and** `versionCode`) and
+`src-tauri/Cargo.toml` must be bumped **together** (0.1.40 → 0.1.41, versionCode 1075 → 1076), or
+`sh ci/check-release-version.sh` fails. That gate was ported from upstream precisely because a bump
+was once done inconsistently — `versionName 0.1.39 / versionCode 1075` shipped by mistake.
 
 ---
 

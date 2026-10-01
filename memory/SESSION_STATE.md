@@ -60,6 +60,15 @@ reason; (2) the fork is already ad-free by omission, so the v3→v4 port makes 8
 recognised for the first time and each must be explicitly ignored or XTRA upsell could render.
 
 
+**VERSION STATE — this tripped me up once, so it is stated explicitly.** The gap work on this branch
+IS the **0.1.41** line. There is no 0.1.42; nothing has consumed 0.1.41. Last **shipped** is 0.1.40 /
+versionCode 1075 (tag `v0.1.40` = `482f9f6`, APK built 2026-09-30 22:50). All three version files —
+`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` — still read 0.1.40 / 1075 today,
+which is why `sh ci/check-release-version.sh` passes. **No `v0.1.41` tag exists.** Before the next APK
+ships, all three must be bumped **together** (0.1.40 → 0.1.41, versionCode 1075 → 1076) or the gate
+fails — that gate was ported from upstream precisely because a bump was once done inconsistently and
+shipped `versionName 0.1.39 / versionCode 1075` by mistake. `README.md` still claims v0.1.38.
+
 **A SECOND FRONT WAS REQUESTED AND DECLINED ON THIS HOST — iOS.** Operator asked for an iOS/Apple
 build forked from open-grind with GrindrX features coded in. Verified, not assumed: **open-grind has
 never shipped an iOS build** (no `src-tauri/gen/ios` or `gen/apple`; upstream `tauri.conf.json`
