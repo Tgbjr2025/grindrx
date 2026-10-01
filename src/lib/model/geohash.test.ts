@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	COARSENED_PRECISION,
+	coarsenGeohash,
 	decodeGeohash,
 	encodeGeohash,
 	geohashSchema,
@@ -114,5 +116,51 @@ describe("decodeGeohash", () => {
 
 	it("throws on a character outside the base32 alphabet", () => {
 		expect(() => decodeGeohash("9q8yyk8ytpxa")).toThrow();
+	});
+});
+
+describe("coarsenGeohash", () => {
+	it("returns the enclosing cell, and that cell is strictly larger", () => {
+		const hash = encodeGeohash(51.5074, -0.1278);
+		const coarse = coarsenGeohash(hash);
+
+		expect(coarse).toHaveLength(COARSENED_PRECISION);
+		expect(coarse).toBe(hash.slice(0, COARSENED_PRECISION));
+		// Truncation returns the PARENT cell, so it must enclose the original —
+		// this is the property that makes it a coarsening rather than a different
+		// location.
+		const fine = decodeGeohash(hash);
+		const parent = decodeGeohash(coarse);
+		expect(Math.abs(fine.lat - parent.lat)).toBeLessThanOrEqual(parent.latErr);
+		expect(Math.abs(fine.lon - parent.lon)).toBeLessThanOrEqual(parent.lonErr);
+		expect(parent.latErr).toBeGreaterThan(fine.latErr);
+	});
+
+	it("coarsens a legacy 12-char hash already on disk", () => {
+		expect(coarsenGeohash("9q8yyk8ytpxr")).toBe("9q8yyk");
+	});
+
+	it("leaves a hash already at the coarse precision alone", () => {
+		expect(coarsenGeohash("9q8yyk")).toBe("9q8yyk");
+	});
+
+	it("is idempotent — coarsening twice changes nothing", () => {
+		const once = coarsenGeohash("9q8yyk8ytpxr");
+		expect(coarsenGeohash(once)).toBe(once);
+	});
+
+	it("honours an explicit precision", () => {
+		expect(coarsenGeohash("9q8yyk8ytpxr", 8)).toBe("9q8yyk8y");
+	});
+
+	it("throws rather than transmitting an unparseable hash", () => {
+		expect(() => coarsenGeohash("not-a-geohash!")).toThrow(RangeError);
+		expect(() => coarsenGeohash("9q8")).toThrow(RangeError);
+		expect(() => coarsenGeohash("")).toThrow(RangeError);
+	});
+
+	it("throws on a precision below the movement threshold", () => {
+		expect(() => coarsenGeohash("9q8yyk8y", 4)).toThrow(RangeError);
+		expect(() => coarsenGeohash("9q8yyk8y", 6.5)).toThrow(RangeError);
 	});
 });

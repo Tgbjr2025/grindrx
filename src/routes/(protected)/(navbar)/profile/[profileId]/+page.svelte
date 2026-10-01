@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { ArrowLeftIcon, ArrowRightIcon, ChatCircleIcon, FlagIcon, HandWavingIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon, ProhibitIcon } from "phosphor-svelte";
+	import { ArrowLeftIcon, ArrowRightIcon, ChatCircleIcon, EyeSlashIcon, FlagIcon, HandWavingIcon, HeartIcon, HeartStraightIcon, PencilSimpleIcon, ProhibitIcon, TagIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 
 	import { fetchRest } from "$lib/api";
@@ -28,7 +28,9 @@
 	import MeetAt from "./MeetAt.svelte";
 	import NSFWPics from "./NSFWPics.svelte";
 	import OnlineStatus from "./OnlineStatus.svelte";
+	import { attemptHideProfile, recordProfileVisit } from "./profile-actions";
 	import ProfileTags from "./ProfileTags.svelte";
+	import ProfileTagsSheet from "./ProfileTagsSheet.svelte";
 	import RelationshipStatus from "./RelationshipStatus.svelte";
 	import SexualPosition from "./SexualPosition.svelte";
 	import Socials from "./Socials.svelte";
@@ -47,6 +49,8 @@
 	let refetchTick = $state(0);
 	let reportOpen = $state(false);
 	let blockDialogOpen = $state(false);
+	let hideDialogOpen = $state(false);
+	let tagsOpen = $state(false);
 
 	async function blockUser() {
 		try {
@@ -57,6 +61,44 @@
 			toast.error("Failed to block user. Please try again.");
 		}
 	}
+
+	/**
+	 * Hide, NOT block (WP-2) — `POST /v1/me/hides/{profileId}`.
+	 *
+	 * Deliberately a sibling of `blockUser` and not a replacement for it. Per
+	 * `$lib/api/hide`: a block removes someone from the grid AND deletes the
+	 * conversation for both people; a hide is the softer action, and the docs are
+	 * explicit that the two are not yet understood to be equivalent. They are not
+	 * merged, and one is not treated as satisfying the other. The pair is undone
+	 * in two separate places — Settings → Hidden users and Settings → Blocked
+	 * users — because they are two separate server-side lists.
+	 *
+	 * The outcome is decided by `attemptHideProfile` rather than here, so that
+	 * "do not navigate away on failure" is a tested property instead of an
+	 * accident of statement order: this profile screen is the surface that
+	 * triggered the hide, and it must still be here to retry.
+	 */
+	async function hideUser() {
+		const { ok, shouldNavigate, message } = await attemptHideProfile(profileId);
+		if (ok) toast.success(message);
+		else toast.error(message);
+		if (shouldNavigate) goto("/").catch((err) => console.error(err));
+	}
+
+	/**
+	 * WP-3: record that this profile was opened. `POST /v5/views/{profileId}`.
+	 *
+	 * FIRE-AND-FORGET BY CONTRACT — see `$lib/api/view`. `recordProfileVisit`
+	 * returns `void` and attaches its own rejection handler, so this effect can
+	 * never leave a floating promise, and nothing here awaits it: gating a
+	 * profile screen on a POST that can 502 would turn a dropped analytics ping
+	 * into a broken screen. The dedupe inside means re-running this effect — on
+	 * every re-render, and on every swipe back to a profile — issues one POST,
+	 * not one per render.
+	 */
+	$effect(() => {
+		recordProfileVisit({ profileId, ourProfileId });
+	});
 
 	const profile = $derived.by(() => {
 		// refetchTick read here so the derived re-runs after a save
@@ -413,24 +455,40 @@
 							</div>
 						{/if}
 					</div>
-					<Button
-						size="icon-lg"
-						class="size-14"
-						variant="outline"
-						onclick={() => (blockDialogOpen = true)}
-						aria-label="Block user"
-					>
-						<ProhibitIcon class="size-8" />
-					</Button>
-					<Button
-						size="icon-lg"
-						class="size-14"
-						variant="outline"
-						onclick={() => (reportOpen = true)}
-						aria-label="Report user"
-					>
-						<FlagIcon class="size-8" />
-					</Button>
+				<Button
+					size="icon-lg"
+					class="size-14"
+					variant="outline"
+					onclick={() => (blockDialogOpen = true)}
+					aria-label="Block user"
+				>
+					<ProhibitIcon class="size-8" />
+				</Button>
+				<!--
+					Hide, not block. Deliberately worded to say so, and deliberately
+					a separate control from Block above: the two are different
+					server-side lists with different consequences, and a user who
+					wants someone out of their grid without deleting the conversation
+					must not reach for the destructive one by mistake.
+				-->
+				<Button
+					size="icon-lg"
+					class="size-14"
+					variant="outline"
+					onclick={() => (hideDialogOpen = true)}
+					aria-label="Hide user"
+				>
+					<EyeSlashIcon class="size-8" />
+				</Button>
+				<Button
+					size="icon-lg"
+					class="size-14"
+					variant="outline"
+					onclick={() => (reportOpen = true)}
+					aria-label="Report user"
+				>
+					<FlagIcon class="size-8" />
+				</Button>
 				</nav>
 				<ReportDialog bind:open={reportOpen} {profileId} />
 				<AlertDialog.Root bind:open={blockDialogOpen}>
@@ -455,8 +513,49 @@
 						</AlertDialog.Content>
 					</AlertDialog.Portal>
 				</AlertDialog.Root>
+				<!--
+					The hide confirmation states what a hide does NOT do, because the
+					words "hide" and "block" are one tap apart here and only one of
+					them deletes the conversation. Undoing it is Settings → Hidden
+					users, not Settings → Blocked users.
+				-->
+				<AlertDialog.Root bind:open={hideDialogOpen}>
+					<AlertDialog.Portal>
+						<AlertDialog.Overlay />
+						<AlertDialog.Content>
+							<AlertDialog.Header>
+								<AlertDialog.Title>Hide this user?</AlertDialog.Title>
+								<AlertDialog.Description>
+									They'll stop appearing in your grid, but you keep the conversation and they
+									aren't told. You can unhide them in Settings → Hidden users.
+								</AlertDialog.Description>
+							</AlertDialog.Header>
+							<AlertDialog.Footer>
+								<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+								<AlertDialog.Action onclick={() => hideUser().catch((e) => console.error(e))}>
+									Hide
+								</AlertDialog.Action>
+							</AlertDialog.Footer>
+						</AlertDialog.Content>
+					</AlertDialog.Portal>
+				</AlertDialog.Root>
 			{:else}
 				<nav class="absolute -translate-y-1/2 right-2 flex items-center gap-2">
+					<!--
+						The picker for `profileTags` (WP-7). It is on YOUR OWN profile
+						only: `getProfileTags` is the reference vocabulary for setting
+						your tags, and the read-only rendering of another person's tags
+						is `ProfileTags` further down this same screen.
+					-->
+					<Button
+						size="icon-lg"
+						class="size-14"
+						variant="outline"
+						onclick={() => (tagsOpen = true)}
+						aria-label="Edit profile tags"
+					>
+						<TagIcon class="size-8" />
+					</Button>
 					<Button
 						size="icon-lg"
 						class="size-14"
@@ -467,6 +566,11 @@
 						<PencilSimpleIcon class="size-6" />
 					</Button>
 				</nav>
+				<ProfileTagsSheet
+					bind:open={tagsOpen}
+					{profileTags}
+					onSave={handleProfileSaved}
+				/>
 				<EditProfileSheet
 					bind:open={editOpen}
 					profileData={{
