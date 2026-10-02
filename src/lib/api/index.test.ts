@@ -176,6 +176,61 @@ describe("classifyResponseBody", () => {
 			"error-code",
 		);
 	});
+
+	// REGRESSION (2026-10-02): the old detector matched exactly two literals from
+	// ONE Cloudflare template, so every other template fell through to
+	// "error-code" and the user saw "Couldn't load profiles" instead of the
+	// "request blocked" dialog. Two live probes minutes apart returned two
+	// different templates, which is how this was found.
+	it.each([
+		[
+			"managed JS challenge",
+			403,
+			"<html><head><title>Just a moment...</title></head><body>Checking your browser before accessing</body></html>",
+		],
+		[
+			"rate-limit interstitial",
+			429,
+			"<html><head><title>Attention Required! | Cloudflare</title></head><body>Slow down</body></html>",
+		],
+		[
+			"bare block page with no title",
+			403,
+			"<!DOCTYPE html><html><body>Cloudflare Ray ID: abc123</body></html>",
+		],
+		[
+			"cookie-challenge page",
+			403,
+			"<html><body>Enable JavaScript and cookies to continue. cloudflare</body></html>",
+		],
+	])("classifies a Cloudflare %s as cloudflare-block", (_label, status, html) => {
+		expect(classifyResponseBody(status, html)).toBe("cloudflare-block");
+	});
+
+	// The looser match must not swallow a REAL API error that happens to be a
+	// 403: a JSON envelope is an API answer, not an interstitial, and reporting
+	// it as "blocked" would send the user chasing a WAF that never spoke.
+	it("still reports a JSON 403 envelope as error-code, with its code intact", () => {
+		expect(
+			classifyResponseBody(403, '{"code":403,"message":"forbidden"}'),
+		).toBe("error-code");
+		expect(
+			classifyResponseBody(403, '{"code":"CAS-4001","message":"nope"}'),
+		).toBe("error-code");
+	});
+
+	it("never classifies a 2xx body as a block, whatever it contains", () => {
+		// A 2xx is not a refusal by definition, so no content can make it one.
+		// (`<html>Cloudflare</html>` is short enough to classify as "error-code"
+		// by the bare-code rule — that is pre-existing behaviour and fine; what
+		// matters is that it is not "cloudflare-block".)
+		expect(classifyResponseBody(200, "<html>Cloudflare</html>")).not.toBe(
+			"cloudflare-block",
+		);
+		expect(
+			classifyResponseBody(200, "<html>" + "Cloudflare ".repeat(40) + "</html>"),
+		).toBe("parse-error");
+	});
 });
 
 // REGRESSION (Tom issue #2): these exercise the actual decision points behind

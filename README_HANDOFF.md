@@ -17,11 +17,17 @@ them into the UI, and committed all of it to a feature branch — **not** `main`
 **`main` has not moved since May and is 107 commits behind.** All real work is on
 `claude/grindrx-freeze-json-audit-gp4lnk`.
 
-**Something is broken at the network level and it is not our code.** `api.grindr.com` and
-`cdn.grindr.com` refuse the TLS handshake (CloudFront alert 552) from the s26 on two different
-networks *and* from the OVH server, while google.com / github.com / pypi.org return 200 from all
-three. Version 0.1.40 and 0.1.39 fail identically. **No build of this app will load profiles
-until that changes, and nothing in the codebase can affect it.**
+**⚠️ RETRACTED 2026-10-01: the "network is broken" claim below was WRONG.** It was based on probing
+`api.grindr.com`, which this app never calls. Our base URL is `https://grindr.mobi`
+(`src-tauri/src/api/client.rs:13`) and it answers **HTTP 403 with TLS completing** — a live server
+with no root route, not an outage. Upstream open-grind uses the same host and works with 60k users.
+See "THE 'OUTAGE' WAS WRONG" below. The original text is preserved there for history.
+
+> ~~**Something is broken at the network level and it is not our code.** `api.grindr.com` and
+> `cdn.grindr.com` refuse the TLS handshake (CloudFront alert 552) from the s26 on two different
+> networks *and* from the OVH server, while google.com / github.com / pypi.org return 200 from all
+> three. Version 0.1.40 and 0.1.39 fail identically. **No build of this app will load profiles
+> until that changes, and nothing in the codebase can affect it.**~~
 
 If you do nothing else: read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`, then
 `docs/ENDPOINT_GAP_SPEC.md`.
@@ -88,11 +94,19 @@ narrower than the surfaces. Closing them properly is a probe away.
 
 ### Still open
 
+**None of these are blocked by a network outage — that was wrong (see the retraction above). They
+are blocked only because nobody has run the probe yet, which requires a signed-in session.**
+
 | WP | Blocked on |
 |---|---|
 | **WP-4** push | Firebase Android app **not yet registered**. Partial Gradle work is in the tree uncommitted — see §4. |
-| **WP-5** location | Probe-gated. Needs a live session. Has a stop condition: if it needs `entitlements/bypass`, report, do not work around it. |
-| **WP-6** cascade v3→v4 | Probe-gated. **Highest-value open item** — see §5. |
+| **WP-5** location | Needs a live signed-in session to probe. Has a stop condition: if it needs `entitlements/bypass`, report, do not work around it. |
+| **WP-6** cascade v3→v4 | Needs a live signed-in session to probe. **Highest-value open item** — see §5. |
+
+**To unblock all of them:** the session token is in the phone's Android Keystore, not on any dev
+box. Either run the probe from the phone, or explicitly authorise one authenticated request from a
+dev host. Until then every path in this table is transcribed from `docs/ENDPOINT_GAP_SPEC.md` and
+vendored docs, **not observed**.
 
 ---
 
@@ -120,24 +134,46 @@ requirement before WP-6 is started.
 
 ---
 
-## The outage — do not waste time on it
+## ⚠️ THE "OUTAGE" WAS WRONG — RETRACTED 2026-10-01. The API is NOT blocked.
 
-```
-TLSv1.3 (IN), TLS alert, handshake failure (552)     <- CloudFront: SNI unrecognized
-curl: (35) TLS connect error: error:0A000410:SSL routines::ssl/tls alert handshake failure
-```
+**Everything below this line used to say the API was down and that this was the top blocker. It
+is not. Do not repeat it.**
 
-Confirmed from: s26 on wifi · s26 on a second network · this OVH box. Controls returning 200 from
-all three: google.com, github.com, pypi.org.
+The failing probe was against **`api.grindr.com`** — a host **this app never calls**. It appears
+exactly once in the whole tree, in a comment (`src/lib/api/assignment.ts:13`).
 
-Check whether it has recovered with:
+**Our actual API base URL is `https://grindr.mobi`** (`src-tauri/src/api/client.rs:13`):
 
 ```bash
-curl -sS https://api.grindr.com/     # an HTTP status = recovered; curl:(35) = still down
+curl -sS -o /dev/null -w '%{http_code}\n' https://grindr.mobi/
+# 403  <- TLS completed fine. A live API host with no root route.
 ```
 
-Flashing builds cannot fix this. Neither can clearing tokens or changing routes. **Two versions
-failed identically, which is what proved it was not a code regression.**
+403 on `/` is a healthy server answering. It is not a handshake failure.
+
+Measured 2026-10-01 from this box:
+
+| Host | TLS | HTTP | Called by us? |
+|---|---|---|---|
+| `grindr.mobi` | ✅ | 403 | **YES — this is the base URL** |
+| `cdns.grindr.com` | ✅ | 403 | yes, 46 call sites |
+| `api.grindr.com` | ❌ handshake failure | — | **no** |
+| `cdn.grindr.com` | ❌ handshake failure | — | **no** |
+
+Upstream open-grind uses the **same** `grindr.mobi` host — its test fixtures pin
+`https://grindr.mobi/v4/cascade` (`src/lib/api/redact/text.test.ts:90`). That is why open-grind
+works with 60k users, and why so does this fork.
+
+**Therefore: "all 7 probes are unprobeable" and "WP-5/WP-6 are blocked" are UNFOUNDED.** Do not
+skip probe work on the grounds that the API is unreachable.
+
+**Still NOT proven end-to-end:** a 403 on `/` does not prove an authenticated route responds. One
+real request settles it. The only session token lives in the phone's Android Keystore, not here, so
+that call has to come from the phone or be explicitly authorised.
+
+**Do not confuse this with the 0.1.38 `cdns.grindr.com` 403**, which is a *different* and still-open
+question: that bucket returns `AccessDenied` on every path including its own root, and the code
+comment claiming `cdns.grindr.com` is public is contradicted by the evidence.
 
 ---
 
@@ -186,13 +222,43 @@ subdirectories, and you already have those screens at top level.
 `ForceUpdateGate.svelte`, `UpdateBanner.svelte`). Upstream's 2,338-line `updates/` dir is a
 *rewrite* of what you have, not a missing capability.
 
+**`platform/` IS NOW PARTIALLY PORTED — 2026-10-01, uncommitted.** See
+`memory/FIX_NOTES_platform_port.md`. Landed: `android-native-bridge.ts` (29 → 128 LOC, now with
+IME-inset deferral), `back-gesture-event.svelte.ts` (3 → 47, gains `dismissOnBackGesture()`),
+`src/lib/platform/{os,touch-origin,block-zoom,video-codecs,hover-pointer,scroll-gesture}.ts`, and
+`MainActivity.kt` gains `imeVisible()` + `@Volatile` on the inset fields. **30 tests, all
+mutation-verified** (`*.dom.test.ts`, jsdom project).
+
+**Two things the notes got wrong, now corrected:**
+- **`screen-chrome.svelte.ts` is NOT ported.** It needs a DOM runner *and* has no consumer here;
+  upstream calls it only from the `remeasureScreenChrome()` line, which was dropped.
+- **`link-opener.ts` is deliberately NOT ported — ours is better.** Upstream calls `openUrl()`
+  directly, which is the Android bug documented at `src/lib/api/open-url.ts:9-28` (the plugin
+  registers `open`, not `open_url`, on Android, so every call rejects). Also skipped:
+  `app-settings.ts` (invokes a Rust command that does not exist here), `keybindings.ts` (needs
+  `tinykeys`), `store.ts` (upstream-only env var).
+
+**Still blocked on the Rust/Kotlin half:** `scroll-gesture.ts` needs `set_scroll_gesture_capture`;
+`system-back-gesture.ts` needs `__AndroidBack.gestureProgress()`; `block-native-menu.ts` needs
+`$lib/haptics`. `media-failure.ts` / `media-file.ts` / `media-picker.ts` / `desktop-entry.svelte.ts`
+not started.
+
+**Two upstream-version traps, both hit:**
+1. **Svelte 5.55.5 here vs `^5.57.0` upstream.** In 5.55.5 `createContext()` returns a 2-tuple and
+   `get` **throws** when unset; upstream destructures a 3-tuple with `insideScreen`. Copied verbatim
+   it fails type-check *and* throws at runtime. `back-gesture-event.svelte.ts` re-implements the
+   5.57 shape on the 2-tuple API, with a comment saying what to delete on upgrade.
+2. **`resolve.conditions: ["browser"]`** is needed before `mount()` works in tests. Upstream sets it
+   globally; doing that here would re-resolve all 668 node tests, so it is scoped to the `dom`
+   project.
+
 **Worth porting, in order:**
 
 | Area | LOC | Why |
 |---|---:|---|
-| `platform/` | 801 | 18 files: block-native-menu, back-gesture, block-zoom, touch-origin, video-codecs. **Android-native polish — matters for a phone-first app.** Zero API dependency, fully testable offline. |
+| ~~`platform/` (rest)~~ | — | Partly done — see above. Remainder blocked on Rust/Kotlin. |
 | `blur/` | 600 | Progressive NSFW blur with calibration + compositing. You have `ProgressiveBlur.svelte` as a component but not the calibration layer. |
-| onboarding | 101 | First-run flow. A real gap for a distributed app. |
+| onboarding | 101 | **Already have this** — `stores/onboarding.svelte.ts` + `FeatureTour.svelte`. Smaller than listed. |
 | `ShowDistanceSetting` | small | Privacy control; absent from your settings tree. |
 
 **Do not port:** `demo/` (2,703 LOC of Playwright scaffolding — the spec says no), `entitlements/`
@@ -234,12 +300,13 @@ possible *there*.
 - Re-solving app-lock / biometrics — Android `BiometricPrompt` has no direct iOS equivalent
 - No iOS precedent exists anywhere in either tree to copy from
 
-**Also relevant:** Tauri iOS would call the *same* `/v3/cascade` endpoints, so this front is blocked
-by the same outage as Android. Porting before the API recovers would mean porting something that
-cannot be verified at all.
+**Also relevant:** Tauri iOS would call the *same* `/v3/cascade` endpoints against the *same*
+`grindr.mobi` host, so this front carries the same **unverified-endpoint** risk as Android — not the
+same outage, which was never real. Porting before any of it is probe-verified still means porting
+something that cannot be checked.
 
-**Recommendation recorded:** finish Android (register the Firebase app, port `platform/`, clear the
-outage, run the seven probes), then treat iOS as a separate Mac-hosted project. The decision is the
+**Recommendation recorded:** finish Android (register the Firebase app, finish the `platform/` port,
+run the seven probes), then treat iOS as a separate Mac-hosted project. The decision is the
 operator's; this section exists so the next session does not lose an hour rediscovering these walls.
 
 ---
@@ -299,7 +366,14 @@ suite is not evidence that a screen works.
 git log --oneline -5                       # what happened recently
 git worktree list                          # no worktrees in use
 sh ci/check-release-version.sh             # version gate
-npx vitest run                             # 668 tests
+npx vitest run                             # 698 tests (node 668 + dom 30)
+npx vitest run --project dom               # just the jsdom/component tests
 npx svelte-check --tsconfig ./tsconfig.json
-curl -sS https://api.grindr.com/           # is the outage over?
+curl -sS -o /dev/null -w '%{http_code}\n' https://grindr.mobi/   # the REAL base URL
 ```
+
+**Test runner:** `vite.config.mjs` now has TWO vitest projects. `node` (the original, unchanged,
+`src/**/*.test.ts` minus `*.dom.test.ts`) and `dom` (jsdom + `resolve.conditions: ["browser"]`, for
+`*.dom.test.ts`). The `conditions` line is load-bearing — without it Svelte resolves to the server
+build and `mount()` throws `lifecycle_function_unavailable`. This closes the long-standing gap that
+let the v0.1.34/0.1.36/0.1.38 visual regressions ship through green gates.

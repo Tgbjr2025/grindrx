@@ -7,27 +7,54 @@ import z from "zod";
  * -------------
  * The cascade query sends `nearbyGeoHash` on EVERY grid request, and the chosen
  * location is persisted twice: to `preferences.data` (msgpack) and to
- * `localStorage["grindrx-explore-location"]`. A 12-character geohash resolves to
- * roughly a 2 m x 4 m cell — four more characters than anything in this app can
- * act on, transmitted on every request and written to disk forever.
+ * `localStorage["grindrx-explore-location"]`.
  *
- * The app's own notion of "the user moved" compares 6-character cells and calls
- * that ~1 km (see the root `+page.svelte` GPS updater). 8 characters
- * (~19 m x 19 m) is three orders of magnitude finer than that threshold while
- * being a third of the bytes, so it is the stored/transmitted precision.
+ * **The precision is 12 characters and the server requires it.** An earlier
+ * build shipped 8 — see the `PERSISTED_PRECISION` doc below for the measurement
+ * and why that was reverted. Do not shorten it.
+ *
+ * A 12-character geohash resolves to roughly a 2 m x 4 m cell. The app's own
+ * notion of "the user moved" compares 6-character cells and calls that ~1 km
+ * (see the root `+page.svelte` GPS updater), so the extra characters are finer
+ * than the app's own movement threshold — but the cascade endpoint validates the
+ * hash, and it rejected the short form outright.
  *
  * WHY THE SCHEMA ACCEPTS 6..12 AND NOT EXACTLY ONE LENGTH
  * ---------------------------------------------------------
- * Shortening the schema to `.length(8)` would reject every hash already on a
- * user's disk (they'd have to re-pick a location) and would break callers that
- * legitimately hold a longer hash. The schema is therefore a RANGE: anything a
- * geohash can legitimately be still validates, and `encodeGeohash` (the only
- * producer we control) now emits 8.
+ * Fixing the schema to `.length(12)` would reject hashes already on a user's
+ * disk (they'd have to re-pick a location) and would break callers that
+ * legitimately hold a longer or shorter hash — {@link coarsenGeohash} emits 6 on
+ * purpose. The schema is therefore a RANGE, and the PRODUCER emits 12.
  */
 export const MIN_PRECISION = 6;
 export const MAX_PRECISION = 12;
-/** Precision used by `encodeGeohash` — i.e. persisted and transmitted. */
-export const PERSISTED_PRECISION = 8;
+/**
+ * Precision used by `encodeGeohash` — i.e. persisted and transmitted.
+ *
+ * ⚠️ WAS 8. REVERTED TO 12 ON 2026-10-02 — THE SERVER REQUIRES 12.
+ *
+ * `5cda11f` ("GrindrX Audit Agent", 2026-09-27) shortened this from 12 to 8 on
+ * the reasoning above: four characters the app cannot act on, a third of the
+ * bytes. It was never probed against the API. It is **wrong**, and it broke the
+ * single most-used screen in the app.
+ *
+ * Measured on a real device, 0.1.42 with response logging:
+ *
+ *     [GrindrX] GET /v3/cascade?nearbyGeoHash=dpg8ncgz -> HTTP 400 (129 bytes)
+ *     body: {"type":"urn:gr:err:geo_hash_decode",
+ *            "title":"Invalid location format","status":400,...}
+ *
+ * A 400, not a 403 — so this was never a WAF, a block, or a network fault. The
+ * cascade endpoint rejects a hash below its required precision outright. The grid
+ * has been dead since that commit and shipped broken in 0.1.40, whose device test
+ * never opened the profile grid.
+ *
+ * Note the error envelope carries `type`/`title`/`status` but **no `code` field**,
+ * which is why the user-facing message had no code in it
+ * (`ApiHttpError.code === null` -> "Couldn't load profiles"). Do not "optimise"
+ * this constant again without a probe.
+ */
+export const PERSISTED_PRECISION = 12;
 /**
  * Precision used by {@link coarsenGeohash} — ~1.2 km x 0.6 km cells.
  *

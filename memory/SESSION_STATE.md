@@ -1,5 +1,466 @@
 # SESSION_STATE — grindrx-work
 
+**2026-10-02 ~03:2x UTC — ROOT CAUSE FOUND: `PERSISTED_PRECISION` WAS 8, THE SERVER REQUIRES 12.
+THE OPERATOR WAS RIGHT AND I WAS WRONG TO DISMISS THE SUB-AGENT THEORY. 0.1.43/1078 INSTALLED,
+AWAITING SIGN-IN.**
+
+## THE ACTUAL CAUSE — measured, not inferred
+
+The release-build response logging (added earlier this session) paid for itself on its first run:
+
+```
+[GrindrX] GET /v3/cascade?nearbyGeoHash=dpg8ncgz -> HTTP 400 (129 bytes) body:
+{"type":"urn:gr:err:geo_hash_decode","title":"Invalid location format","status":400,"traceId":"..."}
+```
+
+**HTTP 400 — not 403, not a WAF, not a network fault. The geohash is 8 characters and the cascade
+endpoint requires 12.** `dpg8ncgz` is 8; the app's own fixtures used 12 (`u4pruydqqvj8`).
+
+**The error envelope has `type`/`title`/`status` but NO `code` field** — that is precisely why the UI
+showed no code: `ApiHttpError.code === null` -> "Couldn't load profiles".
+
+## WHO BROKE IT — the operator's theory was CORRECT
+
+`git log` settles it:
+
+- `62a2c4e` … `9a2d8e4` — original encoder, **`const precision = 12`**.
+- **`5cda11f` "GrindrX Audit Agent", 2026-09-27 03:48** — "fix: full line-by-line audit remediation"
+  — changed it to `PERSISTED_PRECISION = 8`, justified in a 25-line comment as four characters the
+  app "cannot act on", a third of the bytes. **Never probed against the API.**
+- `git merge-base --is-ancestor 5cda11f v0.1.40` → **TRUE. 0.1.40 shipped broken.** Its device test
+  never opened the profile grid, so nothing caught it.
+
+**I WAS WRONG AND MUST SAY SO.** I searched all 13,331 files in `~/.claude/projects/` for live
+`grindr.mobi` requests, found none, and concluded the sub-agents could not have caused this. That
+conclusion was **correct but irrelevant** — the damage was a CODE change, not API traffic. I let
+"no live requests" become "not their fault" and dismissed the operator's own observation. It was
+theirs all along.
+
+**The green-gate lesson again, and worse than usual: the sub-agent wrote a test asserting the wrong
+value** (`geohash.test.ts`: "persists 8 characters, not 12"). 704 tests passed with the app's most-
+used screen dead, because the test was written from the same unverified premise as the code it
+locked in.
+
+## THE FIXES
+
+1. **`src/lib/model/geohash.ts` — `PERSISTED_PRECISION` 8 → 12.** Header comment and the constant's
+   doc rewritten: the measured 400 is quoted in-file so nobody "optimises" it again. Backup
+   `geohash.ts.bak.pre_precision.*`.
+2. **`geohash.test.ts` — the 8-asserting test inverted** to require 12, and the prefix/nesting test
+   kept (it is what makes the repair below sound).
+3. **`(navbar)/(root)/+page.svelte` — stale-hash repair.** The GPS updater only rewrote the stored
+   hash when `slice(0, 6)` differed. A stored 8-char hash and a new 12-char hash of the SAME place
+   share that prefix, so **it would never self-heal** and every existing user would stay broken
+   even with the encoder fixed. Now also compares length. (First attempt at this condition was
+   written backwards — `&&` instead of `||`, which required BOTH to differ and so preserved the
+   bug. Caught by re-reading, not by a test.)
+4. Earlier this session, still in: `client.rs` refreshable-session fix, `rest.rs` release logging,
+   `index.ts` Cloudflare detection, `auth.rs` 403 no longer fatal.
+
+## STATUS / GATES
+
+**0.1.43 / versionCode 1078 built, signed (cert `22d6889e…4c01` unchanged) and INSTALLED on the s26
+over USB.** vitest **704/56** · svelte-check 0 errors · `cargo check --lib` clean on the M1 · version
+gate `building release version 0.1.43`.
+
+**BLOCKED ON THE OPERATOR: SIGN IN.** The pre-fix 0.1.42 build already deleted the stored
+credential, so there is no session and therefore no cascade request to log. Latest log still shows
+`nearbyGeoHash=dpg8ncgz` (8 chars) because the stored preference predates the fix.
+
+**After signing in, LOCATION PERMISSION MUST BE GRANTED** or the stale 8-char hash is never
+repaired. Then `adb logcat | grep GrindrX` should show a 2xx on `/v3/cascade` — and that also
+answers probe question #1 ("does /v3/cascade still return data?"), which has been open for weeks.
+
+**NOT COMMITTED, NOT PUSHED, no tag.**
+
+**2026-10-02 ~03:0x UTC — THE "COULDN'T LOAD PROFILES" ROOT CAUSE IS FOUND, AND IT IS A LOCKOUT
+BUG. Four fixes, all tested. 0.1.42/1077 BUILT AND SIGNED BUT NOT INSTALLED. NOTHING COMMITTED.**
+
+**The answer to the bug the operator reported, after a long hunt. Operator's own observation was
+the key clue and it was RIGHT: the app worked, then stopped, then worked, then stopped.**
+
+## THE ROOT CAUSE — `client.rs` "FIX 9" deletes a refreshable session
+
+`src-tauri/src/api/client.rs:104-119` (pre-fix), on every app start:
+
+```rust
+Some(ref s) if s.expires_at < now => {
+    eprintln!("[client] stored session is expired ... — clearing");
+    super::auth::AuthStorage::delete_session();
+    None
+}
+```
+
+`Session.auth_token` is precisely what `authorization_header()` → `refresh_token_inner()` →
+`create_session()` uses to MINT A NEW SESSION. That refresh path already exists, is expiry-aware,
+and refuses to clear on anything but a genuine 401. **This check deleted the credential the refresh
+needed and forced a full re-login instead.**
+
+Its stated intent was "common after Android reinstall" — the genuine no-token case. But it fired on
+**any** app start after expiry.
+
+**Why that produces exactly the reported symptom.** Re-login POSTs to the same `/v8/sessions`
+endpoint (`auth.rs:206`), which is fronted by a WAF that intermittently refuses it. So:
+token expires → app restarts → credential deleted → login attempted → *maybe blocked* → broken.
+Works again the moment a login gets through. **A refresh would have been invisible to all of it.**
+
+**PROVEN ON THE DEVICE, not inferred.** Launching the instrumented 0.1.42 produced exactly:
+`[client] stored session is expired (expires_at=1790908003, now=1790909254) — clearing` — expired
+by 1251 s. **The app is signed out right now** as a consequence of the pre-fix build.
+
+## The four fixes (all uncommitted)
+
+1. **`client.rs` — the root cause.** An expired session is now KEPT whenever `auth_token` is
+   non-empty, so the first authenticated call refreshes it. Only discarded when it carries no token
+   at all (the reinstall case it was written for). Logs which branch it took.
+2. **`rest.rs` — release-build observability.** `eprintln!` on every non-2xx from `request_raw`:
+   `METHOD path -> HTTP <status> (<n> bytes) body: <240-char prefix>`, control chars stripped.
+   **This is what made the diagnosis possible**; the only request logging was behind
+   `#[cfg(debug_assertions)]`. Placed AFTER `body` is bound — the first attempt referenced `body`
+   and `method` before either existed and did not compile (borrow-after-move + out of scope).
+   **It also has to be in `request_raw`, not `request_raw_unauthed`** — the cascade is authed; I put
+   it in the wrong function first.
+3. **`index.ts` — Cloudflare detection.** `classifyResponseBody` matched exactly two literals from
+   ONE template. Replaced with a template-agnostic test: 403/429 + non-JSON body + a
+   cloudflare/attention-required/just-a-moment/enable-javascript/ray-id marker. **Two live probes
+   minutes apart returned two DIFFERENT templates, which is how the brittleness was proven.**
+   +6 tests, including that a real JSON 403 envelope is still `error-code` with its code intact.
+4. **`auth.rs` — 403 no longer clears the session.** `auth_class` dropped `code == 403`.
+   **HONEST CORRECTION: I earlier claimed this was the active cause. It was not.** `request_json`
+   (`rest.rs:159-160`) builds the code as `json.get("code")…unwrap_or(0)`, so a Cloudflare **HTML**
+   body fails to parse and arrives as `code: 0` — never 401, never 403, so that branch was NOT
+   reached. Kept as hardening (a JSON `code: 403` is still not proof the token is bad), not as the
+   fix.
+
+## What was RULED OUT, with evidence — do not re-litigate
+
+- **Not an outage.** Base URL is `grindr.mobi` (`client.rs:13`); the "api.grindr.com outage" was
+  probing a host we never call. `/v3/cascade` reached the auth layer and answered 401.
+- **Not credentials.** Operator receives Grindr email notifications, AND the app loads MESSAGES —
+  authenticated calls that work. Session and token are fine.
+- **Not the account.** The OFFICIAL Grindr app loads profiles on the same phone, same network, same
+  account. Cloudflare is not blocking this IP or this account.
+- **Not a WAF fingerprint blanket-block.** curl is blocked on EVERY endpoint including
+  conversations, while the app's conversations work — so curl is not a proxy for app behaviour and
+  **all curl-based probing of this API is invalid.** The app is blocked on `/v3/cascade` only.
+- **Not the sub-agents.** Break predates 0.1.41 and none of those changes touch the network path.
+  Checked `~/.bash_history` AND all 13,331 files in `~/.claude/projects/` — no agent ever issued a
+  live request to `grindr.mobi`. (Correction to my own reasoning: I first dismissed the theory
+  partly on clean bash history, which is weak evidence because agent tool calls are not recorded
+  there. The project-log search is the real evidence.)
+- **Not the stale `26.9.1.163471` version string** or the `MAX_ANDROID_VERSION: u8 = 16` vs the
+  phone's Android 17 — tested four UA variants, all 403.
+
+**STILL UNRESOLVED: why `/v3/cascade` specifically returns 403 to this client while every other
+endpoint works.** The 240-char body log (fix 2) will answer it on the next run. Do NOT guess.
+
+## Build status
+
+**0.1.42 / versionCode 1077 built and signed on the M1.** Cert `22d6889e…4c01` unchanged (R22).
+Backups `*.bak.pre_v0142`; all three version files bumped together, gate prints
+`building release version 0.1.42`. **NOT INSTALLED — the phone's USB disconnected from the M1
+mid-install.** Wireless adb port 45077 remains `offline` (needs pairing).
+
+**Build gotcha added to the record:** the M1 build needs
+`export PATH="$NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin:$PATH"` in addition to everything
+else. Without it `cc-rs` cannot find `x86_64-linux-android-clang` and gradle's `rustBuild*Release`
+tasks die with **exit 134** after a 10-minute Rust build — the error names `bun`, not the real
+cause. Always `cargo check --lib` on the M1 first; there is no cargo on OVH.
+
+## Gates
+
+vitest **704/56** (+6) · svelte-check 0 errors · eslint clean on touched files · `cargo check --lib`
+clean on the M1 · `vite build` OK · version gate exit 0. **`vite build` not re-run after the last two
+Rust edits — no JS impact, but stated rather than assumed.**
+
+**NOT COMMITTED, NOT PUSHED, no tag.** Nothing to undo on the device: the installed build is the
+pre-fix 0.1.42, which is functionally the same as 0.1.41 for this bug.
+
+**NEXT, in order:** (1) reconnect the phone to the M1's USB and `adb install -r` the 0.1.42 APK
+already sitting at `~/grindrx-041/src-tauri/gen/android/app/build/outputs/apk/universal/release/`;
+(2) operator signs in ONCE (mandatory — the pre-fix build already deleted the stored credential);
+(3) open the grid and read `logcat | grep GrindrX` for the 403 body, which settles the last open
+question. **Do not skip step 2** — with no session there is no cascade request to log.
+
+---
+
+**2026-10-02 ~00:1x UTC — 0.1.41 BUILT AND SIGNED ON THE M1 OVER TAILSCALE. APK DELIVERED TO THE
+OVH BOX. NOT INSTALLED, NOT DEVICE-TESTED, NOT PUSHED, NOT COMMITTED.**
+
+Operator: "use tailscale and compile and build on the m1." Done. The Kotlin from the previous entry
+**compiles**, and the artefact is signed with the right cert.
+
+**APK:** `com.grindrx.app` **0.1.41**, **versionCode 1076** (1075 was published by 0.1.40, so this is
+a valid in-place upgrade), 71,296,123 B, all 4 ABIs, minSdk/targetSdk unchanged.
+sha256 `556a2212eaa52d55cb515fbdc5c50e3c8053025947600aa1e61e83956677ea3b`.
+Cert SHA-256 `22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01` — **matches
+KEYS.md (R22)**. **Delivered to `/home/ubuntu/apks/grindrx-0.1.41-universal.apk`, sha256-verified
+byte-identical to the M1's copy.**
+
+**THE KOTLIN COMPILES.** Confirmed present in the shipped artefact: `unzip -p … classes.dex |
+strings | grep -c imeVisible` → **1**. The `imeVisible()` `@JavascriptInterface` method is in the
+APK, so `readNativeInsets()`'s `bridge.imeVisible?.()` is no longer falling through to `false`.
+**This closes the "inert" flag from the previous entry. What is still unverified is the BEHAVIOUR
+on a real keyboard — the compile proves the plumbing, not the fix.**
+
+**VERSION BUMP — all three together, gate passes.** `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` → `0.1.41`; `versionCode` 1075 → **1076**. Backups
+`*.bak.pre_v0141.20261001_234447`. `sh ci/check-release-version.sh` → `building release version
+0.1.41`, exit 0. **Do NOT bump again before an install** — 1076 is now consumed by a real artefact.
+
+**HOW THE BUILD WAS DONE (reusable — this cost real time to work out):**
+- Reached the M1 as **`ssh mac`** (existing `~/.ssh/config` entry; `HostName 100.92.26.108`,
+  `User thomasbateman`). `tailscale status` shows it as `macbook-air`. Bare `ubuntu@<ip>` is
+  rejected — use the config alias.
+- **R20 respected: the M1's own `~/grindrx-work` is stale at `e155a35` (v0.1.33) and DIRTY. Not
+  touched.** Built in a fresh throwaway **`~/grindrx-041`**, synced by `tar | ssh tar -x` (90 MB
+  source). **R5 verified on 4 files** — `MainActivity.kt`, `tauri.conf.json`, `package.json`,
+  `Cargo.toml` all sha256-identical on both hosts.
+- **Keystore:** `cp ~/.config/grindrx/keystore.properties src-tauri/gen/android/` — sha256
+  `cb78eb93…32a114`, identical on both hosts, and `~/open-grind-key.jks` already present on the M1.
+  **Without this the build SUCCEEDS and silently emits an UNSIGNED APK** (gotcha 1 confirmed still
+  live).
+- **JDK pinned** in `src-tauri/gen/android/gradle.properties`:
+  `org.gradle.java.home=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home`
+  (backup `gradle.properties.bak.pre_pin`). Gotcha 2 confirmed still live — M1 has JDK 25 and 17, no
+  21, and AGP 8.13.2 rejects 25.
+- Env: `PATH=$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.nvm/versions/node/v20.20.2/bin:$PATH`,
+  `ANDROID_HOME=$HOME/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973`.
+  All three of bun/cargo/node are OFF the default PATH.
+- **DO NOT call gradle directly.** `./gradlew :app:compileDebugKotlin` is **ambiguous** (ABI splits)
+  and `:app:compileUniversalDebugKotlin` fails with *"No matching variant of project
+  :tauri-plugin-\* … No variants exist"* — the Tauri plugin subprojects need the Rust Android libs
+  built first. **Use `bun run tauri android build --apk`**, which does cargo-then-gradle correctly.
+  Rust: 8m59s for 4 Android targets, then gradle. All 4 targets already installed on the M1.
+- `bun install --frozen-lockfile` before building (329 packages).
+- **A bonus confirmation:** the cancelled agent's Firebase gradle work behaved exactly as its
+  comments claimed — `WARNING: google-services.json not found … push notifications will not work`
+  and the build continued. The conditional-application guard works.
+
+**NOT DONE — and the next actions are the operator's:**
+1. **NOT INSTALLED.** `adb devices` on the M1 is **empty** — the s26 is not attached over adb. It is
+   on Tailscale (`thomass-s26-ultra`, 100.64.176.13) but adb-over-network is not set up. Install by
+   hand from `/home/ubuntu/apks/grindrx-0.1.41-universal.apk`.
+2. **NOT DEVICE-TESTED.** The whole point of the build. What to check, restated because my earlier
+   version of this was WRONG: **the keyboard is not going to be hidden** — `MainActivity.kt` already
+   shrinks the WebView by the IME height (`bottomMargin`), in both forks. The thing under test is
+   whether `--safe-area-*` **jumps** ahead of the layout. Open a chat, tap the input: expect one
+   smooth settle; a bug is padding snapping to zero then jumping a beat later. Then close the
+   keyboard (the deferral is **symmetric**), then **rotate the device** (insets change with no IME
+   flip — that path must apply immediately, and it is the one most likely to regress).
+3. **NOT PUSHED** (R11), **NOT COMMITTED**, no `v0.1.41` tag, no release, F-Droid untouched.
+
+---
+
+**2026-10-01 ~23:3x UTC — KOTLIN `imeVisible()` DONE (UNCOMPILED) · HANDOFF DOCS CORRECTED · THE
+TWO FALSE PREMISES ARE NOW RETRACTED IN THE DOCS THEMSELVES. NOTHING COMMITTED.**
+
+**Operator instruction: "do the change and then docs need updated." Done in that order.**
+
+**THE KOTLIN — `MainActivity.kt`, 3 additions, nothing removed.** Backup
+`MainActivity.kt.bak.pre_ime.20261001_*`. (1) `@Volatile` on `insetsTop/Bottom/Left/Right` —
+`InsetsInterface` runs on the **WebView JS-bridge thread**, not the UI thread that writes them, so
+this was an unsynchronised read; upstream guards the same state the same way. (2)
+`@Volatile imeVisibleNow`, set from `isImeVisible` — **which was already computed at `:169-172` and
+discarded.** (3) `@JavascriptInterface fun imeVisible() = imeVisibleNow`. This is what makes the JS
+port live; without it `bridge.imeVisible?.()` silently degraded and everything behaved as before.
+
+**⚠ THE KOTLIN IS NOT COMPILED.** No Android platform SDK and no NDK on this box
+(`/usr/lib/android-sdk` has only `build-tools/debian` and an empty `platforms/`; `ANDROID_HOME`
+unset; Java 21 only). **Compile on the Mac (`~/grindrx-038`) before trusting it.** Three additive
+lines is not a compile. Also: **`MainActivity.kt` is a GENERATED file that is heavily hand-modified
+— `tauri android init` can clobber it. Diff first.**
+
+**⚠ I CORRECTED A CLAIM I HAD ALREADY WRITTEN INTO CODE, TESTS AND NOTES.** I had said the IME
+deferral "puts the message input under the keyboard". **That is false** — I mis-read an earlier diff.
+Both forks already shrink the WebView by the IME height (`bottomMargin = if (isImeVisible)
+ime.bottom else 0`; upstream `MainActivity.kt:143-147`, ours identical). **The keyboard never covers
+the input in either app.** The deferral prevents `--safe-area-*` jumping ahead of a still-settling
+layout — a padding jump, not a hidden control. Source comment, test comment and all three docs now
+say so. Recorded because the wrong version was already committed to three files.
+
+**DOCS CORRECTED — the outage retraction is now IN the docs, not just SESSION_STATE:**
+- `README_HANDOFF.md` — headline claim struck through with a correction above it; new section
+  "THE 'OUTAGE' WAS WRONG — RETRACTED" with the measured host table; WP-5/WP-6 "still open" table
+  de-outaged (blocked only on *no signed-in session*); iOS "same outage" wording fixed; `platform/`
+  row updated to partly-ported; quick-commands fixed to probe `grindr.mobi` and show 698 tests.
+- `HANDOFF_MESSAGE.md` — same retraction at the top, WP-5/6 reworded, gap list rewritten with the
+  Svelte 5.55.5 vs ^5.57 trap and the **"do NOT port `link-opener.ts`, yours is better"** warning.
+- `memory/MEMORY.md` — new **"⚠ TWO STANDING CORRECTIONS"** section at the top so the next session
+  cannot re-inherit either error; `FIX_NOTES_platform_port.md` added to the index; the stale
+  "v0.1.38 is the latest" one-liner replaced (old text preserved in a `<details>` block).
+- `memory/FIX_NOTES_platform_port.md` — rewritten with the Kotlin half, the corrected rationale, the
+  mutation-verification table, and all five behaviours the tests pinned (three of which I got wrong
+  first time, including one **vacuous** test).
+
+**Gates after everything:** vitest **698/56** (node 668/54 + dom 30/2) · svelte-check **0 errors** ·
+eslint clean on all touched files incl. `vite.config.mjs` · `vite build` OK · version gate exit 0 at
+**0.1.40/1075** (no bump — no APK shipping) · **Kotlin NOT compiled** · `cargo` NOT run (no Rust
+changed).
+
+**STILL OPEN, in priority order:** (1) compile + device-test the Kotlin on the Mac — the whole IME
+deferral is unverified end-to-end; (2) one authenticated request against `grindr.mobi` to settle
+WP-5/WP-6 and the 7 probes; (3) `blur/` calibration layer; (4) the rest of `platform/`, blocked on
+`set_scroll_gesture_capture`, `__AndroidBack.gestureProgress()`, `$lib/haptics`.
+
+---
+
+**2026-10-01 ~22:1x UTC — THE MISSING TEST RUNNER IS FIXED. This closes the root-cause gap behind
+the v0.1.34/0.1.36/0.1.38 visual regressions. `platform/` now has real tests. NOTHING COMMITTED.**
+
+**Operator instruction that triggered this: "you need to build test first." Correct — the previous
+entry shipped a port with ZERO tests, which by this project's own standing lesson proves nothing.**
+
+**THE GAP:** `vite.config.mjs` had one vitest config, `environment: "node"`. There was no DOM at all,
+so no layout/markup behaviour could ever be tested. That is why 510 green tests shipped a broken
+grid twice.
+
+**THE FIX — two vitest projects, not a global environment flip. `vite.config.mjs`:**
+- `node` — same environment, same `src/**/*.test.ts` glob, plus `exclude: ["src/**/*.dom.test.ts"]`.
+- `dom` — `environment: "jsdom"`, `include: ["src/**/*.test.ts" → "**/*.dom.test.ts"]`, and
+  **`resolve: { conditions: ["browser"] }`**.
+- `jsdom@^26.1.0` added as a devDependency **via bun** (bun had to be reinstalled to `~/.bun/bin/bun`
+  — only `~/.bun/install/cache` survived on this box; `bun.lock` updated, backups
+  `package.json.bak.pre_jsdom.*` / `bun.lock.bak.pre_jsdom.*`).
+
+**`conditions: ["browser"]` IS LOAD-BEARING AND EASY TO MISS.** Without it, Svelte resolves to the
+**server** build and `mount()` throws `lifecycle_function_unavailable` — 6 tests failed on this
+before the fix. Upstream sets it globally (`vite.config.mjs:13`); doing that here would re-resolve
+all 668 node tests, so it is scoped to the `dom` project only.
+
+**PROVEN NON-REGRESSIVE:** `--project node` alone → **668 passed / 54 files**, byte-identical to
+before. Full run → **698 passed / 56 files** (+30).
+
+**30 new tests, both mutation-verified (green gates prove nothing — standing lesson):**
+- `src/lib/android-native-bridge.dom.test.ts` (21). Three mutations, all caught:
+  disabling the IME deferral → **3 fail**; removing `.reverse()` on the back-gesture handlers →
+  **2 fail**; keeping only the first deferred payload → **1 fail**.
+- `src/lib/back-gesture-event.dom.test.ts` (9). Two mutations, all caught: removing the
+  `insideScreen` guard → **5 fail**; teardown not unregistering → **2 fail**.
+
+**FIVE REAL BEHAVIOURS THE TESTS PINNED, three of which I had wrong at first:**
+1. **The IME deferral is SYMMETRIC** — an IME *close* defers too, not just an open. I had written a
+   test asserting close applies immediately; it does not. Self-heals via resize + the 150 ms timeout.
+2. **`appliedImeVisible`/`deferredInsets` are MODULE-level state.** My first suite was
+   order-dependent and 3 tests failed for that reason alone. Fixed with `vi.resetModules()` +
+   dynamic import per test. **Any future test of this module must do the same.**
+3. **The back-gesture handler contract is INVERTED from how it reads:** returning `false` means
+   CONSUMED (`dismissOnBackGesture` returns false after dismissing); returning `true` DECLINES and
+   passes to the next handler. `__AndroidOnBackGesture` returns true when nothing consumed it, which
+   is what tells Kotlin it may navigate.
+4. **No `setScreenLeaving` ancestor must REGISTER, not bail.** `insideScreen()` false → `leaving`
+   is `() => false` → not leaving → handler registers. My test asserted 0 and was wrong; a naive
+   port really would throw here, which is the shim's whole reason to exist.
+5. **`$effect` does not track plain closure variables.** My "unregisters when active() turns false"
+   test passed VACUOUSLY. Fixed by making `active`/`leaving` a `SvelteSet`, which `$effect` tracks.
+
+**Also fixed:** two harness mistakes of mine — returning a component from a component body does NOT
+mount it in Svelte 5 (silently tested nothing), and `unmount()` returns a Promise (`no-floating-promises`).
+
+**Gates, all measured:** vitest **698/56** (node 668/54 + dom 30/2) · svelte-check **0 errors**,
+same 4 pre-existing warnings · eslint **0 errors** on all 11 touched files incl. `vite.config.mjs` ·
+**`vite build` OK (43 s, first time run this session)** · `sh ci/check-release-version.sh` exit 0,
+still **0.1.40/1075** (no bump — no APK shipping). `cargo` NOT run (no Rust changed).
+
+**STILL TRUE — the IME fix remains inert until Kotlin changes.** `MainActivity.kt:35-67`
+`InsetsInterface` has no `imeVisible()`; `:169-172` computes `isImeVisible` and discards it. The
+tests prove the JS honours a correct bridge; they cannot make the bridge correct. **Next task is
+still the ~6-line Kotlin addition, and it needs a device test to confirm.**
+
+---
+
+**2026-10-01 ~21:5x UTC — TWO CORRECTIONS TO THE RECORD, ONE OF THEM MAJOR. `platform/` PORTED FROM
+UPSTREAM. NOTHING COMMITTED (R11 + operator reviews and commits). No APK, no device test.**
+
+**⚠ CORRECTION 1 — THE "api.grindr.com TLS OUTAGE" IS FALSE AND WAS THE HEADLINE OF THREE HANDOFF
+DOCS. It is not real.** I accepted it from `README_HANDOFF.md` instead of probing (an R7 failure),
+and the operator's challenge is what caught it. Measured just now:
+
+- **Our base URL is `https://grindr.mobi`** (`src-tauri/src/api/client.rs:13`). `curl` →
+  **HTTP 403, TLS completes fine.** 403 on `/` is a live API host with no root route, NOT an
+  outage.
+- **`api.grindr.com` is never called by our code.** The only occurrence in the whole tree is a
+  comment (`src/lib/api/assignment.ts:13`). It does fail TLS — but we do not touch it.
+- `cdn.grindr.com` also fails TLS; likewise never called by us.
+- `cdns.grindr.com` — TLS fine, 403 on root. That IS the 0.1.38 private-bucket question, and it
+  is a **separate, still-open** issue. Do not conflate it with this.
+- Upstream open-grind uses the **same** `grindr.mobi` host (its fixtures pin
+  `https://grindr.mobi/v4/cascade`, `src/lib/api/redact/text.test.ts:90`). Its API client is the
+  external crate `grindr = "0.26"` (`src-tauri/Cargo.toml:42`), which is why grepping its tree
+  finds no base URL.
+
+**Consequence: "blocked, all 7 probes unprobeable, WP-5/WP-6 blocked" is UNFOUNDED.** Open-grind
+works against these endpoints and so can we. The operator's "opengrind can still access the grindr
+apis and there are 60k users" is consistent with exactly this. **NOT YET PROVEN end-to-end:** a
+403 on `/` does not prove an authenticated route responds. Settling it needs one real request
+against a live third-party API, which I did not send unprompted — the only session token is in the
+phone's Android Keystore, not on this host. **Operator to run one authenticated call, or grant
+explicit go-ahead.**
+
+**Also settled: the operator's "keep open-grind and change it to reach the correct API" rests on a
+false premise — it already reaches the correct API.** I did not restructure the fork; the operator
+then confirmed the right direction: **keep GrindrX, port open-grind's gaps in.**
+
+**⚠ CORRECTION 2 — THE SVELTE VERSION GATES UPSTREAM CODE.** Upstream is on `svelte ^5.57.0`; this
+project is on **5.55.5** (`package.json:73`). In 5.55.5 `createContext()` returns a 2-tuple
+`[get, set]` and `get` **throws** when unset — upstream destructures a 3-tuple including
+`insideScreen`, which only exists in 5.57+. **Any verbatim copy of upstream runes/context code can
+fail type-check or throw at runtime.** Expect this on every further port; check the API before
+copying.
+
+**PORTED — `platform/` (R4 backups: `src/lib/{android-native-bridge,back-gesture-event.svelte}.ts
+.bak.pre_platform.20261001_213612`). Full detail: `memory/FIX_NOTES_platform_port.md`.**
+
+Real gap closed: **IME/keyboard inset handling.** Upstream defers inset application when the IME
+flips visibility because the plugin reports the new inset *before* the WebView resizes; ours wrote
+the vars immediately, which is what puts the message input under the keyboard.
+`android-native-bridge.ts` 29 → 128 LOC. `back-gesture-event.svelte.ts` 3 → 47 LOC, adding
+`dismissOnBackGesture()` (did not exist at all). New `src/lib/platform/{os,touch-origin,block-zoom,
+video-codecs,hover-pointer,scroll-gesture}.ts`. `src/app.d.ts` gains `imeVisible`, `__AndroidBack`,
+`navigation`.
+
+**⚠ BUT THE HEADLINE FIX IS CURRENTLY INERT.** `readNativeInsets()` reads
+`bridge.imeVisible?.()` — and **our `MainActivity.kt:35-67` `InsetsInterface` has only
+`top/bottom/left/right`, NO `imeVisible`.** `MainActivity.kt:169-172` already *computes*
+`isImeVisible` and then **discards it**. Optional chaining means it degrades to the old behaviour —
+no crash, no regression, no fix either. **THE ACTUAL FIX IS ~6 LINES OF KOTLIN: add
+`@JavascriptInterface fun imeVisible() = isImeVisible` to `InsetsInterface`. That is the next
+task.** No JS amount closes it.
+
+**Deliberately NOT ported, because OUR code is better or the dep is absent:**
+- **`link-opener.ts`** — upstream calls `openUrl()` from `@tauri-apps/plugin-opener` directly,
+  which is exactly the bug `src/lib/api/open-url.ts:9-28` documents: the plugin registers `open`
+  not `open_url` on Android, the grant names `open_url`, so **every call rejects on a phone**.
+  Ours routes via the plugin's Rust API with an https-only allow-list. Copying upstream would
+  reintroduce a diagnosed bug.
+- **`app-settings.ts`** — invokes Rust `open_app_settings`, which does not exist here.
+- **`keybindings.ts`** (needs `tinykeys`), **`store.ts`** (upstream-only env var).
+- **`screen-chrome.svelte.ts`** — written then DELETED. Its tests need a DOM and
+  `vite.config.mjs:52` is `environment: "node"`. Unrunnable tests + no consumer = dead code. It is
+  also the dependency behind upstream's `remeasureScreenChrome()` call, which I dropped, so insets
+  apply without the remeasure hook. **Bun is NOT installed on this box** (only `~/.bun/install/cache`),
+  so I could not add `jsdom` without switching package managers on a working tree — operator's call.
+
+**A SVELTE-5.55.5 SHIM, NOT A COPY:** `createContext` reimplemented on
+`getContext`/`hasContext`/`setContext` + a module `Symbol`, preserving upstream's `insideScreen`
+check. Marked in-file with what to delete on upgrade.
+
+**I WIRED ONE THING WRONGLY AND REVERTED IT.** `registerAndroidBackButtonListener()` uses
+`addPluginListener("app","back-button")`, needing `tauri-plugin-app` — **absent from our
+`Cargo.toml`** (and upstream's; upstream drives it from Kotlin `OnBackPressedCallback`). It would
+reject on every launch. `src/routes/+layout.svelte` is **byte-identical to its backup**, verified by
+`diff`. Recording this because the temptation is to leave "harmless" unwired calls in place.
+
+**Gates, measured:** vitest **668/54** (unchanged) · svelte-check **0 errors**, same 4 warnings ·
+eslint **0 errors** on all 9 files · `ci/check-release-version.sh` exit 0, still **0.1.40/1075**
+(no bump — no APK shipping). **`vite build` NOT run, `cargo` NOT run** (no Rust changed).
+**HONEST GAP: 0 new tests.** The 668 prove nothing here — none import these modules. Per the
+standing lesson, green gates are not evidence. **Needs a device pass: keyboard in chat (input not
+covered), then back-gesture out of a screen.** Kotlin `MainActivity.kt` is 221 LOC vs upstream 259
+and both have different work in it (ours: FLAG_SECURE, discreet-mode aliases, foreground-service
+bridge, notification deep links; theirs: `WebInsets`, `BackInterface`, WebView-version warning) — a
+Kotlin port is a **merge, never a copy**.
+
 **2026-10-01 ~17:00 UTC — HANDOFF DOCS REBUILT. Branch at `a5915c1`, pushed to both remotes. `main`
 untouched everywhere and 107 commits behind. Work session closed out.**
 

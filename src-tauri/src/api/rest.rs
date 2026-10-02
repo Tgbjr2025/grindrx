@@ -181,6 +181,7 @@ impl GrindrClient {
         path: &str,
         body: Option<Vec<u8>>,
     ) -> Result<RawResponse, AppError> {
+        let method_label = method.as_str().to_owned();
         let authorization = self
             .authorization_header()
             .await
@@ -261,6 +262,32 @@ impl GrindrClient {
         // device. The cap is generous: real API responses are far smaller, and
         // media goes through the dedicated media commands.
         let body = stream_capped_body(response, MAX_API_RESPONSE_BYTES).await?;
+
+        // RELEASE-BUILD OBSERVABILITY (2026-10-02). Diagnosing a live "Couldn't
+        // load profiles" took a USB cable, a wireless-adb pairing dance and a
+        // `uiautomator` dump, because the only request logging above is behind
+        // `#[cfg(debug_assertions)]` and the JS side throws on a non-2xx without
+        // logging the body it already holds in `ApiHttpError.body`.
+        //
+        // Failure path only, and deliberately truncated: a WAF interstitial is
+        // ~4 KB of HTML while a success body is the whole profile grid. The
+        // prefix is enough to tell a Cloudflare challenge from a JSON error
+        // envelope from an empty body, which is the entire question.
+        //
+        // `method` is moved into the request builder above, so log its label
+        // rather than re-borrowing it.
+        if !(200..300).contains(&status) {
+            let prefix: String = String::from_utf8_lossy(&body)
+                .chars()
+                .take(240)
+                .collect::<String>()
+                .replace(|c: char| c.is_control() && c != '\n', " ");
+            eprintln!(
+                "[GrindrX] {method_label} {path} -> HTTP {status} ({} bytes) body: {}",
+                body.len(),
+                prefix.replace('\n', " ")
+            );
+        }
 
         Ok(RawResponse { status, body })
     }
