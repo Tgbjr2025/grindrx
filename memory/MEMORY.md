@@ -14,7 +14,30 @@ This is the index. Read it first, then the file the task points you to.
 | `memory/PROJECT_ROADMAP.md` | What grindrx-work is, the phases, and the definition of success. |
 | `memory/rules.md` | Canonical operating rules R1–R11 (+ project R20–R23). |
 | `memory/FIX_NOTES_v0.1.9.md` | FIX_NOTES for the v0.1.9 audit ship (commit `28b1648`) + rollback tag. |
+| `memory/FIX_NOTES_platform_port.md` | **NEW 2026-10-01 — `platform/` ported from upstream open-grind, uncommitted.** IME-inset deferral, `dismissOnBackGesture()`, 6 new `src/lib/platform/` modules, and the `MainActivity.kt` `imeVisible()` Kotlin half (**UNCOMPILED** — no Android SDK on this box). 30 mutation-verified tests. Records what was deliberately NOT ported and why — notably `link-opener.ts`, where ours is better. |
 | `memory/FIX_NOTES_media_features.md` | FIX_NOTES for the post-v0.1.9 media-compat + 3-feature + grid-windowing commits (`eaf60dc`, `1d09c10`, `03f88f2`), plus §4 — the audit fixes (rest.rs token-leak, album-share unlock, +3) now **committed in `17d47f3`**. |
+
+## ⚠ TWO STANDING CORRECTIONS — do not let these rot back in
+
+1. **THE "api.grindr.com TLS OUTAGE" IS FALSE. Retracted 2026-10-01.** It was never our host. Our
+   base URL is `https://grindr.mobi` (`src-tauri/src/api/client.rs:13`), which answers **HTTP 403
+   with TLS completing**. `api.grindr.com` appears once in the whole tree, in a comment. Upstream
+   open-grind uses the same host and works with 60k users. **"All 7 probes unprobeable" and
+   "WP-5/WP-6 blocked" are UNFOUNDED.** The probes are still unrun — but only for lack of a
+   signed-in session, not any network fault. Distinct still-open question: the 0.1.38
+   `cdns.grindr.com` 403 (private bucket / `AccessDenied`).
+2. **THE MISSING TEST RUNNER IS FIXED.** `vite.config.mjs` now has TWO vitest projects — `node`
+   (the original 668, unchanged) and `dom` (jsdom + `resolve.conditions: ["browser"]`, for
+   `*.dom.test.ts`). That `conditions` line is load-bearing or `mount()` throws
+   `lifecycle_function_unavailable`. This was the root cause of the v0.1.34/0.1.36/0.1.38 visual
+   regressions shipping through green gates. **Current: 698 tests / 56 files.**
+
+**Also note:** your Svelte is **5.55.5**, upstream open-grind is **^5.57.0**. `createContext()`
+returns a 2-tuple here and its `get` throws when unset; upstream destructures a 3-tuple. Verbatim
+upstream runes code fails type-check *and* throws at runtime.
+
+**Also note:** `src-tauri/gen/android/.../MainActivity.kt` is a **generated** file that is heavily
+hand-modified. `tauri android init` can clobber it — diff before running one.
 
 ## Root handoff docs (outside memory/)
 
@@ -31,6 +54,16 @@ This is the index. Read it first, then the file the task points you to.
 - `KEYS.md` / `KEYS.md.asc` — PGP + APK signing keys.
 
 ## One-line state
+**v0.1.41 LINE, UNCOMMITTED. `platform/` ported from upstream + the missing test runner built.**
+Last **shipped** is 0.1.40 / versionCode 1075 (tag `v0.1.40` = `482f9f6`); all three version files
+still read 0.1.40/1075, so `sh ci/check-release-version.sh` passes — bump all three together
+(→ 0.1.41 / 1076) only before an APK ships. **Nothing from 2026-10-01 is committed.** Gates:
+**vitest 698/56** (node 668/54 unchanged + dom 30/2), svelte-check 0 errors, eslint clean,
+`vite build` OK, **Kotlin uncompiled — no Android SDK on this host**. Full detail and the two
+retracted premises in `memory/SESSION_STATE.md` (top entry) + `memory/FIX_NOTES_platform_port.md`.
+
+<details><summary>Superseded 2026-06 → 2026-09 history</summary>
+
 **v0.1.38 IS THE LATEST — it is UNCOMMITTED WIP in the tree, not 1.37.** `0.1.38` is in
 `package.json` / `tauri.conf.json` / `Cargo.toml`, versionCode 1073, 36 files modified
 (+1188/-648) + 4 untracked paths, rollback tag `audit-v0.1.38-rollback-20260927`. v0.1.37 is only the
@@ -108,3 +141,5 @@ genuinely correct but shipped with **1 committed svelte-check error**
 `60baa93c…3456`) is the last release whose committed tree was type-clean. `flake.nix` is modified
 and uncommitted — the known OVH-only system-SDK workaround, **do not commit** (hardcodes an
 absolute path). `memory/FIX_NOTES_v0.1.33.md` still records the `autoIncrementVersionCode` trap.
+
+</details>

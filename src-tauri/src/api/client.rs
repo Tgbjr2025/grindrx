@@ -101,19 +101,50 @@ impl GrindrClient {
             }
         };
 
-        // FIX 9: discard sessions that are already expired so the app prompts re-login
-        // rather than silently continuing with a stale token (common after Android reinstall).
+        // FIX 9 (revised 2026-10-02): an expired session must NOT be discarded if
+        // it still carries a refresh token.
+        //
+        // The original version deleted any session whose `expires_at` had passed,
+        // on the theory that a stale token is unusable. But `Session.auth_token`
+        // is exactly what `authorization_header()` -> `refresh_token_inner()` ->
+        // `create_session()` uses to mint a NEW session from the stored email +
+        // token, and that path is already expiry-aware and already refuses to
+        // clear on anything but a genuine 401. Deleting here threw that
+        // credential away and forced a full re-login instead.
+        //
+        // Why that mattered, observed on a real device: the token expired, the app
+        // restarted, and the user was signed out. Re-login POSTs to the same
+        // `/v8/sessions` endpoint, which is fronted by a WAF that intermittently
+        // refuses it — so the outcome was an app that worked, then stopped
+        // working, then worked again depending on whether login got through. A
+        // refresh would have been invisible to all of that.
+        //
+        // An expired session is now KEPT whenever there is something to refresh
+        // with, and only discarded when it carries no token at all (the genuine
+        // post-reinstall case this was written for).
         #[cfg(not(all(target_os = "macos", not(feature = "keychain"))))]
         let session = {
             let now = chrono::Utc::now().timestamp().max(0) as u64;
             match session {
-                Some(ref s) if s.expires_at < now => {
+                Some(ref s) if s.expires_at < now && s.auth_token.trim().is_empty() => {
                     eprintln!(
-                        "[client] stored session is expired (expires_at={}, now={}) — clearing",
+                        "[client] stored session is expired and has no refresh token \
+                         (expires_at={}, now={}) — clearing",
                         s.expires_at, now
                     );
                     super::auth::AuthStorage::delete_session();
                     None
+                }
+                Some(ref s) if s.expires_at < now => {
+                    // Expected, not an error: the first authenticated request will
+                    // refresh it. Logged so a support log distinguishes this from a
+                    // silent sign-out.
+                    eprintln!(
+                        "[client] stored session is expired (expires_at={}, now={}) \
+                         — keeping it so the token can be refreshed",
+                        s.expires_at, now
+                    );
+                    session
                 }
                 other => other,
             }

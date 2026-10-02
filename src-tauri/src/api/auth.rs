@@ -378,8 +378,24 @@ impl GrindrClient {
                     // either: it says nothing about our token's validity, and
                     // clearing the session there would strand a user whose token
                     // is fine behind one flaky request.
+                    //
+                    // 403 is ALSO not fatal, and that is the change (2026-10-02).
+                    // Cloudflare fronts the API and refuses requests with an HTML
+                    // interstitial, and a 403 is what that refusal looks like —
+                    // a WAF/infrastructure refusal, not a judgement about the
+                    // token. Treating it as "your credential was rejected" deleted
+                    // the user's session AND their stored credential, and since
+                    // re-login posts to the same blocked host the app could not
+                    // recover on its own. Verified: a Cloudflare HTML body fails
+                    // to parse in `request_json`, so it already arrives as
+                    // `code: 0` and never reached this branch — meaning the only
+                    // way to get `code: 403` here is a genuine JSON error
+                    // envelope. That is still not proof the TOKEN is bad (it can
+                    // be a per-endpoint entitlement or region gate), and the
+                    // cost of guessing wrong is permanent, so only a 401 — which
+                    // is unambiguous — clears the session.
                     let auth_class = matches!(&e, AppError::Auth(_))
-                        || matches!(&e, AppError::Api { code, .. } if *code == 401 || *code == 403);
+                        || matches!(&e, AppError::Api { code, .. } if *code == 401);
                     if auth_class {
                         eprintln!("[GrindrX] Token refresh rejected ({e}); clearing session.");
                         *self.session.write().await = None;

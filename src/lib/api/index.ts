@@ -211,11 +211,28 @@ export function classifyResponseBody(
 	status: number,
 	text: string,
 ): ResponseBodyClassification {
-	if (
-		status === 403 &&
-		text.includes("<title>Attention Required! | Cloudflare</title>") &&
-		text.includes("Sorry, you have been blocked")
-	) {
+	// Cloudflare fronts the API and refuses requests with an HTML interstitial
+	// of one of SEVERAL templates. Matching two literals from a single template
+	// (the previous `=== 403 && includes("<title>Attention Required! | Cloudflare
+	// </title>") && includes("Sorry, you have been blocked")`) meant any other
+	// template — a managed JS challenge, a rate-limit interstitial, a different
+	// locale — fell through to "error-code", so the user saw "Couldn't load
+	// profiles" with no code and never got the "request blocked" dialog that
+	// exists for exactly this case. Observed live: two probes minutes apart hit
+	// two different templates.
+	//
+	// Deliberately template-agnostic: a 403/429 whose body is NOT JSON is a
+	// refusal by definition, and "cloudflare" appearing anywhere in it confirms
+	// the source. We do not try to tell a WAF block from a rate limit from a
+	// challenge — the app cannot act differently on each today, and guessing
+	// wrong is what produced the misleading message in the first place.
+	const looksLikeHtmlInterstitial =
+		(status === 403 || status === 429) &&
+		!/^\s*[[{]/.test(text) &&
+		/cloudflare|attention required|just a moment|enable javascript and cookies|checking your browser|ray id/i.test(
+			text,
+		);
+	if (looksLikeHtmlInterstitial) {
 		return "cloudflare-block";
 	}
 	// A non-2xx body is an ERROR payload, not the success schema. It may be

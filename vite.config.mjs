@@ -48,8 +48,41 @@ export default defineConfig(async ({ mode }) => ({
 		},
 	},
 
+	// Two test projects, added 2026-10-01. This project previously had ONE
+	// `environment: "node"` config and therefore NO DOM at all, which is the
+	// structural gap that let the v0.1.34, v0.1.36 and v0.1.38 visual
+	// regressions ship through 510 green tests.
+	//
+	// `node` keeps every pre-existing test resolving and running exactly as
+	// before — it is the same environment, the same glob, plus an exclusion.
+	// `dom` opts files in by name (`*.dom.test.ts`) rather than by flipping the
+	// global environment, so no existing test changes behaviour.
+	//
+	// `conditions: ["browser"]` is what makes `import { mount } from "svelte"`
+	// resolve to the CLIENT build; without it Svelte resolves to the server
+	// build and `mount` throws `lifecycle_function_unavailable`. Upstream
+	// open-grind sets this globally (its `vite.config.mjs:13`), which would
+	// re-resolve all 668 node tests too — deliberately not done here.
 	test: {
-		environment: "node",
-		include: ["src/**/*.test.ts"],
+		projects: [
+			{
+				extends: true,
+				test: {
+					name: "node",
+					environment: "node",
+					include: ["src/**/*.test.ts"],
+					exclude: ["src/**/*.dom.test.ts"],
+				},
+			},
+			{
+				extends: true,
+				resolve: { conditions: ["browser"] },
+				test: {
+					name: "dom",
+					environment: "jsdom",
+					include: ["src/**/*.dom.test.ts"],
+				},
+			},
+		],
 	},
 }));

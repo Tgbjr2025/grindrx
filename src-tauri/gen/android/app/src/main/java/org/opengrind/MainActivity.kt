@@ -20,10 +20,29 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.crates.keyring.Keyring
 
 class MainActivity : TauriActivity() {
-	private var insetsTop = 0
-	private var insetsBottom = 0
-	private var insetsLeft = 0
-	private var insetsRight = 0
+	// @Volatile because `InsetsInterface` is invoked on the WebView's JS-bridge
+	// thread, not the UI thread that writes these in the insets listener. Without
+	// it the JS side can read a stale (or torn) value. Upstream open-grind guards
+	// the same state the same way, via a single @Volatile data class.
+	@Volatile private var insetsTop = 0
+	@Volatile private var insetsBottom = 0
+	@Volatile private var insetsLeft = 0
+	@Volatile private var insetsRight = 0
+
+	/**
+	 * Whether the soft keyboard is currently up. Exposed to JS as
+	 * `__AndroidInsets.imeVisible()`.
+	 *
+	 * The frontend needs this to tell a keyboard transition apart from any other
+	 * inset change: `android-native-bridge.ts` defers applying new insets until the
+	 * WebView actually resizes when — and only when — the IME visibility flipped,
+	 * so `--safe-area-*` does not jump ahead of the layout. `softKeyboardVisibility()`
+	 * reads the same flag.
+	 *
+	 * This was already computed in the insets listener and thrown away.
+	 */
+	@Volatile private var imeVisibleNow = false
+
 	private var webViewRef: WebView? = null
 
 	/** conversationId pulled from a tapped notification, delivered to the webview once ready. */
@@ -37,6 +56,7 @@ class MainActivity : TauriActivity() {
 		@JavascriptInterface fun bottom() = insetsBottom
 		@JavascriptInterface fun left() = insetsLeft
 		@JavascriptInterface fun right() = insetsRight
+		@JavascriptInterface fun imeVisible() = imeVisibleNow
 	}
 
 	inner class DiscreetModeInterface {
@@ -176,6 +196,7 @@ class MainActivity : TauriActivity() {
 			insetsBottom = if (isImeVisible) 0 else (bars.bottom / density).toInt()
 			insetsLeft = (bars.left / density).toInt()
 			insetsRight = (bars.right / density).toInt()
+			imeVisibleNow = isImeVisible
 
 			val bottomMargin = if (isImeVisible) ime.bottom else 0
 			webViewRef?.let { wv ->

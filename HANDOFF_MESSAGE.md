@@ -41,15 +41,20 @@ VERSION — READ THIS, IT IS EASY TO GET WRONG:
   was once done inconsistently and shipped versionName 0.1.39 with
   versionCode 1075 by mistake.
 
-THE HEADLINE — READ THIS AND DON'T WASTE THE SESSION ON IT:
-  api.grindr.com and cdn.grindr.com are refusing the TLS handshake (CloudFront
-  alert 552). Verified from the s26 on wifi, the s26 on a SECOND network, and
-  this OVH box, while google.com/github.com/pypi.org return 200 from all three.
-  0.1.40 and 0.1.39 fail identically, which is what proved it is NOT a code
-  regression. NO build of this app will load profiles until that changes and
-  nothing in the codebase can affect it. Check with:
-      curl -sS https://api.grindr.com/
-  An HTTP status means recovered. curl:(35) means still down.
+*** THE HEADLINE — RETRACTED 2026-10-01. THE "OUTAGE" WAS WRONG. ***
+  It was api.grindr.com refusing TLS. WE NEVER CALL THAT HOST — it appears
+  once in the whole tree, in a comment (src/lib/api/assignment.ts:13).
+  Our real base URL is https://grindr.mobi (src-tauri/src/api/client.rs:13)
+  and it answers HTTP 403 WITH TLS COMPLETING — a live API host with no root
+  route. Upstream open-grind uses the same host and works with 60k users.
+      curl -sS -o /dev/null -w '%{http_code}\n' https://grindr.mobi/   # 403
+  So: "all 7 probes are unprobeable" and "WP-5/WP-6 are blocked" are
+  UNFOUNDED. Do not skip probe work on those grounds. The probes are still
+  genuinely unrun — but only because nobody has run them with a signed-in
+  session, not because of any network fault. That token is in the phone's
+  Android Keystore, not on a dev box.
+  Do NOT confuse this with the 0.1.38 cdns.grindr.com 403, which is a
+  different and still-open question (private-bucket / AccessDenied).
 
 WHAT LAST SESSION SHIPPED (all committed, tests green):
   WP-1 report a profile (the ethical one — an app where abuse cannot be reported
@@ -83,9 +88,10 @@ STILL OPEN:
      blocking EVERY Android build — keep that). The Rust FCM bridge, the
      v5/push-settings layer, the settings UI and the manifest permissions are all
      still to write.
-  WP-5 (location) and WP-6 (cascade v3->v4) — both PROBE-GATED by the spec and
-     there is no reachable API. Do not guess. WP-6 is the highest-value item
-     once the outage clears: probe /v3/cascade first, and if it works the answer
+  WP-5 (location) and WP-6 (cascade v3->v4) — both need a PROBE, and no probe
+     has been run (NOT because of an outage — see the retraction above; simply
+     no signed-in session was ever available here). Do not guess. WP-6 is the
+     highest-value item: probe /v3/cascade first, and if it works the answer
      is "no change needed". WP-5 has a stop condition: if it needs the epoch
      manipulation in entitlements/bypass, REPORT IT, do not work around it.
 
@@ -97,10 +103,26 @@ SEVEN OPEN PROBE QUESTIONS (all in README_HANDOFF.md and FIX_NOTES_v0.1.41.md §
 GENUINE UPSTREAM GAPS (measured — do NOT count upstream's LOC dirs as missing;
 most of it is restructured, not absent):
   You have ALREADY ported the whole update mechanism. Skip upstream's updates/ dir.
-  Worth porting: platform/ (801 LOC, Android-native polish, no API dependency,
-  fully testable offline), blur/ (600 LOC, calibration layer you lack),
-  onboarding (101 LOC), ShowDistanceSetting. Only four genuinely-missing screens
-  totalling 167 lines of wrappers.
+  platform/ IS PARTLY PORTED (uncommitted, 2026-10-01): android-native-bridge.ts
+     29->128 LOC with IME-inset deferral, back-gesture-event.svelte.ts gains
+     dismissOnBackGesture(), six new src/lib/platform/ modules, and
+     MainActivity.kt gains imeVisible() + @Volatile. 30 tests, mutation-verified.
+  *** THE TEST RUNNER GAP IS NOW CLOSED. *** vite.config.mjs has TWO vitest
+     projects: "node" (your original 668, unchanged) and "dom" (jsdom +
+     resolve.conditions ["browser"] for *.dom.test.ts). That conditions line is
+     load-bearing — without it mount() throws lifecycle_function_unavailable.
+     This was the root cause of the v0.1.34/0.1.36/0.1.38 visual regressions
+     shipping through green gates. jsdom added as a devDependency via bun.
+  STILL WORTH PORTING: blur/ (600 LOC, calibration layer you lack),
+     ShowDistanceSetting. onboarding (101 LOC) is ALREADY DONE on your side
+     (stores/onboarding.svelte.ts + FeatureTour.svelte).
+  Two upstream-version traps: your Svelte is 5.55.5, upstream is ^5.57.0 —
+     createContext() returns a 2-tuple here and its get() THROWS when unset,
+     while upstream destructures a 3-tuple. Copy upstream runes code and it
+     fails type-check and throws at runtime.
+  Do NOT port: link-opener.ts — YOURS IS BETTER. Upstream calls openUrl()
+     directly, which is the Android bug documented at src/lib/api/open-url.ts:9-28
+     (plugin registers "open" not "open_url" on Android, so every call rejects).
   Do NOT port: demo/ (Playwright scaffolding), entitlements/ (that is bypass.ts —
   the spec calls it "real legal exposure in an app you sign and distribute"),
   credits/, util/.
@@ -135,8 +157,9 @@ SECOND FRONT — iOS. THE OPERATOR ASKED FOR IT; IT CANNOT BE DONE FROM THIS BOX
   here. Real scope if attempted on a Mac: tauri ios init, an iOS platform block,
   Podfile/CocoaPods, a NEW bundle identifier (the Android com.grindrx.app does
   not transfer), a provisioning profile, and re-solving biometrics/app-lock.
-  There is no iOS precedent in either tree to copy from. And it calls the same
-  /v3/cascade endpoints, so it is blocked by the same outage as Android.
+   There is no iOS precedent in either tree to copy from. It calls the same
+   /v3/cascade endpoints on the same grindr.mobi host, so it inherits the same
+   UNVERIFIED-ENDPOINT risk as Android — not the same outage, which was never real.
   Recommendation: finish Android first; treat iOS as a separate Mac-hosted
   project afterwards. Full detail in README_HANDOFF.md.
 ```
