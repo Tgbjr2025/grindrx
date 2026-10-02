@@ -1,6 +1,8 @@
 .DS_Store
 node_modules
 /build
+# Signed release APKs are uploaded as release ASSETS, never committed (71 MB each).
+/dist
 /.svelte-kit
 /package
 .env
@@ -20,3 +22,5 @@ keystore.properties
 *.keystore
 
 .local
+# Local pre-edit backups - these were being committed by accident since v0.1.24
+*.bak.*

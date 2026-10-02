@@ -1,25 +1,34 @@
 <script lang="ts">
 	import { UserIcon } from "phosphor-svelte";
+	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 	import z from "zod";
 
-	import { onMount } from "svelte";
-
 	import { fetchRest } from "$lib/api";
 	import { assertOk } from "$lib/api/taps";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import * as Button from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
 	import * as Item from "$lib/components/ui/item";
 	import { Spinner } from "$lib/components/ui/spinner";
 
+	// Per the Grindr API docs (grindr-api/browse/hides): GET /v1/hides returns
+	// `{ hides: [{ profileId, displayName, mediaHash }] }` — NOT `{ profiles: [...] }`
+	// with `profileImageMediaHash`. The old shape never matched, so the parse threw
+	// and the page always showed "Failed to load". Tolerant of drift.
 	const hiddenProfileSchema = z.object({
 		profileId: z.coerce.number().int().nonnegative(),
-		displayName: z.string().nullable(),
-		profileImageMediaHash: z.string().nullable(),
+		displayName: z.string().nullable().optional().catch(null),
+		mediaHash: z.string().nullable().optional().catch(null),
 	});
 
 	const hidesResponseSchema = z.object({
-		profiles: z.array(hiddenProfileSchema),
+		hides: z.array(z.unknown()).transform((items) =>
+			items.flatMap((i) => {
+				const r = hiddenProfileSchema.safeParse(i);
+				return r.success ? [r.data] : [];
+			}),
+		).catch([]),
 	});
 
 	type HiddenProfile = z.infer<typeof hiddenProfileSchema>;
@@ -35,7 +44,7 @@
 		try {
 			const res = await fetchRest("/v1/hides", { method: "GET" });
 			const data = res.jsonParsed(hidesResponseSchema);
-			hiddenProfiles = data.profiles;
+			hiddenProfiles = data.hides;
 		} catch (err) {
 			console.error("Failed to load hidden users", err);
 			fetchError = "Failed to load hidden users.";
@@ -95,20 +104,7 @@
 				<Item.Root variant="outline">
 					<Item.Media>
 						<div class="relative size-10 shrink-0 rounded-xl overflow-hidden bg-muted">
-							{#if profile.profileImageMediaHash}
-								<img
-									src="https://cdns.grindr.com/images/thumb/320x320/{profile.profileImageMediaHash}"
-									alt="Profile avatar"
-									class="w-full h-full object-cover"
-									loading="lazy"
-									draggable="false"
-								/>
-							{:else}
-								<UserIcon
-									weight="fill"
-									class="size-3/4 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-muted-foreground"
-								/>
-							{/if}
+															<CdnImage hash={profile.mediaHash} alt="Profile avatar" />
 						</div>
 					</Item.Media>
 					<Item.Content class="min-w-0 flex-1">

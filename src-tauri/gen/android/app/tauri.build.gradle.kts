@@ -3,9 +3,10 @@ val implementation by configurations
 dependencies {
   implementation("androidx.lifecycle:lifecycle-process:2.10.0")
   implementation(project(":tauri-android"))
+  implementation(project(":tauri-plugin-biometric"))
   implementation(project(":tauri-plugin-clipboard-manager"))
   implementation(project(":tauri-plugin-fs"))
   implementation(project(":tauri-plugin-geolocation"))
-  implementation(project(":tauri-plugin-opener"))
   implementation(project(":tauri-plugin-notification"))
+  implementation(project(":tauri-plugin-opener"))
 }

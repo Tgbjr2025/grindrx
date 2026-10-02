@@ -29,7 +29,9 @@
 	let {
 		items,
 		rowHeight,
+		rowGap = 2,
 		columns,
+		describe,
 		children,
 	}: {
 		items: GridProfile[];
@@ -37,9 +39,20 @@
 		// parent which owns the grid element. Used to size the collapsed spacer of
 		// each chunk so the page height / scroll position never shift.
 		rowHeight: number;
+		// Measured row gap in px, read by the parent from the grid's computed
+		// style. Was a hardcoded 2 to match `gap-0.5` (0.125rem), which silently
+		// desynchronised from the real gap under an Android font-scale change and
+		// made every collapsed spacer the wrong height.
+		rowGap?: number;
 		// Live column count of the CSS grid, so a chunk's spacer height matches the
 		// real number of rows it represents.
 		columns: number;
+		/**
+		 * D18 — plain-text description of a profile, used for the screen-reader
+		 * list that stands in for a COLLAPSED chunk. See the note on the collapsed
+		 * branch below for why this exists.
+		 */
+		describe?: (item: GridProfile) => string;
 		children: Snippet<[GridProfile]>;
 	} = $props();
 
@@ -54,19 +67,24 @@
 
 	const safeColumns = $derived(Math.max(1, columns));
 	const itemsPerChunk = $derived(safeColumns * ROWS_PER_CHUNK);
-	// px gap between rows — matches `gap-0.5` (0.125rem) on the parent grid.
-	const ROW_GAP = 2;
 
-	type Chunk = { key: string; items: GridProfile[]; rows: number };
+	type Chunk = { key: number; items: GridProfile[]; rows: number };
 
 	const chunks = $derived.by<Chunk[]>(() => {
 		const out: Chunk[] = [];
 		for (let i = 0; i < items.length; i += itemsPerChunk) {
 			const slice = items.slice(i, i + itemsPerChunk);
-			// Stable key from the first item id keeps chunk identity stable across
-			// loadMore() appends so Svelte doesn't tear down/rebuild mounted rows.
+			// D23: the key used to be `c${firstItemId}`, but the CHUNK BOUNDARIES
+			// move whenever `itemsPerChunk` changes — and `itemsPerChunk` depends on
+			// `columns`, so every rotation (or any font-scale-driven breakpoint
+			// change) produced a completely different set of first-item ids. Every
+			// `{#each}` key changed at once, so Svelte destroyed and recreated every
+			// mounted `<img>`, re-running the whole decode for the visible grid.
+			// Keying by the chunk's INDEX means a column change only re-keys the
+			// chunks whose contents actually moved, and an append (loadMore) leaves
+			// every existing key untouched.
 			out.push({
-				key: `c${slice[0]?.id ?? i}`,
+				key: out.length,
 				items: slice,
 				rows: Math.ceil(slice.length / safeColumns),
 			});
@@ -82,7 +100,6 @@
 	let visible = $state(new Set<number>([0]));
 
 	function recomputeVisible() {
-		const next = new Set<number>([0]);
 		let min = Infinity;
 		let max = -Infinity;
 		for (const [index, count] of hitCount) {
@@ -90,14 +107,25 @@
 			if (index < min) min = index;
 			if (index > max) max = index;
 		}
-		if (min !== Infinity) {
-			for (
-				let i = Math.max(0, min - OVERSCAN_CHUNKS);
-				i <= max + OVERSCAN_CHUNKS;
-				i++
-			)
-				next.add(i);
+		if (min === Infinity) {
+			// Nothing is intersecting right now. Returning early is deliberate:
+			// collapsing back to a bare chunk 0 here used to blank the grid on
+			// back-navigation. Right after a scroll restore, the observers for
+			// the chunks under the viewport have not reported yet, so hitCount is
+			// transiently empty — and resetting to `{0}` shrank the page below
+			// the current scroll offset, leaving the viewport past the end of the
+			// content (a black screen). Keep whatever is mounted and let the
+			// observers catch up; they are the only thing that knows what is
+			// genuinely off-screen.
+			return;
 		}
+		const next = new Set<number>();
+		for (
+			let i = Math.max(0, min - OVERSCAN_CHUNKS);
+			i <= max + OVERSCAN_CHUNKS;
+			i++
+		)
+			next.add(i);
 		visible = next;
 	}
 
@@ -154,14 +182,22 @@
 	}
 
 	function chunkPx(rows: number): number {
-		// Fallback row height before the parent has measured the grid.
-		const h = rowHeight > 0 ? rowHeight : 120;
-		return rows * h + Math.max(0, rows - 1) * ROW_GAP;
+		// No magic-number fallback: the parent measures the real cell height and
+		// sizes spacers from it, so a collapsed chunk is exactly as tall as the
+		// rows it stands in for and the page height never shifts. `rowGap` is
+		// likewise measured rather than assumed.
+		return rows * rowHeight + Math.max(0, rows - 1) * rowGap;
 	}
 </script>
 
 {#each chunks as chunk, index (chunk.key)}
-	{#if visible.has(index)}
+	<!--
+		D23: while `rowHeight` is still 0 (first paint, or a grid that is not laid
+		out) `chunkPx()` is 0, so a collapsed chunk contributes NO height and the
+		document is far shorter than the real grid — which is what a scroll restore
+		lands inside. Render every chunk un-collapsed until the measurement arrives.
+	-->
+	{#if visible.has(index) || rowHeight === 0}
 		<!-- Mounted: zero-height full-width sentinels at the chunk's top and bottom
 		     edges carry the observers (real boxes), with a display:contents host in
 		     between so the cards participate directly in the parent CSS grid
@@ -175,15 +211,42 @@
 		</div>
 		<div class="col-span-full h-0" use:track={index} aria-hidden="true"></div>
 	{:else}
-		<!-- Collapsed: one full-width spacer standing in for this chunk's rows so
-		     the page height and scroll position stay identical. The cards' <img>s
-		     are unmounted, releasing the decoded bitmaps. The spacer is also the
-		     observer target that re-mounts the chunk as it nears the viewport. -->
+		<!--
+			Collapsed: one full-width spacer standing in for this chunk's rows so the
+			page height and scroll position stay identical. The cards' <img>s are
+			unmounted, releasing the decoded bitmaps. The spacer is also the observer
+			target that re-mounts the chunk as it nears the viewport.
+
+			D18 — the spacer used to be `aria-hidden="true"` and nothing else, so a
+			screen-reader user was given roughly the first two chunks (the `visible`
+			set is seeded to `{0}` and only ever grows via IntersectionObserver, which
+			a screen reader never triggers) and then an empty grid, with every tile's
+			accessible name the identical "Profile avatar".
+
+			Chosen remedy: keep the windowing, and render a visually-hidden TEXT LIST
+			of the chunk's profiles inside the spacer. The two obvious alternatives
+			were both worse:
+			  * Removing `aria-hidden` alone still renders nothing, because the
+			    chunk's cards are not mounted at all — the information is gone, not
+			    just hidden.
+			  * Gating windowing on a capability check would help screen readers
+			    but re-introduce the memory bug for EVERYONE on that code path
+			    (~562 MB PSS observed on-device), and there is no reliable
+			    "is a screen reader running" signal in a WebView anyway.
+			A `sr-only` list costs a few hundred bytes of text per collapsed chunk
+			and no bitmaps, so the memory bound is preserved intact while the roster
+			becomes available to assistive tech.
+		-->
 		<div
 			class="col-span-full"
 			style="height: {chunkPx(chunk.rows)}px;"
 			use:track={index}
-			aria-hidden="true"
-		></div>
+		>
+			<ul class="sr-only">
+				{#each chunk.items as item (item.id)}
+					<li>{describe ? describe(item) : `Profile ${item.id}`}</li>
+				{/each}
+			</ul>
+		</div>
 	{/if}
 {/each}

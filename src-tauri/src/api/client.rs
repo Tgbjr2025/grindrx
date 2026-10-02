@@ -35,10 +35,18 @@ fn build_http_client(headers: HeaderMap) -> Result<Client, reqwest::Error> {
 
 pub struct GrindrClient {
     pub(super) http: RwLock<Client>,
-    pub(super) default_headers: RwLock<HeaderMap>,
     pub(super) session: RwLock<Option<Session>>,
     pub(super) refresh_lock: Mutex<()>,
     pub user_agent: RwLock<String>,
+    /// B5: `Some(reason)` when secure storage could not be reached at startup.
+    ///
+    /// `storage::init_keyring` only `eprintln!`s when `Store::new()` fails, so
+    /// `keyring_core::set_default_store` is never called and every `Entry::new`
+    /// returns `NoStore` forever. The app starts normally and every login then
+    /// fails with an opaque `AppError::Auth`. Recorded here at construction and
+    /// surfaced by the `auth_state` command. Read before the client is moved
+    /// into the `OnceLock`.
+    pub keyring_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,34 +75,76 @@ impl GrindrClient {
         };
         let user_agent = build_user_agent(&device, "Free");
         let headers = build_default_headers(&device, &user_agent);
+        // B5: stays `None` unless the keystore read below failed. `unused_mut` is
+        // allowed because on macOS-without-keychain the cfg strips the only
+        // assignment, leaving the binding immutable there.
+        #[allow(unused_mut)]
+        let mut keyring_error: Option<String> = None;
 
         // FIX 10: add request and connect timeouts so hung API calls don't freeze the app
-        let http = build_http_client(headers.clone())?;
+        let http = build_http_client(headers)?;
 
         #[cfg(all(target_os = "macos", not(feature = "keychain")))]
         let session = None;
         #[cfg(not(all(target_os = "macos", not(feature = "keychain"))))]
-        let session = match super::auth::AuthStorage::get_session() {
+        // `new()` is sync (Tauri `setup` hook), so use the blocking keystore
+        // read here. Every other caller goes through the async wrapper.
+        let session = match super::auth::AuthStorage::get_session_blocking() {
             Ok(s) => s,
             Err(e) => {
+                // B5: do not stay silent. Without a default store this is
+                // `NoStore` on every call and the user can never log in again
+                // in this process — record it so `auth_state` can say so.
                 eprintln!("[client] could not load session: {e}");
+                keyring_error = Some(e.to_string());
                 None
             }
         };
 
-        // FIX 9: discard sessions that are already expired so the app prompts re-login
-        // rather than silently continuing with a stale token (common after Android reinstall).
+        // FIX 9 (revised 2026-10-02): an expired session must NOT be discarded if
+        // it still carries a refresh token.
+        //
+        // The original version deleted any session whose `expires_at` had passed,
+        // on the theory that a stale token is unusable. But `Session.auth_token`
+        // is exactly what `authorization_header()` -> `refresh_token_inner()` ->
+        // `create_session()` uses to mint a NEW session from the stored email +
+        // token, and that path is already expiry-aware and already refuses to
+        // clear on anything but a genuine 401. Deleting here threw that
+        // credential away and forced a full re-login instead.
+        //
+        // Why that mattered, observed on a real device: the token expired, the app
+        // restarted, and the user was signed out. Re-login POSTs to the same
+        // `/v8/sessions` endpoint, which is fronted by a WAF that intermittently
+        // refuses it — so the outcome was an app that worked, then stopped
+        // working, then worked again depending on whether login got through. A
+        // refresh would have been invisible to all of that.
+        //
+        // An expired session is now KEPT whenever there is something to refresh
+        // with, and only discarded when it carries no token at all (the genuine
+        // post-reinstall case this was written for).
         #[cfg(not(all(target_os = "macos", not(feature = "keychain"))))]
         let session = {
             let now = chrono::Utc::now().timestamp().max(0) as u64;
             match session {
-                Some(ref s) if s.expires_at < now => {
+                Some(ref s) if s.expires_at < now && s.auth_token.trim().is_empty() => {
                     eprintln!(
-                        "[client] stored session is expired (expires_at={}, now={}) — clearing",
+                        "[client] stored session is expired and has no refresh token \
+                         (expires_at={}, now={}) — clearing",
                         s.expires_at, now
                     );
                     super::auth::AuthStorage::delete_session();
                     None
+                }
+                Some(ref s) if s.expires_at < now => {
+                    // Expected, not an error: the first authenticated request will
+                    // refresh it. Logged so a support log distinguishes this from a
+                    // silent sign-out.
+                    eprintln!(
+                        "[client] stored session is expired (expires_at={}, now={}) \
+                         — keeping it so the token can be refreshed",
+                        s.expires_at, now
+                    );
+                    session
                 }
                 other => other,
             }
@@ -102,16 +152,24 @@ impl GrindrClient {
 
         Ok(Self {
             http: RwLock::new(http),
-            default_headers: RwLock::new(headers),
             session: RwLock::new(session),
             refresh_lock: Mutex::new(()),
             user_agent: RwLock::new(user_agent),
+            keyring_error,
         })
     }
 
+    /// B9 (`reload_session`): the `#[allow(dead_code)]` is correct and the
+    /// cfg still matches. This IS live on `target_os = "macos"` without the
+    /// `keychain` feature: there `new()` hardcodes `session = None` (the file
+    /// store in `storage.rs` is the credential backend, and reading it is a
+    /// blocking keystore call that cannot happen in the sync constructor), so
+    /// the only way the session reaches `GrindrClient` is this method, called
+    /// from the `setup` hook in `lib.rs`. It is dead code on every other target,
+    /// which is what the allow is for. Keep it and keep the allow.
     #[allow(dead_code)]
     pub async fn reload_session(&self) {
-        match super::auth::AuthStorage::get_session() {
+        match super::auth::AuthStorage::get_session().await {
             Ok(s) => *self.session.write().await = s,
             Err(e) => eprintln!("[client] reload_session: {e}"),
         }
@@ -122,10 +180,26 @@ impl GrindrClient {
 pub async fn rotate_api_params(
     state: tauri::State<'_, AppState>,
 ) -> Result<RotateResult, AppError> {
+    // B8: this is an unlimited synchronous-keystore-write primitive that any
+    // WebView caller can invoke in a tight loop, each write costing tens of
+    // milliseconds of JNI on Android. It SHOULD be rate-limited. A real limiter
+    // needs per-caller state (a cooldown timestamp in `AppState`) and that
+    // could not be compiled on the audit host, so it is NOT done here — treat
+    // this as a known gap, not as an intentional omission.
     let client = state.client()?;
 
     let device = DeviceInfo::default();
-    if let Err(e) = DeviceStorage::save(&device) {
+    // B4: `DeviceStorage::save` is a synchronous keystore write. This is an
+    // `async fn` on the shared runtime, so run it on the blocking pool. The
+    // sibling call in `GrindrClient::new()` is left synchronous on purpose:
+    // that constructor runs in Tauri's `setup` hook and cannot await.
+    let persisted = tauri::async_runtime::spawn_blocking({
+        let device = device.clone();
+        move || DeviceStorage::save(&device)
+    })
+    .await
+    .map_err(|e| AppError::Auth(format!("Keyring write task failed: {e}")))?;
+    if let Err(e) = persisted {
         eprintln!("[client] could not persist rotated device info: {e}");
     }
     let user_agent = build_user_agent(&device, "Free");
@@ -133,7 +207,6 @@ pub async fn rotate_api_params(
     let http = build_http_client(headers.clone())?;
 
     *client.http.write().await = http;
-    *client.default_headers.write().await = headers.clone();
 
     // FIX 6: return the newly generated values, not the old ones
     let new_ua = user_agent.clone();
@@ -143,6 +216,21 @@ pub async fn rotate_api_params(
         .unwrap_or("")
         .to_owned();
     *client.user_agent.write().await = user_agent;
+
+    // B8: the live WebSocket handshake still carries the OLD User-Agent, so REST
+    // and WS would present two different device identities to Grindr for the
+    // rest of the session. Bumping the epoch drops the socket (see
+    // `AppState::ws_epoch`).
+    //
+    // The `auth_notify` wakeup is REQUIRED, not optional: `run_ws_loop` treats
+    // this as `AppError::Auth` ("wait for the next login") and then blocks on
+    // `auth_notify.notified()`. Bumping the epoch alone would drop the socket
+    // and never bring it back for an already-logged-in user — turning a stale
+    // User-Agent into a permanently dead WebSocket. This is the same pair
+    // `login` uses. Epoch first, then notify, so the waiter observes the new
+    // value.
+    state.bump_ws_epoch();
+    state.auth_notify.notify_one();
 
     Ok(RotateResult {
         user_agent: new_ua,

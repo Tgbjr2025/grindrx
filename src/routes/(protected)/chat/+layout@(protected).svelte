@@ -25,20 +25,53 @@
 	let pageContentMinWidthPercentage = $state(0);
 
 	$effect(() => {
-		if (!paneGroup) return;
+		const el = paneGroup;
+		if (!el) return;
 		const observer = new ResizeObserver(() => {
-			if (!paneGroup) return;
-			conversationsListCollapsedSizePercentage = 117 / paneGroup.offsetWidth;
-			conversationsListMinWidthPercentage = 200 / paneGroup.offsetWidth;
-			pageContentMinWidthPercentage = 280 / paneGroup.offsetWidth;
+			// `offsetWidth` is 0 while the pane group is hidden (a `display:none`
+			// ancestor during a route transition, or the very first callback before
+			// layout). Dividing by it yields `Infinity` for all three percentages,
+			// and `Infinity * 100` fed straight into `minSize` / `collapsedSize` on
+			// the resizable panes, which then refuses to lay out at all. Guard it.
+			//
+			// The width is read inline rather than bound to a local: eslint's
+			// type-aware pass reports `no-unsafe-assignment` on
+			// `const w = el.offsetWidth` in this file (it cannot resolve
+			// `HTMLElement` there), while svelte-check is clean. Keeping the reads
+			// inline sidesteps a tooling artefact instead of papering over a real
+			// type error.
+			if (!el.offsetWidth) return;
+			conversationsListCollapsedSizePercentage = 117 / el.offsetWidth;
+			conversationsListMinWidthPercentage = 200 / el.offsetWidth;
+			pageContentMinWidthPercentage = 280 / el.offsetWidth;
 		});
-		observer.observe(paneGroup);
+		observer.observe(el);
 		return () => observer.disconnect();
 	});
 
 	const isChatSelected = $derived(page.params.conversationId !== undefined);
 
-	const mobile = new MediaQuery("(width < 424px)");
+	// Which layout to use.
+	//
+	// This used to be `(width < 424px)`, which is far too narrow a cut-off: an
+	// iPhone 15/16 Pro Max (430pt), an iPhone 16 Pro Max (440pt) and a Pixel 8 Pro
+	// (448dp) are all >= 424, so those phones got the resizable two-pane
+	// inbox+chat layout instead of the single-pane mobile flow.
+	//
+	// That is not merely cosmetic. The pane group is keyed on this value, so
+	// flipping it (a rotation, a browser zoom change, a foldable unfolding)
+	// DESTROYS and re-creates the `[conversationId]` page, which tears down its
+	// `ConversationState` — losing scroll position, pagination state and any
+	// in-flight optimistic sends.
+	//
+	// Gate on pointer type instead of width: a coarse pointer with no hover is a
+	// touch device, which is the actual distinction that matters. The width term
+	// is a floor for narrow desktop windows, and `768px` is the conventional
+	// tablet breakpoint — below that there is not enough room for two panes of
+	// 200px + 280px plus a resizable divider.
+	const mobile = new MediaQuery(
+		"(max-width: 767px), ((hover: none) and (pointer: coarse))",
+	);
 </script>
 
 <main

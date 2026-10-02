@@ -1,0 +1,51 @@
+[graph]
+all-features = true
+targets = [
+	"aarch64-linux-android",
+	"armv7-linux-androideabi",
+	"i686-linux-android",
+	"x86_64-linux-android",
+	"x86_64-unknown-linux-gnu",
+	"aarch64-unknown-linux-gnu",
+	"aarch64-apple-darwin",
+	"x86_64-apple-darwin",
+	"x86_64-pc-windows-msvc",
+	"aarch64-pc-windows-msvc",
+]
+
+[advisories]
+yanked = "deny"
+# Unmaintained transitive crates are upstream's to replace, not ours.
+unmaintained = "workspace"
+ignore = [
+	{ id = "RUSTSEC-2026-0258", reason = "h2 0.3, via hyper 0.14 <- tonic <- devtools-core <- tauri-plugin-devtools, which is behind the optional `devtools` feature that only the dev scripts enable: `cargo tree -i h2@0.3.27` finds nothing without it. Reached only by this graph being audited with all-features. Re-check when tauri-plugin-devtools bumps tonic, and drop this line if the plugin ever goes." },
+	{ id = "RUSTSEC-2026-0293", reason = "ringbuf 0.4, via devtools-core <- tauri-plugin-devtools, behind the same dev-only `devtools` feature: `cargo tree -i ringbuf@0.4.8` finds nothing without it. devtools-core only calls push_overwrite and iter on its HeapRb, never the unsound Consumer::skip or Consumer::clear. The fix exists only in ringbuf 0.5.2 and devtools-core 0.4.0 still requires ^0.4. Drop this line once devtools-core moves to ringbuf 0.5.2 or later, or if the plugin goes." },
+]
+
+[licenses]
+allow = [
+	"0BSD",
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"BSD-2-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"CC0-1.0",
+	"CDLA-Permissive-2.0",
+	"ISC",
+	"MIT",
+	"MIT-0",
+	"MPL-2.0",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+]
+
+[bans]
+# Upstream duplicates (six windows-sys, four rand) are not ours to collapse.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -1,10 +1,20 @@
 <script lang="ts">
+	import { getVersion } from "@tauri-apps/api/app";
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { onDestroy } from "svelte";
+	import { onDestroy, onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
 	import { getProfiles } from "$lib/api/profile";
+	import { isLocked } from "$lib/app-data/app-lock.svelte";
+	import FeatureTour from "$lib/components/FeatureTour.svelte";
+	import PinLockGate from "$lib/components/PinLockGate.svelte";
+	import WhatsNewDialog from "$lib/components/WhatsNewDialog.svelte";
+	import {
+		isFirstRun,
+		isNewVersion,
+		markVersionSeen,
+	} from "$lib/stores/onboarding.svelte";
 	import { chatV1MessageSentEventSchema, ws } from "$lib/ws.svelte";
 	import { getOrCreateConversationsState } from "./chat/conversations-context.svelte";
 
@@ -12,11 +22,47 @@
 
 	const conversations = getOrCreateConversationsState(data.ourProfileId);
 
+	// A real gate, not an overlay.
+	//
+	// `PinLockGate` used to be layered ON TOP of a fully rendered tree, so while
+	// "locked" every protected node — chat text, names, photos — was still in the
+	// DOM and reachable from JS, and the layout kept its WebSocket live and
+	// raised a toast containing up to 60 characters of an incoming message on the
+	// lock screen. Rendering nothing until unlocked removes all of that.
+	const locked = $derived(isLocked());
+
+	// First-run tour + per-version "What's new" card.
+	let tourOpen = $state(false);
+	let whatsNewOpen = $state(false);
+	let appVersion = $state("");
+
+	onMount(() => {
+		void (async () => {
+			try {
+				const version = await getVersion();
+				appVersion = version;
+				if (isFirstRun()) {
+					tourOpen = true;
+					markVersionSeen(version);
+				} else if (isNewVersion(version)) {
+					whatsNewOpen = true;
+					markVersionSeen(version);
+				}
+			} catch {
+				// no tauri app version available (e.g. web preview) — skip onboarding
+			}
+		})();
+	});
+
 	const unlistenPromise = ws.on(
 		"chat.v1.message_sent",
 		chatV1MessageSentEventSchema,
 		(event) => {
 			const message = event.payload;
+			// Never surface message content on the lock screen, and never while
+			// locked at all — the toast preview is up to 60 characters of
+			// someone's message.
+			if (isLocked()) return;
 
 			// Only show for incoming messages
 			if (message.senderId === conversations.ourProfileId) return;
@@ -98,4 +144,14 @@
 	});
 </script>
 
-{@render children?.()}
+{#if locked}
+	<!-- Nothing protected is rendered while locked. See the `locked` note above. -->
+	<PinLockGate />
+{:else}
+	{@render children?.()}
+
+	<PinLockGate />
+
+	<WhatsNewDialog bind:open={whatsNewOpen} version={appVersion} onTour={() => (tourOpen = true)} />
+	<FeatureTour bind:open={tourOpen} />
+{/if}

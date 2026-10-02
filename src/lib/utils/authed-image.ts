@@ -47,12 +47,73 @@ export function isAuthedHost(url: string): boolean {
 
 // --- Object-URL cache --------------------------------------------------------
 // Retain a compact `blob:` object URL per source URL. Map insertion order is the
-// LRU recency order; evicting the oldest revokes its blob so total retained
-// image memory stays bounded across a long session. Also dedups: the cover,
+// LRU recency order; evicting the oldest frees its blob so total retained image
+// memory stays bounded across a long session. Also dedups: the cover,
 // thumbnail and lightbox of the same image fetch once.
-const MAX_ENTRIES = 96;
+//
+// `MAX_ENTRIES` was 96, i.e. up to 96 FULL-RESOLUTION photos retained at once
+// (multi-MB each) — a hard OOM on a mid-range WebView. It is now a much smaller
+// working set; full-resolution bytes are only fetched on demand (lightbox), not
+// for inline bubbles.
+const MAX_ENTRIES = 32;
 const objectUrlCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string | null>>();
+// How many live consumers currently hold each object URL. Without this,
+// eviction revoked a blob that a MOUNTED <img> was still displaying, so the
+// element went blank and its onerror handler re-ran the whole IPC byte fetch —
+// a flash-and-refetch storm every time you scrolled past the cache size.
+const refCounts = new Map<string, number>();
+// Evicted-but-still-referenced URLs, revoked once their last consumer releases.
+const retired = new Map<string, string>();
+// `retired` is outside the `objectUrlCache` size bound, so a caller that retains
+// and never releases could pin unbounded blob memory for the process lifetime.
+// Cap it: past this many parked blobs, sacrifice the oldest referenced entry
+// (its <img> may briefly blank and re-fetch) rather than leak. A correct caller
+// releases promptly and never reaches this.
+const MAX_RETIRED = MAX_ENTRIES;
+
+/**
+ * Retain a resolved object URL for as long as the caller needs it, and get a
+ * release function to call from an `$effect`/teardown. Callers MUST release, or
+ * the entry is never revoked (bounded by `MAX_ENTRIES` for the cache, but a
+ * leaked blob is not freed).
+ *
+ * Prefer {@link resolveAuthedImageRetained}, which returns the release function
+ * next to the URL so the two cannot be separated at the call site.
+ */
+export function retainAuthedImage(objectUrl: string): () => void {
+	refCounts.set(objectUrl, (refCounts.get(objectUrl) ?? 0) + 1);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		const next = (refCounts.get(objectUrl) ?? 1) - 1;
+		if (next <= 0) {
+			refCounts.delete(objectUrl);
+			// If it was evicted while still referenced, now is the time to free it.
+			const parked = retired.get(objectUrl);
+			if (parked !== undefined) {
+				retired.delete(objectUrl);
+				try {
+					URL.revokeObjectURL(parked);
+				} catch {
+					// already revoked / not an object URL — nothing to do
+				}
+			}
+		} else {
+			refCounts.set(objectUrl, next);
+		}
+	};
+}
+
+/** Revoke a parked blob, swallowing the "already revoked" case. */
+function revokeQuietly(objectUrl: string): void {
+	try {
+		URL.revokeObjectURL(objectUrl);
+	} catch {
+		// already revoked / not an object URL — nothing to do
+	}
+}
 
 function remember(srcUrl: string, objectUrl: string): void {
 	objectUrlCache.delete(srcUrl);
@@ -62,15 +123,75 @@ function remember(srcUrl: string, objectUrl: string): void {
 		if (oldest === undefined) break;
 		const evicted = objectUrlCache.get(oldest);
 		objectUrlCache.delete(oldest);
-		if (evicted) {
-			try {
-				URL.revokeObjectURL(evicted);
-			} catch {
-				// already revoked / not an object URL — nothing to do
-			}
+		if (evicted === undefined) continue;
+		// Only revoke immediately when nothing is displaying it. Otherwise park
+		// it until the last consumer releases.
+		if ((refCounts.get(evicted) ?? 0) > 0) {
+			retired.set(evicted, evicted);
+			continue;
 		}
+		revokeQuietly(evicted);
+	}
+	// Keep the parked set bounded (see MAX_RETIRED).
+	while (retired.size > MAX_RETIRED) {
+		const oldest = retired.keys().next().value;
+		if (oldest === undefined) break;
+		retired.delete(oldest);
+		refCounts.delete(oldest);
+		revokeQuietly(oldest);
 	}
 }
+
+/**
+ * Reset every module-level cache. Tests only: `objectUrlCache` is module
+ * state, so without this a bound assertion in one test is satisfied by
+ * bookkeeping the test never created (a freshly-reset counter reporting a
+ * stale real cache as within budget).
+ */
+export function __resetAuthedImageCacheForTests(): void {
+	objectUrlCache.clear();
+	inflight.clear();
+	refCounts.clear();
+	retired.clear();
+}
+
+/** Test-only introspection: how many object URLs are currently parked. */
+export function __retiredAuthedImageCount(): number {
+	return retired.size;
+}
+
+/** ISO-BMFF major brands that are genuinely video containers. */
+const VIDEO_BRANDS = new Set([
+	"isom",
+	"iso2",
+	"iso4",
+	"iso5",
+	"iso6",
+	"mp41",
+	"mp42",
+	"avc1",
+	"dash",
+	"M4V ",
+	"M4VP",
+	"mmp4",
+	"MSNV",
+	"qt  ",
+]);
+
+/** ISO-BMFF major brands that are IMAGES despite living in the same container. */
+const IMAGE_BRANDS = new Set([
+	"heic",
+	"heix",
+	"hevc",
+	"heim",
+	"heis",
+	"hevm",
+	"hevs",
+	"mif1",
+	"msf1",
+	"avif",
+	"avis",
+]);
 
 /**
  * Sniff an image/video MIME from the leading magic bytes. `<img>` sniffs image
@@ -106,14 +227,21 @@ function sniffMime(b: Uint8Array): string {
 	) {
 		return "image/webp";
 	}
-	if (
-		b.length >= 12 &&
-		b[4] === 0x66 &&
-		b[5] === 0x74 &&
-		b[6] === 0x79 &&
-		b[7] === 0x70
-	) {
-		return "video/mp4";
+	// ISO-BMFF family check. `ftyp` sits at bytes 4..8 of EVERY ISO base-media
+	// container — including HEIC, HEIF and AVIF, which are IMAGES. The previous
+	// check matched on `ftyp` alone, so a HEIC photo was wrapped in a
+	// `video/mp4` blob and an `<img>` could refuse to decode it.
+	//
+	// The MAJOR BRAND lives at bytes 8..12, so check that against the brands that
+	// are actually video.
+	if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+		const majorBrand = String.fromCharCode(b[8], b[9], b[10], b[11]);
+		if (VIDEO_BRANDS.has(majorBrand)) return "video/mp4";
+		// heic/heix/mif1/msf1/avif are still images, not videos.
+		if (IMAGE_BRANDS.has(majorBrand)) {
+			return majorBrand.startsWith("avif") ? "image/avif" : "image/heic";
+		}
+		// Unknown ISO-BMFF brand: fall through rather than guess "video".
 	}
 	if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) {
 		return "video/webm";
@@ -236,4 +364,28 @@ export async function resolveAuthedImage(url: string): Promise<string | null> {
 	})();
 	inflight.set(url, task);
 	return task;
+}
+
+/**
+ * {@link resolveAuthedImage} plus a retain, returned TOGETHER so the release
+ * function cannot be dropped at a call site.
+ *
+ * This exists because `retainAuthedImage` had zero callers: the ref-count that
+ * stops cache eviction revoking a blob a mounted `<img>` is still displaying
+ * was dead code, so every eviction revoked immediately and scrolling past the
+ * cache size produced a blank image whose `onerror` re-ran the whole IPC byte
+ * fetch. Returning the pair together makes the correct call shape the default.
+ *
+ * `release` is idempotent and must be called from the consumer's teardown.
+ * `release` is null when `url` was not an authed host (nothing to retain).
+ */
+export async function resolveAuthedImageRetained(
+	url: string,
+): Promise<{ url: string; release: (() => void) | null }> {
+	const resolved = await resolveAuthedImage(url);
+	if (resolved === null) return { url, release: null };
+	// Only blob: object URLs are ours to retain/revoke. A passthrough of a
+	// signed or direct URL has no lifecycle to manage.
+	if (!resolved.startsWith("blob:")) return { url: resolved, release: null };
+	return { url: resolved, release: retainAuthedImage(resolved) };
 }

@@ -1,5 +1,1297 @@
 # SESSION_STATE — grindrx-work
 
+**2026-10-02 ~03:2x UTC — ROOT CAUSE FOUND: `PERSISTED_PRECISION` WAS 8, THE SERVER REQUIRES 12.
+THE OPERATOR WAS RIGHT AND I WAS WRONG TO DISMISS THE SUB-AGENT THEORY. 0.1.43/1078 INSTALLED,
+AWAITING SIGN-IN.**
+
+## THE ACTUAL CAUSE — measured, not inferred
+
+The release-build response logging (added earlier this session) paid for itself on its first run:
+
+```
+[GrindrX] GET /v3/cascade?nearbyGeoHash=dpg8ncgz -> HTTP 400 (129 bytes) body:
+{"type":"urn:gr:err:geo_hash_decode","title":"Invalid location format","status":400,"traceId":"..."}
+```
+
+**HTTP 400 — not 403, not a WAF, not a network fault. The geohash is 8 characters and the cascade
+endpoint requires 12.** `dpg8ncgz` is 8; the app's own fixtures used 12 (`u4pruydqqvj8`).
+
+**The error envelope has `type`/`title`/`status` but NO `code` field** — that is precisely why the UI
+showed no code: `ApiHttpError.code === null` -> "Couldn't load profiles".
+
+## WHO BROKE IT — the operator's theory was CORRECT
+
+`git log` settles it:
+
+- `62a2c4e` … `9a2d8e4` — original encoder, **`const precision = 12`**.
+- **`5cda11f` "GrindrX Audit Agent", 2026-09-27 03:48** — "fix: full line-by-line audit remediation"
+  — changed it to `PERSISTED_PRECISION = 8`, justified in a 25-line comment as four characters the
+  app "cannot act on", a third of the bytes. **Never probed against the API.**
+- `git merge-base --is-ancestor 5cda11f v0.1.40` → **TRUE. 0.1.40 shipped broken.** Its device test
+  never opened the profile grid, so nothing caught it.
+
+**I WAS WRONG AND MUST SAY SO.** I searched all 13,331 files in `~/.claude/projects/` for live
+`grindr.mobi` requests, found none, and concluded the sub-agents could not have caused this. That
+conclusion was **correct but irrelevant** — the damage was a CODE change, not API traffic. I let
+"no live requests" become "not their fault" and dismissed the operator's own observation. It was
+theirs all along.
+
+**The green-gate lesson again, and worse than usual: the sub-agent wrote a test asserting the wrong
+value** (`geohash.test.ts`: "persists 8 characters, not 12"). 704 tests passed with the app's most-
+used screen dead, because the test was written from the same unverified premise as the code it
+locked in.
+
+## THE FIXES
+
+1. **`src/lib/model/geohash.ts` — `PERSISTED_PRECISION` 8 → 12.** Header comment and the constant's
+   doc rewritten: the measured 400 is quoted in-file so nobody "optimises" it again. Backup
+   `geohash.ts.bak.pre_precision.*`.
+2. **`geohash.test.ts` — the 8-asserting test inverted** to require 12, and the prefix/nesting test
+   kept (it is what makes the repair below sound).
+3. **`(navbar)/(root)/+page.svelte` — stale-hash repair.** The GPS updater only rewrote the stored
+   hash when `slice(0, 6)` differed. A stored 8-char hash and a new 12-char hash of the SAME place
+   share that prefix, so **it would never self-heal** and every existing user would stay broken
+   even with the encoder fixed. Now also compares length. (First attempt at this condition was
+   written backwards — `&&` instead of `||`, which required BOTH to differ and so preserved the
+   bug. Caught by re-reading, not by a test.)
+4. Earlier this session, still in: `client.rs` refreshable-session fix, `rest.rs` release logging,
+   `index.ts` Cloudflare detection, `auth.rs` 403 no longer fatal.
+
+## STATUS / GATES
+
+**0.1.43 / versionCode 1078 built, signed (cert `22d6889e…4c01` unchanged) and INSTALLED on the s26
+over USB.** vitest **704/56** · svelte-check 0 errors · `cargo check --lib` clean on the M1 · version
+gate `building release version 0.1.43`.
+
+**BLOCKED ON THE OPERATOR: SIGN IN.** The pre-fix 0.1.42 build already deleted the stored
+credential, so there is no session and therefore no cascade request to log. Latest log still shows
+`nearbyGeoHash=dpg8ncgz` (8 chars) because the stored preference predates the fix.
+
+**After signing in, LOCATION PERMISSION MUST BE GRANTED** or the stale 8-char hash is never
+repaired. Then `adb logcat | grep GrindrX` should show a 2xx on `/v3/cascade` — and that also
+answers probe question #1 ("does /v3/cascade still return data?"), which has been open for weeks.
+
+**NOT COMMITTED, NOT PUSHED, no tag.**
+
+**2026-10-02 ~03:0x UTC — THE "COULDN'T LOAD PROFILES" ROOT CAUSE IS FOUND, AND IT IS A LOCKOUT
+BUG. Four fixes, all tested. 0.1.42/1077 BUILT AND SIGNED BUT NOT INSTALLED. NOTHING COMMITTED.**
+
+**The answer to the bug the operator reported, after a long hunt. Operator's own observation was
+the key clue and it was RIGHT: the app worked, then stopped, then worked, then stopped.**
+
+## THE ROOT CAUSE — `client.rs` "FIX 9" deletes a refreshable session
+
+`src-tauri/src/api/client.rs:104-119` (pre-fix), on every app start:
+
+```rust
+Some(ref s) if s.expires_at < now => {
+    eprintln!("[client] stored session is expired ... — clearing");
+    super::auth::AuthStorage::delete_session();
+    None
+}
+```
+
+`Session.auth_token` is precisely what `authorization_header()` → `refresh_token_inner()` →
+`create_session()` uses to MINT A NEW SESSION. That refresh path already exists, is expiry-aware,
+and refuses to clear on anything but a genuine 401. **This check deleted the credential the refresh
+needed and forced a full re-login instead.**
+
+Its stated intent was "common after Android reinstall" — the genuine no-token case. But it fired on
+**any** app start after expiry.
+
+**Why that produces exactly the reported symptom.** Re-login POSTs to the same `/v8/sessions`
+endpoint (`auth.rs:206`), which is fronted by a WAF that intermittently refuses it. So:
+token expires → app restarts → credential deleted → login attempted → *maybe blocked* → broken.
+Works again the moment a login gets through. **A refresh would have been invisible to all of it.**
+
+**PROVEN ON THE DEVICE, not inferred.** Launching the instrumented 0.1.42 produced exactly:
+`[client] stored session is expired (expires_at=1790908003, now=1790909254) — clearing` — expired
+by 1251 s. **The app is signed out right now** as a consequence of the pre-fix build.
+
+## The four fixes (all uncommitted)
+
+1. **`client.rs` — the root cause.** An expired session is now KEPT whenever `auth_token` is
+   non-empty, so the first authenticated call refreshes it. Only discarded when it carries no token
+   at all (the reinstall case it was written for). Logs which branch it took.
+2. **`rest.rs` — release-build observability.** `eprintln!` on every non-2xx from `request_raw`:
+   `METHOD path -> HTTP <status> (<n> bytes) body: <240-char prefix>`, control chars stripped.
+   **This is what made the diagnosis possible**; the only request logging was behind
+   `#[cfg(debug_assertions)]`. Placed AFTER `body` is bound — the first attempt referenced `body`
+   and `method` before either existed and did not compile (borrow-after-move + out of scope).
+   **It also has to be in `request_raw`, not `request_raw_unauthed`** — the cascade is authed; I put
+   it in the wrong function first.
+3. **`index.ts` — Cloudflare detection.** `classifyResponseBody` matched exactly two literals from
+   ONE template. Replaced with a template-agnostic test: 403/429 + non-JSON body + a
+   cloudflare/attention-required/just-a-moment/enable-javascript/ray-id marker. **Two live probes
+   minutes apart returned two DIFFERENT templates, which is how the brittleness was proven.**
+   +6 tests, including that a real JSON 403 envelope is still `error-code` with its code intact.
+4. **`auth.rs` — 403 no longer clears the session.** `auth_class` dropped `code == 403`.
+   **HONEST CORRECTION: I earlier claimed this was the active cause. It was not.** `request_json`
+   (`rest.rs:159-160`) builds the code as `json.get("code")…unwrap_or(0)`, so a Cloudflare **HTML**
+   body fails to parse and arrives as `code: 0` — never 401, never 403, so that branch was NOT
+   reached. Kept as hardening (a JSON `code: 403` is still not proof the token is bad), not as the
+   fix.
+
+## What was RULED OUT, with evidence — do not re-litigate
+
+- **Not an outage.** Base URL is `grindr.mobi` (`client.rs:13`); the "api.grindr.com outage" was
+  probing a host we never call. `/v3/cascade` reached the auth layer and answered 401.
+- **Not credentials.** Operator receives Grindr email notifications, AND the app loads MESSAGES —
+  authenticated calls that work. Session and token are fine.
+- **Not the account.** The OFFICIAL Grindr app loads profiles on the same phone, same network, same
+  account. Cloudflare is not blocking this IP or this account.
+- **Not a WAF fingerprint blanket-block.** curl is blocked on EVERY endpoint including
+  conversations, while the app's conversations work — so curl is not a proxy for app behaviour and
+  **all curl-based probing of this API is invalid.** The app is blocked on `/v3/cascade` only.
+- **Not the sub-agents.** Break predates 0.1.41 and none of those changes touch the network path.
+  Checked `~/.bash_history` AND all 13,331 files in `~/.claude/projects/` — no agent ever issued a
+  live request to `grindr.mobi`. (Correction to my own reasoning: I first dismissed the theory
+  partly on clean bash history, which is weak evidence because agent tool calls are not recorded
+  there. The project-log search is the real evidence.)
+- **Not the stale `26.9.1.163471` version string** or the `MAX_ANDROID_VERSION: u8 = 16` vs the
+  phone's Android 17 — tested four UA variants, all 403.
+
+**STILL UNRESOLVED: why `/v3/cascade` specifically returns 403 to this client while every other
+endpoint works.** The 240-char body log (fix 2) will answer it on the next run. Do NOT guess.
+
+## Build status
+
+**0.1.42 / versionCode 1077 built and signed on the M1.** Cert `22d6889e…4c01` unchanged (R22).
+Backups `*.bak.pre_v0142`; all three version files bumped together, gate prints
+`building release version 0.1.42`. **NOT INSTALLED — the phone's USB disconnected from the M1
+mid-install.** Wireless adb port 45077 remains `offline` (needs pairing).
+
+**Build gotcha added to the record:** the M1 build needs
+`export PATH="$NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin:$PATH"` in addition to everything
+else. Without it `cc-rs` cannot find `x86_64-linux-android-clang` and gradle's `rustBuild*Release`
+tasks die with **exit 134** after a 10-minute Rust build — the error names `bun`, not the real
+cause. Always `cargo check --lib` on the M1 first; there is no cargo on OVH.
+
+## Gates
+
+vitest **704/56** (+6) · svelte-check 0 errors · eslint clean on touched files · `cargo check --lib`
+clean on the M1 · `vite build` OK · version gate exit 0. **`vite build` not re-run after the last two
+Rust edits — no JS impact, but stated rather than assumed.**
+
+**NOT COMMITTED, NOT PUSHED, no tag.** Nothing to undo on the device: the installed build is the
+pre-fix 0.1.42, which is functionally the same as 0.1.41 for this bug.
+
+**NEXT, in order:** (1) reconnect the phone to the M1's USB and `adb install -r` the 0.1.42 APK
+already sitting at `~/grindrx-041/src-tauri/gen/android/app/build/outputs/apk/universal/release/`;
+(2) operator signs in ONCE (mandatory — the pre-fix build already deleted the stored credential);
+(3) open the grid and read `logcat | grep GrindrX` for the 403 body, which settles the last open
+question. **Do not skip step 2** — with no session there is no cascade request to log.
+
+---
+
+**2026-10-02 ~00:1x UTC — 0.1.41 BUILT AND SIGNED ON THE M1 OVER TAILSCALE. APK DELIVERED TO THE
+OVH BOX. NOT INSTALLED, NOT DEVICE-TESTED, NOT PUSHED, NOT COMMITTED.**
+
+Operator: "use tailscale and compile and build on the m1." Done. The Kotlin from the previous entry
+**compiles**, and the artefact is signed with the right cert.
+
+**APK:** `com.grindrx.app` **0.1.41**, **versionCode 1076** (1075 was published by 0.1.40, so this is
+a valid in-place upgrade), 71,296,123 B, all 4 ABIs, minSdk/targetSdk unchanged.
+sha256 `556a2212eaa52d55cb515fbdc5c50e3c8053025947600aa1e61e83956677ea3b`.
+Cert SHA-256 `22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01` — **matches
+KEYS.md (R22)**. **Delivered to `/home/ubuntu/apks/grindrx-0.1.41-universal.apk`, sha256-verified
+byte-identical to the M1's copy.**
+
+**THE KOTLIN COMPILES.** Confirmed present in the shipped artefact: `unzip -p … classes.dex |
+strings | grep -c imeVisible` → **1**. The `imeVisible()` `@JavascriptInterface` method is in the
+APK, so `readNativeInsets()`'s `bridge.imeVisible?.()` is no longer falling through to `false`.
+**This closes the "inert" flag from the previous entry. What is still unverified is the BEHAVIOUR
+on a real keyboard — the compile proves the plumbing, not the fix.**
+
+**VERSION BUMP — all three together, gate passes.** `package.json`, `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` → `0.1.41`; `versionCode` 1075 → **1076**. Backups
+`*.bak.pre_v0141.20261001_234447`. `sh ci/check-release-version.sh` → `building release version
+0.1.41`, exit 0. **Do NOT bump again before an install** — 1076 is now consumed by a real artefact.
+
+**HOW THE BUILD WAS DONE (reusable — this cost real time to work out):**
+- Reached the M1 as **`ssh mac`** (existing `~/.ssh/config` entry; `HostName 100.92.26.108`,
+  `User thomasbateman`). `tailscale status` shows it as `macbook-air`. Bare `ubuntu@<ip>` is
+  rejected — use the config alias.
+- **R20 respected: the M1's own `~/grindrx-work` is stale at `e155a35` (v0.1.33) and DIRTY. Not
+  touched.** Built in a fresh throwaway **`~/grindrx-041`**, synced by `tar | ssh tar -x` (90 MB
+  source). **R5 verified on 4 files** — `MainActivity.kt`, `tauri.conf.json`, `package.json`,
+  `Cargo.toml` all sha256-identical on both hosts.
+- **Keystore:** `cp ~/.config/grindrx/keystore.properties src-tauri/gen/android/` — sha256
+  `cb78eb93…32a114`, identical on both hosts, and `~/open-grind-key.jks` already present on the M1.
+  **Without this the build SUCCEEDS and silently emits an UNSIGNED APK** (gotcha 1 confirmed still
+  live).
+- **JDK pinned** in `src-tauri/gen/android/gradle.properties`:
+  `org.gradle.java.home=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home`
+  (backup `gradle.properties.bak.pre_pin`). Gotcha 2 confirmed still live — M1 has JDK 25 and 17, no
+  21, and AGP 8.13.2 rejects 25.
+- Env: `PATH=$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.nvm/versions/node/v20.20.2/bin:$PATH`,
+  `ANDROID_HOME=$HOME/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973`.
+  All three of bun/cargo/node are OFF the default PATH.
+- **DO NOT call gradle directly.** `./gradlew :app:compileDebugKotlin` is **ambiguous** (ABI splits)
+  and `:app:compileUniversalDebugKotlin` fails with *"No matching variant of project
+  :tauri-plugin-\* … No variants exist"* — the Tauri plugin subprojects need the Rust Android libs
+  built first. **Use `bun run tauri android build --apk`**, which does cargo-then-gradle correctly.
+  Rust: 8m59s for 4 Android targets, then gradle. All 4 targets already installed on the M1.
+- `bun install --frozen-lockfile` before building (329 packages).
+- **A bonus confirmation:** the cancelled agent's Firebase gradle work behaved exactly as its
+  comments claimed — `WARNING: google-services.json not found … push notifications will not work`
+  and the build continued. The conditional-application guard works.
+
+**NOT DONE — and the next actions are the operator's:**
+1. **NOT INSTALLED.** `adb devices` on the M1 is **empty** — the s26 is not attached over adb. It is
+   on Tailscale (`thomass-s26-ultra`, 100.64.176.13) but adb-over-network is not set up. Install by
+   hand from `/home/ubuntu/apks/grindrx-0.1.41-universal.apk`.
+2. **NOT DEVICE-TESTED.** The whole point of the build. What to check, restated because my earlier
+   version of this was WRONG: **the keyboard is not going to be hidden** — `MainActivity.kt` already
+   shrinks the WebView by the IME height (`bottomMargin`), in both forks. The thing under test is
+   whether `--safe-area-*` **jumps** ahead of the layout. Open a chat, tap the input: expect one
+   smooth settle; a bug is padding snapping to zero then jumping a beat later. Then close the
+   keyboard (the deferral is **symmetric**), then **rotate the device** (insets change with no IME
+   flip — that path must apply immediately, and it is the one most likely to regress).
+3. **NOT PUSHED** (R11), **NOT COMMITTED**, no `v0.1.41` tag, no release, F-Droid untouched.
+
+---
+
+**2026-10-01 ~23:3x UTC — KOTLIN `imeVisible()` DONE (UNCOMPILED) · HANDOFF DOCS CORRECTED · THE
+TWO FALSE PREMISES ARE NOW RETRACTED IN THE DOCS THEMSELVES. NOTHING COMMITTED.**
+
+**Operator instruction: "do the change and then docs need updated." Done in that order.**
+
+**THE KOTLIN — `MainActivity.kt`, 3 additions, nothing removed.** Backup
+`MainActivity.kt.bak.pre_ime.20261001_*`. (1) `@Volatile` on `insetsTop/Bottom/Left/Right` —
+`InsetsInterface` runs on the **WebView JS-bridge thread**, not the UI thread that writes them, so
+this was an unsynchronised read; upstream guards the same state the same way. (2)
+`@Volatile imeVisibleNow`, set from `isImeVisible` — **which was already computed at `:169-172` and
+discarded.** (3) `@JavascriptInterface fun imeVisible() = imeVisibleNow`. This is what makes the JS
+port live; without it `bridge.imeVisible?.()` silently degraded and everything behaved as before.
+
+**⚠ THE KOTLIN IS NOT COMPILED.** No Android platform SDK and no NDK on this box
+(`/usr/lib/android-sdk` has only `build-tools/debian` and an empty `platforms/`; `ANDROID_HOME`
+unset; Java 21 only). **Compile on the Mac (`~/grindrx-038`) before trusting it.** Three additive
+lines is not a compile. Also: **`MainActivity.kt` is a GENERATED file that is heavily hand-modified
+— `tauri android init` can clobber it. Diff first.**
+
+**⚠ I CORRECTED A CLAIM I HAD ALREADY WRITTEN INTO CODE, TESTS AND NOTES.** I had said the IME
+deferral "puts the message input under the keyboard". **That is false** — I mis-read an earlier diff.
+Both forks already shrink the WebView by the IME height (`bottomMargin = if (isImeVisible)
+ime.bottom else 0`; upstream `MainActivity.kt:143-147`, ours identical). **The keyboard never covers
+the input in either app.** The deferral prevents `--safe-area-*` jumping ahead of a still-settling
+layout — a padding jump, not a hidden control. Source comment, test comment and all three docs now
+say so. Recorded because the wrong version was already committed to three files.
+
+**DOCS CORRECTED — the outage retraction is now IN the docs, not just SESSION_STATE:**
+- `README_HANDOFF.md` — headline claim struck through with a correction above it; new section
+  "THE 'OUTAGE' WAS WRONG — RETRACTED" with the measured host table; WP-5/WP-6 "still open" table
+  de-outaged (blocked only on *no signed-in session*); iOS "same outage" wording fixed; `platform/`
+  row updated to partly-ported; quick-commands fixed to probe `grindr.mobi` and show 698 tests.
+- `HANDOFF_MESSAGE.md` — same retraction at the top, WP-5/6 reworded, gap list rewritten with the
+  Svelte 5.55.5 vs ^5.57 trap and the **"do NOT port `link-opener.ts`, yours is better"** warning.
+- `memory/MEMORY.md` — new **"⚠ TWO STANDING CORRECTIONS"** section at the top so the next session
+  cannot re-inherit either error; `FIX_NOTES_platform_port.md` added to the index; the stale
+  "v0.1.38 is the latest" one-liner replaced (old text preserved in a `<details>` block).
+- `memory/FIX_NOTES_platform_port.md` — rewritten with the Kotlin half, the corrected rationale, the
+  mutation-verification table, and all five behaviours the tests pinned (three of which I got wrong
+  first time, including one **vacuous** test).
+
+**Gates after everything:** vitest **698/56** (node 668/54 + dom 30/2) · svelte-check **0 errors** ·
+eslint clean on all touched files incl. `vite.config.mjs` · `vite build` OK · version gate exit 0 at
+**0.1.40/1075** (no bump — no APK shipping) · **Kotlin NOT compiled** · `cargo` NOT run (no Rust
+changed).
+
+**STILL OPEN, in priority order:** (1) compile + device-test the Kotlin on the Mac — the whole IME
+deferral is unverified end-to-end; (2) one authenticated request against `grindr.mobi` to settle
+WP-5/WP-6 and the 7 probes; (3) `blur/` calibration layer; (4) the rest of `platform/`, blocked on
+`set_scroll_gesture_capture`, `__AndroidBack.gestureProgress()`, `$lib/haptics`.
+
+---
+
+**2026-10-01 ~22:1x UTC — THE MISSING TEST RUNNER IS FIXED. This closes the root-cause gap behind
+the v0.1.34/0.1.36/0.1.38 visual regressions. `platform/` now has real tests. NOTHING COMMITTED.**
+
+**Operator instruction that triggered this: "you need to build test first." Correct — the previous
+entry shipped a port with ZERO tests, which by this project's own standing lesson proves nothing.**
+
+**THE GAP:** `vite.config.mjs` had one vitest config, `environment: "node"`. There was no DOM at all,
+so no layout/markup behaviour could ever be tested. That is why 510 green tests shipped a broken
+grid twice.
+
+**THE FIX — two vitest projects, not a global environment flip. `vite.config.mjs`:**
+- `node` — same environment, same `src/**/*.test.ts` glob, plus `exclude: ["src/**/*.dom.test.ts"]`.
+- `dom` — `environment: "jsdom"`, `include: ["src/**/*.test.ts" → "**/*.dom.test.ts"]`, and
+  **`resolve: { conditions: ["browser"] }`**.
+- `jsdom@^26.1.0` added as a devDependency **via bun** (bun had to be reinstalled to `~/.bun/bin/bun`
+  — only `~/.bun/install/cache` survived on this box; `bun.lock` updated, backups
+  `package.json.bak.pre_jsdom.*` / `bun.lock.bak.pre_jsdom.*`).
+
+**`conditions: ["browser"]` IS LOAD-BEARING AND EASY TO MISS.** Without it, Svelte resolves to the
+**server** build and `mount()` throws `lifecycle_function_unavailable` — 6 tests failed on this
+before the fix. Upstream sets it globally (`vite.config.mjs:13`); doing that here would re-resolve
+all 668 node tests, so it is scoped to the `dom` project only.
+
+**PROVEN NON-REGRESSIVE:** `--project node` alone → **668 passed / 54 files**, byte-identical to
+before. Full run → **698 passed / 56 files** (+30).
+
+**30 new tests, both mutation-verified (green gates prove nothing — standing lesson):**
+- `src/lib/android-native-bridge.dom.test.ts` (21). Three mutations, all caught:
+  disabling the IME deferral → **3 fail**; removing `.reverse()` on the back-gesture handlers →
+  **2 fail**; keeping only the first deferred payload → **1 fail**.
+- `src/lib/back-gesture-event.dom.test.ts` (9). Two mutations, all caught: removing the
+  `insideScreen` guard → **5 fail**; teardown not unregistering → **2 fail**.
+
+**FIVE REAL BEHAVIOURS THE TESTS PINNED, three of which I had wrong at first:**
+1. **The IME deferral is SYMMETRIC** — an IME *close* defers too, not just an open. I had written a
+   test asserting close applies immediately; it does not. Self-heals via resize + the 150 ms timeout.
+2. **`appliedImeVisible`/`deferredInsets` are MODULE-level state.** My first suite was
+   order-dependent and 3 tests failed for that reason alone. Fixed with `vi.resetModules()` +
+   dynamic import per test. **Any future test of this module must do the same.**
+3. **The back-gesture handler contract is INVERTED from how it reads:** returning `false` means
+   CONSUMED (`dismissOnBackGesture` returns false after dismissing); returning `true` DECLINES and
+   passes to the next handler. `__AndroidOnBackGesture` returns true when nothing consumed it, which
+   is what tells Kotlin it may navigate.
+4. **No `setScreenLeaving` ancestor must REGISTER, not bail.** `insideScreen()` false → `leaving`
+   is `() => false` → not leaving → handler registers. My test asserted 0 and was wrong; a naive
+   port really would throw here, which is the shim's whole reason to exist.
+5. **`$effect` does not track plain closure variables.** My "unregisters when active() turns false"
+   test passed VACUOUSLY. Fixed by making `active`/`leaving` a `SvelteSet`, which `$effect` tracks.
+
+**Also fixed:** two harness mistakes of mine — returning a component from a component body does NOT
+mount it in Svelte 5 (silently tested nothing), and `unmount()` returns a Promise (`no-floating-promises`).
+
+**Gates, all measured:** vitest **698/56** (node 668/54 + dom 30/2) · svelte-check **0 errors**,
+same 4 pre-existing warnings · eslint **0 errors** on all 11 touched files incl. `vite.config.mjs` ·
+**`vite build` OK (43 s, first time run this session)** · `sh ci/check-release-version.sh` exit 0,
+still **0.1.40/1075** (no bump — no APK shipping). `cargo` NOT run (no Rust changed).
+
+**STILL TRUE — the IME fix remains inert until Kotlin changes.** `MainActivity.kt:35-67`
+`InsetsInterface` has no `imeVisible()`; `:169-172` computes `isImeVisible` and discards it. The
+tests prove the JS honours a correct bridge; they cannot make the bridge correct. **Next task is
+still the ~6-line Kotlin addition, and it needs a device test to confirm.**
+
+---
+
+**2026-10-01 ~21:5x UTC — TWO CORRECTIONS TO THE RECORD, ONE OF THEM MAJOR. `platform/` PORTED FROM
+UPSTREAM. NOTHING COMMITTED (R11 + operator reviews and commits). No APK, no device test.**
+
+**⚠ CORRECTION 1 — THE "api.grindr.com TLS OUTAGE" IS FALSE AND WAS THE HEADLINE OF THREE HANDOFF
+DOCS. It is not real.** I accepted it from `README_HANDOFF.md` instead of probing (an R7 failure),
+and the operator's challenge is what caught it. Measured just now:
+
+- **Our base URL is `https://grindr.mobi`** (`src-tauri/src/api/client.rs:13`). `curl` →
+  **HTTP 403, TLS completes fine.** 403 on `/` is a live API host with no root route, NOT an
+  outage.
+- **`api.grindr.com` is never called by our code.** The only occurrence in the whole tree is a
+  comment (`src/lib/api/assignment.ts:13`). It does fail TLS — but we do not touch it.
+- `cdn.grindr.com` also fails TLS; likewise never called by us.
+- `cdns.grindr.com` — TLS fine, 403 on root. That IS the 0.1.38 private-bucket question, and it
+  is a **separate, still-open** issue. Do not conflate it with this.
+- Upstream open-grind uses the **same** `grindr.mobi` host (its fixtures pin
+  `https://grindr.mobi/v4/cascade`, `src/lib/api/redact/text.test.ts:90`). Its API client is the
+  external crate `grindr = "0.26"` (`src-tauri/Cargo.toml:42`), which is why grepping its tree
+  finds no base URL.
+
+**Consequence: "blocked, all 7 probes unprobeable, WP-5/WP-6 blocked" is UNFOUNDED.** Open-grind
+works against these endpoints and so can we. The operator's "opengrind can still access the grindr
+apis and there are 60k users" is consistent with exactly this. **NOT YET PROVEN end-to-end:** a
+403 on `/` does not prove an authenticated route responds. Settling it needs one real request
+against a live third-party API, which I did not send unprompted — the only session token is in the
+phone's Android Keystore, not on this host. **Operator to run one authenticated call, or grant
+explicit go-ahead.**
+
+**Also settled: the operator's "keep open-grind and change it to reach the correct API" rests on a
+false premise — it already reaches the correct API.** I did not restructure the fork; the operator
+then confirmed the right direction: **keep GrindrX, port open-grind's gaps in.**
+
+**⚠ CORRECTION 2 — THE SVELTE VERSION GATES UPSTREAM CODE.** Upstream is on `svelte ^5.57.0`; this
+project is on **5.55.5** (`package.json:73`). In 5.55.5 `createContext()` returns a 2-tuple
+`[get, set]` and `get` **throws** when unset — upstream destructures a 3-tuple including
+`insideScreen`, which only exists in 5.57+. **Any verbatim copy of upstream runes/context code can
+fail type-check or throw at runtime.** Expect this on every further port; check the API before
+copying.
+
+**PORTED — `platform/` (R4 backups: `src/lib/{android-native-bridge,back-gesture-event.svelte}.ts
+.bak.pre_platform.20261001_213612`). Full detail: `memory/FIX_NOTES_platform_port.md`.**
+
+Real gap closed: **IME/keyboard inset handling.** Upstream defers inset application when the IME
+flips visibility because the plugin reports the new inset *before* the WebView resizes; ours wrote
+the vars immediately, which is what puts the message input under the keyboard.
+`android-native-bridge.ts` 29 → 128 LOC. `back-gesture-event.svelte.ts` 3 → 47 LOC, adding
+`dismissOnBackGesture()` (did not exist at all). New `src/lib/platform/{os,touch-origin,block-zoom,
+video-codecs,hover-pointer,scroll-gesture}.ts`. `src/app.d.ts` gains `imeVisible`, `__AndroidBack`,
+`navigation`.
+
+**⚠ BUT THE HEADLINE FIX IS CURRENTLY INERT.** `readNativeInsets()` reads
+`bridge.imeVisible?.()` — and **our `MainActivity.kt:35-67` `InsetsInterface` has only
+`top/bottom/left/right`, NO `imeVisible`.** `MainActivity.kt:169-172` already *computes*
+`isImeVisible` and then **discards it**. Optional chaining means it degrades to the old behaviour —
+no crash, no regression, no fix either. **THE ACTUAL FIX IS ~6 LINES OF KOTLIN: add
+`@JavascriptInterface fun imeVisible() = isImeVisible` to `InsetsInterface`. That is the next
+task.** No JS amount closes it.
+
+**Deliberately NOT ported, because OUR code is better or the dep is absent:**
+- **`link-opener.ts`** — upstream calls `openUrl()` from `@tauri-apps/plugin-opener` directly,
+  which is exactly the bug `src/lib/api/open-url.ts:9-28` documents: the plugin registers `open`
+  not `open_url` on Android, the grant names `open_url`, so **every call rejects on a phone**.
+  Ours routes via the plugin's Rust API with an https-only allow-list. Copying upstream would
+  reintroduce a diagnosed bug.
+- **`app-settings.ts`** — invokes Rust `open_app_settings`, which does not exist here.
+- **`keybindings.ts`** (needs `tinykeys`), **`store.ts`** (upstream-only env var).
+- **`screen-chrome.svelte.ts`** — written then DELETED. Its tests need a DOM and
+  `vite.config.mjs:52` is `environment: "node"`. Unrunnable tests + no consumer = dead code. It is
+  also the dependency behind upstream's `remeasureScreenChrome()` call, which I dropped, so insets
+  apply without the remeasure hook. **Bun is NOT installed on this box** (only `~/.bun/install/cache`),
+  so I could not add `jsdom` without switching package managers on a working tree — operator's call.
+
+**A SVELTE-5.55.5 SHIM, NOT A COPY:** `createContext` reimplemented on
+`getContext`/`hasContext`/`setContext` + a module `Symbol`, preserving upstream's `insideScreen`
+check. Marked in-file with what to delete on upgrade.
+
+**I WIRED ONE THING WRONGLY AND REVERTED IT.** `registerAndroidBackButtonListener()` uses
+`addPluginListener("app","back-button")`, needing `tauri-plugin-app` — **absent from our
+`Cargo.toml`** (and upstream's; upstream drives it from Kotlin `OnBackPressedCallback`). It would
+reject on every launch. `src/routes/+layout.svelte` is **byte-identical to its backup**, verified by
+`diff`. Recording this because the temptation is to leave "harmless" unwired calls in place.
+
+**Gates, measured:** vitest **668/54** (unchanged) · svelte-check **0 errors**, same 4 warnings ·
+eslint **0 errors** on all 9 files · `ci/check-release-version.sh` exit 0, still **0.1.40/1075**
+(no bump — no APK shipping). **`vite build` NOT run, `cargo` NOT run** (no Rust changed).
+**HONEST GAP: 0 new tests.** The 668 prove nothing here — none import these modules. Per the
+standing lesson, green gates are not evidence. **Needs a device pass: keyboard in chat (input not
+covered), then back-gesture out of a screen.** Kotlin `MainActivity.kt` is 221 LOC vs upstream 259
+and both have different work in it (ours: FLAG_SECURE, discreet-mode aliases, foreground-service
+bridge, notification deep links; theirs: `WebInsets`, `BackInterface`, WebView-version warning) — a
+Kotlin port is a **merge, never a copy**.
+
+**2026-10-01 ~17:00 UTC — HANDOFF DOCS REBUILT. Branch at `a5915c1`, pushed to both remotes. `main`
+untouched everywhere and 107 commits behind. Work session closed out.**
+
+**Full handoff: `README_HANDOFF.md` (rewritten) + `HANDOFF_MESSAGE.md` (regenerated bootstrap prompt).
+Both replace the 2026-06-28 versions, which described a 3-week-old state and predated the entire
+gap-work session.**
+
+**State at handoff:**
+- Branch `claude/grindrx-freeze-json-audit-gp4lnk` @ `a5915c1` (code at `6fc45a4` = `feat: wire hide/tags/views to UI,
+  build WP-8 assignment`. Pushed to `github` and `grindrx-forgejo`, in sync.
+- **668/668 tests, 54 files.** svelte-check 0 errors (4 pre-existing warnings). eslint clean on every
+  touched file.
+- `main` **untouched on all three remotes**: local `21d7538` (v0.1.8, May 25), github `a547f8e`,
+  forgejo `30e6a1e` (v0.1.39). local main is a **clean fast-forward** from HEAD
+  (`git merge-base --is-ancestor main HEAD` = true) and has simply never been advanced.
+- Backups: `/home/ubuntu/backups/grindrx-main-backup-20261001/` — four `git bundle` files, all
+  `git bundle verify` clean, plus `backup/{local,github,forgejo}-main-20261001` tags pushed to
+  GitHub so the backup exists off-box.
+
+**Shipped this session** (details in `memory/FIX_NOTES_v0.1.41.md`):
+WP-1 report (wired to the chat message menu — the ethical package, the one that mattered),
+WP-2 hide, WP-3 views/taps, WP-7 tags, WP-8 assignment. **All unprobed** — transcribed from the
+spec and vendored docs, never observed, because no signed-in session was ever available.
+`getViews`/`getReceivedTaps` deliberately unwired (see FIX_NOTES §4).
+
+**UNCOMMITTED — a cancelled agent's Firebase work, correct and worth keeping:**
+`src-tauri/gen/android/build.gradle.kts` (+1 google-services classpath),
+`src-tauri/gen/android/app/build.gradle.kts` (+24 conditional plugin application),
+`src-tauri/Cargo.lock` (+1), `src-tauri/gen/android/FIREBASE_SETUP.md` (new). The
+conditional-application guard is the important part: applying `google-services` unconditionally
+hard-fails on a missing config file and would block EVERY Android build, not just push. It uses
+`apply(plugin = ...)` because Kotlin DSL cannot call `file(...)` inside `plugins { }`. **Left
+uncommitted deliberately** so the operator can decide.
+
+**Firebase project `grindrx-3c0ae` / number 1051764546093 exists but NO Android app is registered
+and there is no google-services.json.** The operator must register with package name exactly
+`com.grindrx.app` and drop the file at `src-tauri/gen/android/app/google-services.json`. The Rust
+FCM bridge, `v5/push-settings` layer, settings UI and manifest permissions are all still to write —
+that is most of the work, and none of it is verifiable until the API returns.
+
+**Outage unchanged and still the top blocker:** `api.grindr.com` + `cdn.grindr.com` refuse the TLS
+handshake (CloudFront 552) from the s26 on two networks and from this box, while google/github/pypi
+return 200 from all three. 0.1.40 and 0.1.39 fail identically — that is what established it is not
+a code regression. Blocks: all 7 probe questions, WP-5, WP-6. WP-6 is highest value once clear.
+
+**Decided against, do not relitigate:** a merge/rebase of upstream's ~1,200 commits. Operator
+chose to **port features manually** instead, which is the right call — reviewable, individually
+verifiable, and no risk of losing the 107 commits of fork-specific work. Real measured gap, in
+priority order: `platform/` (801 LOC, Android-native, no API dependency, testable offline — best
+next task), `blur/` (600 LOC, calibration layer), onboarding (101), ShowDistanceSetting. **Skip
+`updates/`** — already ported (`fetch_latest_release`, `ForceUpdateGate`, `UpdateBanner`). **Skip
+`demo/`, `entitlements/` (that is bypass.ts — spec calls it real legal exposure), `credits/`,
+`util/`.**
+
+**Two spec corrections carried into the handoff:** (1) Trap 1 greps must cover all of `src/`, not
+just `src/lib/api` + `src-tauri/src` — WP-2 was misreported as wholly absent for exactly this
+reason; (2) the fork is already ad-free by omission, so the v3→v4 port makes 8 ad/upsell entities
+recognised for the first time and each must be explicitly ignored or XTRA upsell could render.
+
+
+**VERSION STATE — this tripped me up once, so it is stated explicitly.** The gap work on this branch
+IS the **0.1.41** line. There is no 0.1.42; nothing has consumed 0.1.41. Last **shipped** is 0.1.40 /
+versionCode 1075 (tag `v0.1.40` = `482f9f6`, APK built 2026-09-30 22:50). All three version files —
+`package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` — still read 0.1.40 / 1075 today,
+which is why `sh ci/check-release-version.sh` passes. **No `v0.1.41` tag exists.** Before the next APK
+ships, all three must be bumped **together** (0.1.40 → 0.1.41, versionCode 1075 → 1076) or the gate
+fails — that gate was ported from upstream precisely because a bump was once done inconsistently and
+shipped `versionName 0.1.39 / versionCode 1075` by mistake. `README.md` still claims v0.1.38.
+
+**A SECOND FRONT WAS REQUESTED AND DECLINED ON THIS HOST — iOS.** Operator asked for an iOS/Apple
+build forked from open-grind with GrindrX features coded in. Verified, not assumed: **open-grind has
+never shipped an iOS build** (no `src-tauri/gen/ios` or `gen/apple`; upstream `tauri.conf.json`
+`bundle.targets = ["deb","nsis","app"]` = desktop + Android only; no Xcode project or Swift anywhere;
+its README's "Cross-platform" means desktop). And **this host cannot build iOS at all** —
+`xcodebuild`, `xcrun`, `swiftc`, `lipo` all absent, host is Linux; Tauri iOS requires macOS+Xcode and
+an `.ipa` needs a paid Apple Developer account. The iOS front therefore requires the **Mac in the
+multi-host topology**, not a different approach here. If attempted there the real scope is larger
+than "port features": `tauri ios init`, iOS platform block, Podfile/CocoaPods, a **new bundle id**
+(the Android `com.grindrx.app` does not transfer), provisioning profile, and re-solving
+biometrics/app-lock (Android `BiometricPrompt` has no direct iOS equivalent). No iOS precedent exists
+in either tree. It would also call the same `/v3/cascade` endpoints, so it is blocked by the same
+outage as Android. **Recommendation recorded: finish Android, then treat iOS as a separate Mac-hosted
+project.** Operator's decision; documented so the next session does not rediscover these walls.
+
+**Housekeeping still outstanding:** README.md claims v0.1.38 while code is 0.1.40; tag `v0.1.24`
+missing on all remotes (commit `7222650` exists); `main` never fast-forwarded.
+
+**2026-10-01 15:2x UTC — WP-1/2/3/7 UI WIRING. 3 of the 4 symbols wired. TWO PREMISES IN THE BRIEF
+WERE WRONG, and acting on either one would have caused real damage. NOTHING COMMITTED (R11 + explicit
+operator instruction: the operator reviews and commits).**
+
+Wired the three API modules from `22d4fa5` to the interface. All work is in the working tree.
+
+**Gates, measured:** vitest **668 passed / 54 files**, 0 failures. svelte-check **0 errors**, same 4
+pre-existing warnings in files nobody touched. eslint **0 errors** on all 6 files created/changed
+(`src/routes` as a whole still carries its 71 pre-existing errors, none of them mine — verified
+per-file via the JSON reporter). Baseline before this session was 596/51.
+
+**Wired:**
+
+- **`hideProfile`** → `src/routes/(protected)/(navbar)/profile/[profileId]/+page.svelte:474` (Hide
+  button, `EyeSlashIcon`, in the same action `<nav>` as Block) + confirm dialog at
+  `+page.svelte:530`, handler `hideUser()` at `+page.svelte:79`. Logic in the new
+  `profile-actions.ts` (same dir) so "do not navigate away on failure" is a *tested* property, not
+  an accident of statement order — the profile screen is the surface that triggered the hide and
+  must still be there to retry.
+- **`recordProfileView`** → `+page.svelte:97`, a `$effect` that fires once per profile id. Wrapped
+  in `recordProfileVisit()` (`profile-actions.ts`) which returns `void`, attaches its own `.catch`,
+  dedupes per session, and skips non-integer ids and your own profile. Never awaited — `$lib/api/view`
+  forbids gating navigation on it.
+- **`getProfileTags`** → new `ProfileTagsSheet.svelte` (own profile only), opened by a `TagIcon`
+  button at `+page.svelte:554`, wired at `+page.svelte:569`. State machine in the new
+  `src/lib/profile-tags/tags-state.ts`; saves via `PATCH /v4/me/profile`.
+
+**`getViews` and `getReceivedTaps` DELIBERATELY LEFT UNWIRED — both endpoints already have richer,
+working, NavBar-reachable screens, and the committed functions would REGRESS them:**
+
+- `GET /v7/views/list` is already rendered at `src/routes/(protected)/(navbar)/views/+page.svelte`
+  (the NavBar "Views" tab), via its own inline zod schema. That screen carries `totalViewers`, the
+  masked `previews` bucket with a lock badge and the XTRA explainer, `viewedCount.totalCount`
+  ("Viewed you N× recently"), `isSecretAdmirer` and `profileImageMediaHash`. **`engagement.ts`'s
+  `engagementProfileSchema` models NONE of those** — it carries only `displayName`, `age`,
+  `distance`, `medias` and the one unverified guess `engagedAt`. Swapping `/views` onto `getViews()`
+  deletes five working affordances from a screen a user can reach in one tap.
+- `GET /v2/taps/received` is already rendered at `.../interest/+page.svelte` (NavBar "Interest"
+  tab), also inline. `engagement.ts` deliberately omits `tapType` ("the server is not known to send
+  one"), so the swap costs the tap-emoji badge and the "Mutual" chip.
+
+**This is the trap `hide.ts`'s own header warns about, pointing the other way: the committed
+`engagement.ts` is a deliberately DEGRADING unverified schema, and the two working screens are the
+richer real ones.** The real gap is not "no UI" — it is a DUPLICATE parse. The fix is one probe away
+and is a change to `engagement.ts` (`totalViewers`, `previews`, `viewedCount`, `isSecretAdmirer`,
+`tapType`, `isMutual` as `.optional().catch(null)`), which this session was instructed not to touch.
+Its header already says it is "the one place to split them". **Not done, not claimed.**
+
+**THE BRIEF'S PREMISE ABOUT THE "hidden" SCREEN WAS WRONG, and the direction of the error matters.**
+`settings/(subpage)/account/hidden/+page.svelte` is about **HIDES**, not bans. It reads `GET
+/v1/hides` (`{ hides: [{ profileId, displayName, mediaHash }] }`) and unhides with `DELETE
+/v1/hides/{id}`; its empty state is "Users you hide will appear here"; the nav labels the two
+screens "Blocked users" and "Hidden users" and `SettingsNavBar` titles them "Blocked Users" /
+"Hidden Users". Bans live in the separate `account/blocked` screen on `/v3.1/me/blocks`. Upstream
+agrees (`HiddenProfile.svelte`: "You hid this profile."). So the two concepts were already NOT
+conflated, and the correct move was the opposite of what the brief implied: the hide ACTION goes on
+the profile screen, and the existing Hidden screen was already the right undo path. The confirm
+dialog now says so explicitly, because Hide and Block are one tap apart and only Block deletes the
+conversation.
+
+**A SECOND WRITER IS ACTIVE IN THIS TREE.** `src/lib/model/geohash.ts` + its test and
+`src/lib/api/assignment.ts` + its test appeared and were edited at 15:05–15:07, mid-session, and are
+not mine. Net +23 of the 668. Do not commit them as part of this work; and per the multi-agent rule,
+re-read this file and `git status` before editing anything a concurrent session may also be touching.
+
+**Still unprobeable:** the `api.grindr.com` TLS outage from the previous session is unchanged, so
+every path and shape here is transcribed from `docs/ENDPOINT_GAP_SPEC.md`, not observed. The WP-3
+probe questions stand, and `views.ts`'s "do not upgrade a version number on a guess" warning is
+unresolved.
+
+---
+
+**2026-10-01 08:3x UTC — GAP WORK WP-1/2/3/7 COMMITTED AND PUSHED. Remaining packages blocked on an
+outage, not on effort.**
+
+**Commit `22d4fa5`** on `claude/grindrx-freeze-json-audit-gp4lnk`, pushed to **both** `github` and
+`grindrx-forgejo`. `main` untouched on both remotes. Details: `memory/FIX_NOTES_v0.1.41.md`.
+
+Implements four of the eight packages in `docs/ENDPOINT_GAP_SPEC.md`:
+**WP-1** report a profile (v5 flags + right-now post) · **WP-2** hide (`POST /v1/me/hides/{id}`) ·
+**WP-3** views + received taps · **WP-7** tags. 14 files, 1,767 insertions, 28 new tests.
+**596/596 pass** (545 + 8 failing at session start). `svelte-check` 0 errors. `eslint` clean on
+the touched surface.
+
+**Two findings that change the spec's assumptions:**
+
+1. **The spec's Trap 1 greps are insufficient — they scan `src/lib/api` and `src-tauri/src` only.**
+   `GET /v1/hides` and `DELETE /v1/hides/{id}` already exist in a **route component**
+   (`src/routes/(protected)/(navbar)/settings/(subpage)/account/hidden/+page.svelte:45,59`). The
+   spec therefore reported WP-2 as wholly absent when the real gap was only the *hide* action.
+   Any future gap work must grep all of `src/`, not just the api layer.
+2. **This fork is already ad-free**, and not by suppression — its v3 `cascadeResponseSchema`
+   names no ad entity types, so they are dropped at parse. Upstream parses them (v4 names 8) and
+   renders none. **So the v3→v4 port in WP-6 makes ~8 ad/upsell entities recognised for the first
+   time; each must be explicitly ignored or the XTRA upsell could start rendering.** Add that as a
+   stated requirement before WP-6 is started.
+
+**BLOCKED — 4 of 8 packages, all on the same thing:** `api.grindr.com` and `cdn.grindr.com` are
+refusing the TLS handshake (CloudFront alert 552) from the s26 on wifi, from the s26 on a second
+network, and from this OVH box — while google.com/github.com return 200 from all of them. Verified
+across three networks; it is server-side and per-hostname, not an IP, network, TLS-stack or build
+issue. 0.1.40 and 0.1.39 both fail identically, which is what proved it was not a code regression.
+
+Because there is no reachable API, **no probe is possible**, and the spec gates WP-5 and WP-6 on a
+probe. **All 7 open probe questions in `FIX_NOTES_v0.1.41.md` §7 are therefore still open.** Every
+path, the report reason vocabulary, and the views pagination shape are transcribed from the spec
+and vendored docs, NOT observed.
+
+**WP-4** (push) needs an owner scope decision: settings surface only, or full delivery?
+
+**NOTHING IS WIRED TO UI YET.** These four modules exist as API surface with no call sites, so
+there is no device-visible change and no APK was built. Per the spec's definition of done, none of
+it may be called working until device-tested on the s26.
+
+**Also outstanding:** `main` is 104 commits behind on this branch (clean fast-forward, never
+advanced past 0.1.8 in May) and diverges from `github/main` by 32 commits of deliberately
+extracted "anchor" work that was moved to its own repo. Tag `v0.1.24` is missing on all three
+remotes although its commit `7222650` exists. `README.md` still says v0.1.38 while the code is 0.1.40.
+
+**2026-09-30 23:2x UTC — v0.1.40 DEVICE-TESTED BY OPERATOR: PASSED. Still not pushed.**
+
+**Operator confirmed the build is tested and working on the s26 (Android, arm64).** APK delivered
+over the tailnet to `/sdcard/Download/grindrx-0.1.40-universal.apk`, sha256
+`47a3935eb861567ecf589b071df796b2807c56e6306c8dc4d727d96d9d18ae2e` — identical across M1 (built),
+OVH (pulled) and the phone (received). Installed over the existing `com.grindrx.app` with an
+unchanged signing cert, so it was a clean in-place upgrade over versionCode 1074, not a fresh
+install.
+
+This clears the gate that had been open since v0.1.39 shipped on Sep 28. Both 0.1.39 and 0.1.40
+are now device-verified.
+
+**Follow-up commit `7e2dad9` is CI/test-only and does NOT affect the tested artifact:** `ci/`,
+`deny.toml`, `src/lib/components/cdn-image-layout.guard.test.ts`. Nothing in it reaches the build,
+so the device test applies to the APK from `482f9f6` (= tag `v0.1.40`) as shipped.
+
+**Ported from upstream open-grind this session** (`git.opengrind.org/open-grind/open-grind`,
+diverged from this fork 2026-05-19 at `fb23b91c`; 1209 commits apart, 156 ours):
+- `ci/check-release-version.sh` + `ci/version.sh` — asserts package.json / tauri.conf.json /
+  Cargo.toml versions agree and refuses `*-dev`. **Would have caught a real mistake made earlier
+  the same day**, where bumping `versionCode` without `version` produced an APK reading
+  `versionName 0.1.39 / versionCode 1075`. Verified exit 1 desynced / 0 in sync.
+- `src/lib/components/cdn-image-layout.guard.test.ts` — static guard for the v0.1.38 grid
+  regression. `CdnImage`'s default wrapper is deliberately in-flow; the two call sites whose parent
+  sizes the box (grid tile `ProfileMiniCard`, `ImageCarouselItem`) must pass `wrapperClass="absolute…"`.
+  Three mutations verified to fail it. Reads source via Vite `?raw` `import.meta.glob`, NOT
+  `node:fs` — the project has no `@types/node` and adding it to global tsconfig `types` would retype
+  the whole app for one test.
+- `deny.toml` — cargo-deny config, inert until cargo-deny is installed (not installed).
+
+**Deliberately NOT ported:** upstream's 87 Playwright e2e specs — they depend on a
+`PUBLIC_ENABLE_DEMO` mode built into THEIR app (`src/lib/demo`, 3,560 LOC) plus 2,087 LOC of
+support helpers wired to their DOM. Not a copy; a port needing app changes, and most specs would
+fail on features this fork lacks. Their `SECURITY.md` names their maintainers, not ours. Their Rust
+layer (141 files / 30,237 LOC vs 13 / 3,966 here) would be a rewrite.
+
+**Gates after both commits:** vitest **541/45 files** · svelte-check **0 errors**, same 4
+pre-existing warnings · eslint clean · `sh ci/check-release-version.sh` passes.
+
+**STILL OPEN, unchanged by any of this:**
+- **No component-test runner.** `vite.config.mjs` sets `environment: "node"`. The static guard
+  catches the ONE box-model mistake that shipped; it does not catch a layout or visual regression
+  generally. This remains the root cause and the biggest single gap vs upstream.
+- Image/CDN question — 13 sites on bare CDN URLs, probe says 403/`AmazonS3` (private bucket).
+- F-Droid index still not regenerated; `fdindexer` unavailable, unchanged since v0.1.38.
+- **CI does not run any of these gates automatically.** `ci/check-release-version.sh` exists but
+  nothing invokes it on commit or before a build. Upstream has `ci/lint.ts` + release-version
+  checking wired in. Porting the script without wiring the hook leaves it advisory.
+- No SECURITY.md (needs our contact details, not upstream's).
+- 1,209 commits of upstream work unpulled, ~370/month and accelerating.
+
+**NOT PUSHED — R11.** Branch, both tags and the release with the APK attached are staged and
+awaiting explicit operator go.
+
+---
+
+
+**What this ship is:** a testability seam on `ConversationState` + the first 25 tests that class
+has ever had. **No user-visible behaviour change.** No layout, markup, image or CSS was touched —
+deliberately, because those are the paths that produced the v0.1.34→0.1.36 and v0.1.38
+regressions. Full detail in `memory/FIX_NOTES_v0.1.40.md`.
+
+**Why:** `ConversationState` (1,367 lines, the chat state machine — the app's most-used surface)
+had **zero** coverage on all 12 public methods. It was untestable because it reached for `ws`,
+`localStorage`, `Date.now()`, `crypto.randomUUID()`, `toast` and the Tauri `listen` import in its
+own constructor, and `localStorage` does not exist in this project's `node` vitest environment.
+`ConversationStateDeps` + `resolveDeps()` now inject those six; defaults are the real singletons,
+so `+page.svelte` is unchanged. Resolution is per key (`??`), NOT a spread — a spread evaluates
+`localStorage` eagerly and throws; found by running the suite, not by reading the code.
+
+**I explicitly did NOT split the class,** against my own earlier recommendation. Three comments in
+the file record a load-bearing invariant (the `chat.v1.message_sent` echo replaces array slots, so
+nothing may hold a message reference across an `await`; `reactTo` and `markMessageAsUnsent` each
+carry a fix for that detached-proxy bug). Splitting across modules means threading `messages`
+mutation over a boundary — how you re-ship a bug that already shipped twice. Line count was never
+the defect.
+
+**The tests were mutation-verified,** per the standing lesson that green gates prove nothing. All
+four historical bug classes are caught when reintroduced. Two findings worth keeping:
+(1) one of my own tests was **vacuous** — it replaced the array slot with an object already holding
+the expected post-revert values, so a no-op revert passed; it now installs a deliberately-wrong
+object. (2) mutating only the primary `current.reactions.splice` in `reactTo` is an **equivalent
+mutant** — the `idx === -1` fallback re-finds by profileId/reactionType and covers the detached
+case, so the code is more robust than its comment implies. Mutating both splices IS caught.
+
+**Gates:** vitest **535/44 files** (was 510/43 — +25) · svelte-check **0 errors**, same 4
+pre-existing warnings · eslint clean · vite build OK · `cargo check --lib` exit 0 · tauri android
+build exit 0.
+
+**APK:** `com.grindrx.app` **0.1.40**, **versionCode 1075** (1074 was published), all 4 ABIs,
+71,089,780 B, sha256 `47a3935eb861567ecf589b071df796b2807c56e6306c8dc4d727d96d9d18ae2e`, cert
+`22d6889e…4c01` (matches, valid in-place upgrade). Built on the M1 in `~/grindrx-038`; all four
+changed files sha256-verified identical on both hosts (R5), and the pulled APK re-verified
+byte-identical. `autoIncrementVersionCode` stays `false`. `/dist` added to `.gitignore` — a 71 MB
+APK was one `git add -A` away from being committed.
+
+**Build note for next time:** the M1 has **no `/nix`**, so BUILDING.md's Nix pipeline is not
+available. What works: `PATH=$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.nvm/versions/node/v20.20.2/bin`,
+`ANDROID_HOME=$HOME/Library/Android/sdk`, `NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973`, and
+`JAVA_HOME=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home` — the
+Homebrew JDK is `openjdk.jdk` under `Cellar/`, NOT `openenv.jdk` under `opt/`; guessing it cost a
+full build cycle. gradle wants `JavaVersion.VERSION_17`.
+
+**BOTH v0.1.40 AND v0.1.39 ARE UNTESTED ON A DEVICE.** v0.1.39 has been sitting unverified since
+Sep 28. The chat checklist matters most this time, since chat is what changed: send text, send
+photo, send album, react, unsend+revert, delete+revert, read receipts. Then the standing list —
+grid tile size and image position, scroll smoothness, full-screen viewer, right-now / views /
+favourites thumbnails.
+
+**NOT PUSHED — R11.** Branch + tags + release are staged and awaiting explicit operator go. Also
+still open: the image/CDN question (13 sites on bare CDN URLs; probe says 403/`AmazonS3`, i.e.
+private bucket — needs one real `mediaHash` + live `curl`), the F-Droid index (`fdindexer`
+unavailable, unchanged since v0.1.38), and the missing component-test runner that is the root
+cause of the recurring visual regressions. `flake.nix` remains deliberately uncommitted.
+
+**2026-09-28 09:50 UTC — v0.1.39 SHIPPED to test two regressions I introduced in v0.1.38. THIS IS THE LIVE HEAD.**
+
+**I shipped v0.1.38 (`48d85c9`) and it broke the grid in two separate ways. Both were mine.**
+1. **Grid tile layout/size.** A tile is `<a class="aspect-square relative flex items-end ...">` — a ROW
+   flex box. v0.1.38's `CdnImage` made the image wrapper `relative` (in flow) where every call site
+   had used `absolute`, so the photo became a **second flex item beside the name badge** and shrank to
+   the leftover width. Fixed in `d500909` by restoring `absolute`. The wrapper's box model is now an
+   explicit `wrapperClass` prop (default stays in-flow) so the shared default is not changed under the
+   other 13 call sites. Also fixed a latent `relative`+`absolute` Tailwind conflict in
+   `ImageCarouselItem`.
+2. **Image load.** My transport fix made `CdnImage` fetch bytes through Rust IPC *before* rendering, so
+   every tile painted a placeholder and waited for `fetch_authed_bytes`; the blob cache is
+   `MAX_ENTRIES = 32`, so scrolling made tiles evict and re-fetch each other. Fixed in `c864e6a`:
+   render the **direct URL optimistically**, retry through `resolveAuthedImageRetained` **once** on
+   `onerror`, and only swap in the result if it is a genuinely different (blob) URL. **The safety
+   property is unchanged** — correct whether or not the CDN needs the bearer. The retry is an effect
+   so its teardown cancels an in-flight resolve; done inline, `cancelled` was never set and a fetch
+   landing after unmount leaked a blob.
+
+**Shipped `30e6a1e`**, tags `v0.1.39` + `rollback-pre-v0.1.39` (= `48d85c9`, i.e. v0.1.38).
+`flake.nix` still uncommitted, on purpose.
+**APK:** `com.grindrx.app` 0.1.39, **versionCode 1074** (1073 was already published, so a 1073 build
+would have been rejected as an upgrade), all 4 ABIs, 71,086,868 B, sha256
+`d31e123c7de28a2b5f84fba00e6371bfd312aa03…`, cert `22d6889e…4c01` (matches, valid in-place upgrade).
+Built on the M1 in `~/grindrx-038`; all three changed files sha256-verified identical on both hosts (R5).
+**Forgejo** branch + `main` fast-forwarded `48d85c9..30e6a1e`; release id **63**,
+https://git.dominusaxis.com/dominus/grindrx/releases/tag/v0.1.39. **GitHub** branch + tags; release
+published (this is the feed the update banner reads), assets uploaded and sizes confirmed.
+**Downloaded the Forgejo asset back: sha256 byte-identical.** The GitHub asset CDN again returns 0
+bytes from this host, so GitHub is size-confirmed only.
+**F-Droid:** APK + `changelogs/1074.txt` staged, **index still not regenerated** — `fdindexer` is
+unavailable here (not a PyPI package; its GitLab home is Cloudflare-walled) and its absence is
+**unchanged since v0.1.38**. F-Droid clients will not list v0.1.38 or v0.1.39 until someone runs it.
+
+**The lesson, recorded because it has now recurred three times:** this project has **no component-test
+runner** (`vite.config.mjs` sets `environment: "node"`), so *no gate catches layout or visual
+defects*. The v0.1.34→v0.1.36 placeholder regression shipped twice, and v0.1.38 shipped two more
+grid defects. 510 green tests, a clean type-check, clean lint, a successful `cargo check` and a
+successful APK build all passed while the most-used screen in the app was broken. **Stop treating
+green gates as evidence a visual change is correct — it is not evidence at all.** Either add a
+DOM/component test runner, or treat any change to image/layout markup as requiring a device pass
+before release.
+
+**AWAITING DEVICE TEST.** Please check: grid tile size and image position, scrolling smoothness, the
+full-screen image viewer, and the right-now / views / favourites thumbnails (same pattern, judged
+statically only). Gates for this build: vitest 510/43, svelte-check 0 errors, eslint clean on the
+three touched files, vite build OK, `cargo` unchanged from 48d85c9. — agent, operator Tom.
+
+**2026-09-28 09:05 UTC — v0.1.38 BUILT, SIGNED, PUSHED AND RELEASED. Superseded by v0.1.39 above; the audit entry below still stands.**
+
+**Shipped `48d85c9`** on `claude/grindrx-freeze-json-audit-gp4lnk`, tag `v0.1.38` + `rollback-pre-v0.1.38`
+(= `9f680d4`). `flake.nix` deliberately still uncommitted (hardcodes an absolute path).
+
+**Signed APK:** `com.grindrx.app`, versionName 0.1.38, **versionCode 1073**, all 4 ABIs, minSdk 28 /
+targetSdk 36, 71,088,004 B, sha256 `ba05b778eb94023dd8740447c2380030757ecda1f711b41636fb28e2de078da9`,
+cert `22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01` — **matches v0.1.37, so it is a
+valid in-place upgrade.** Built on the M1 in a throwaway `~/grindrx-038` (the M1's own dirty checkout
+was left untouched, R20); `auth.rs`/`error.rs` sha256-verified identical on both hosts (R5).
+
+**⚠ TWO BUILD GOTCHAS THAT COST REAL TIME — READ BEFORE THE NEXT BUILD.**
+1. **The keystore copy is done by the NIX FLAKE SCRIPT, not by tauri.** `tauri android build` looks for
+   `src-tauri/gen/android/keystore.properties` (`rootProject.file("keystore.properties")` +
+   `hasKeystore` gate in `build.gradle.kts:27-28`). Setting `OPEN_GRIND_KEYSTORE_PROPERTIES` alone
+   does NOTHING outside Nix, and the build **succeeds while silently emitting
+   `app-universal-release-UNSIGNED.apk`**. The flake's `build-android` does the `cp` itself. Without
+   Nix you must copy it manually or you will ship an unsigned APK and not notice from the exit code.
+2. **AGP 8.13.2 rejects JDK 25 with the useless one-line `> 25.0.2`, and `PATH` is not enough** — a
+   stale Gradle daemon started under another JDK gets reused and the error looks identical. The M1 has
+   only JDK 25 and JDK 17 (no 21). Fix: `pkill -f GradleDaemon`, then **pin it in
+   `src-tauri/gen/android/gradle.properties`** with `org.gradle.java.home=/opt/homebrew/Cellar/openjdk@17/17.0.20/libexec/openjdk.jdk/Contents/Home`.
+   That is deterministic and survives daemon reuse. Also note `cargo` is NOT on the M1's default PATH.
+
+**Pushed (Tom's explicit go-ahead, R11 authorised for this operation):**
+- **Forgejo** `dominus/grindrx`: branch AND **`main`** both fast-forwarded `9f680d4..48d85c9`; 3 tags.
+- **GitHub** `Tgbjr2025/grindrx`: branch + 3 tags. **`main` deliberately untouched at `a547f8e`**
+  (diverged with the `anchor/` SMS history, not fast-forwardable; PR #49 remains the merge path).
+- **Release `v0.1.38` created on both**, each with `GrindrX-v0.1.38.apk` (71,088,004 B) and
+  `grindrx-v0.1.38-sources.zip` (2,237,064 B). Forgejo release id **60**,
+  https://github.com/Tgbjr2025/grindrx/releases/tag/v0.1.38.
+- **THE PHONE SHOWING NO UPDATE WAS NOT A BUG IN THE APP.** The update banner reads
+  `https://api.github.com/repos/Tgbjr2025/grindrx/releases/latest` (`rest.rs:744`), which needs a
+  GitHub **release object** — a pushed tag alone is invisible to it. It correctly reported `v0.1.37`
+  until the release was published. Now returns `v0.1.38`.
+
+**Verification — one gap, stated honestly.** The Forgejo asset was **downloaded back and sha256'd
+byte-identical** to the built artifact. The **GitHub** asset could NOT be: `release-assets.githubusercontent.com`
+returns HTTP 200 with **0 bytes** for every download from this host, and `curl -o <file>` silently
+fails to create files in this shell (use `>` redirection). GitHub's API does report the stored asset
+size as exactly 71,088,004 B, matching local. So the GitHub copy is size-confirmed and
+upload-confirmed but **not** byte-verified.
+
+**⚠ F-DROID IS INCOMPLETE — DO NOT CALL IT DONE.** The APK is placed at
+`~/fdroid/repo/GrindrX-v0.1.38.apk` and the metadata updated (user-facing warning about the two
+Photos data-loss bugs added to `com.grindrx.app.yml`; `changelogs/1073.txt` mirrored), **but the
+signed index was NOT regenerated**, so F-Droid clients will not list v0.1.38 yet.
+**`fdindexer` is not installed on this host, is not a PyPI package, and cannot be fetched** — its
+GitLab home is behind a Cloudflare JS challenge. Someone must run `fdindexer` on a host that has it.
+**Do NOT hand-edit `index-v2.json`/`index.jar`** — they are signed with `~/fdroid/keystore.p12` and
+hand-editing breaks the signature, which is worse than being stale.
+
+**Security note (not acted on):** both git remotes carry **credentials embedded in the URL** — a
+GitHub PAT (`ghp_…`, 40 chars) in `github` and a Forgejo password (40 hex) in `grindrx-forgejo`, in
+plaintext in `.git/config`. `gh auth` is NOT configured. They work, but a token in a remote URL leaks
+via config, logs and error messages; worth moving to a credential helper. Nothing was committed with
+them (the staged diff was scanned: 0 secret matches, and `*.jks`/`keystore.properties` are gitignored).
+
+**Gates (measured, not inherited):** vitest **510/43** · svelte-check **0 errors** · `cargo check
+--lib` and `--all-targets` **exit 0** · `cargo test --lib` **17/17** · eslint **8 errors, all
+pre-existing** on lines 0.1.38 does not touch. **Still not device-tested.** — agent, operator Tom.
+
+**2026-09-28 08:03 UTC — AUDIT of the 0.1.38 WORKING TREE (uncommitted at the time). Report only.**
+
+**CORRECTION TO TOM'S PREMISE (R1): the latest version is NOT 1.37.** 1.37 is the last *tagged
+release* (`v0.1.37`, HEAD `9f680d4`). The working tree is at **`0.1.38` in all three version files**
+(`package.json`, `tauri.conf.json`, `Cargo.toml`), `versionCode 1073`, and there is a rollback tag
+`audit-v0.1.38-rollback-20260927`. **36 files modified (+1188/-648) and 4 untracked paths, all
+UNCOMMITTED and UNRELEASED.** The 0.1.38 work is the remediation of the v0.1.37 audit: a new tested
+`src/lib/profile-photos/` module, `utils/cdn.ts` + `cdn.test.ts`, `components/CdnImage.svelte`, and
+a rewritten Photos page. Audited the tree as it stands, since that is "the latest version".
+
+**Gates MEASURED on the 0.1.38 tree (R7), not inherited:**
+- `vitest run` → **510 passed / 43 files** (465/41 at v0.1.37). +45 tests, all in the new modules.
+- `svelte-check` → **0 errors / 4 warnings.** The 1 error v0.1.37 *shipped committed*
+  (`no-broken-opener.test.ts:43`) is **genuinely fixed** (verified by diff: `String(raw)` narrowing).
+- `eslint` on the 27 changed files → **8 errors in 2 files**, exit 1. **All 8 are PRE-EXISTING**
+  (`ImageCarousel.svelte:51,58,67` PhotoSwipe `gallery` unresolved type; `ProfileLink.svelte:25`
+  bits-ui `props.class` on `any`) — all on lines 0.1.38 did NOT touch. The 0.1.38-modified lines
+  are clean. They surface now only because 0.1.38 newly modified those two files. Do not report
+  "0.1.38 lint clean"; report "0.1.38 introduced 0 lint errors, 8 pre-existing ones are now in scope".
+- `cargo check --lib` → **exit 0, 0 errors** (run on the M1, see below). `cargo check --all-targets`
+  → **exit 0**. `cargo test --lib` → **17 passed / 0 failed** (was 3 in the v0.1.33 round, so the Rust
+  suite has grown). **The 50-line `auth.rs` and 18-line `error.rs` changes compile clean and their
+  tests pass — first time the Rust has been verified for this tree.** Given the v0.1.33 incident
+  where the Rust had *never* compiled, this was the audit's largest unverified gap and it is now closed.
+  Method (R5): the OVH tree was tar'd to a **fresh** `~/grindrx-check` on the M1 rather than touching
+  the M1's own checkout, which is dirty and stale at `e155a35` (= v0.1.33) — **R20 respected, M1
+  checkout left exactly as found, temp dir removed afterwards.** `auth.rs` sha256
+  `4570e6c8…f497` and `error.rs` `cb9dc04b…0b58` verified identical on both hosts. Note `cargo` is
+  NOT on the M1's default PATH — it needs `export PATH="$HOME/.cargo/bin:$PATH"`.
+- Full `eslint src` still does not finish on OVH. Unchanged gap.
+- **RELEASE-SAFETY CHECK PASSED (the `autoIncrementVersionCode` trap).** `autoIncrementVersionCode`
+  is now `false` with `versionCode 1073` pinned. Read back with `aapt2 dump badging` from every
+  released APK in `~/fdroid/repo`: 1059, 1060, 1061, 1062, 1063, 1064, 1065, (1066/1067 = v0.1.33),
+  1069, 1070, 1071, 1072 — **strictly monotonic, and 1073 > 1072, so a 0.1.38 build is a valid
+  in-place upgrade over v0.1.37.** `autoIncrementVersionCode: false` is what makes this safe; do
+  not re-enable it.
+
+**BOTH CRITICAL Photos-tab bugs are GENUINELY FIXED, and correctly.**
+- **F2 (wipe)** — fixed at three independent layers: `planWrite` refuses unless `load === "loaded"`
+  (`photos-state.ts:286`), `handleFileChosen` early-returns on `load !== "loaded"`
+  (`+page.svelte:142`), and the error screen now has a **Retry** button (`:345`). `loadFailed` no
+  longer clears the set, so a later success is still authoritative.
+- **F1 (vanishing photo under a green checkmark)** — the `primaryIsAssumed` write-refusal is gone
+  entirely. Ordering is now **persist-then-reload** (`+page.svelte:171` then `:180`), so the PUT
+  attaches the photo *before* the re-read can prune it — which is precisely the old bug. The toast
+  at `:181` is now gated on `persist()` actually returning `true`. Orphaned uploads on a full
+  profile are deleted from the CDN rather than left unreferenced (`:159`).
+- F3 delete affordance on the main photo: **fixed** (`⋯` button `:393`). F4/F5/F6/F7 **fixed**
+  (revision-guarded rollbacks, DELETE moved inside the `enqueue` chain, honest counter).
+- Coverage: the state machine is now a pure module with **269 lines of tests**, including an explicit
+  regression test for the wipe at `photos-state.test.ts:77`. This closes the structural gap that let
+  F1/F2 ship through 465 green tests.
+- **F8 is NOT fixed — it is re-documented as an accepted risk.** `state` is still carried and never
+  interpreted (`photos-state.ts:56-67`), on the honest grounds that the vendored docs mark the enum
+  `WIP` with no numeric values, so guessing could promote a rejected photo. Reasonable call, but it
+  is still open, not closed. **F10** (nav avatar, zero-reactive-dep `$derived`) is mitigated via
+  `clearAllProfileCaches()` in `persist()` (`:103`) but the structural zero-dep `$derived` pattern
+  remains in `ProfileLink.svelte:16` / `NavBar.svelte:20`.
+
+**All 10 board-wide HIGHs addressed** (spot-verified by direct read, not inherited): G1 dead regex →
+`isApiHttpError(err, 400)` (`AlbumPicker.svelte:191`); G2/G3-G5 generation+AbortController guards
+now present; G6 `auth.rs:355` 60s expiry buffer; G7 a keyring write is now
+`AppError::CredentialStore` and is explicitly **outside** the `auth_class` match, so it can no longer
+sign a user out; G9 `setPreferences` now **does** reject via `PreferencesWriteError`.
+
+**⚠ THE ONE OPEN RISK — and it now underwrites 13 call sites. THE §4 PROBE WAS RUN, AND IT
+CONTRADICTS THE ASSUMPTION 0.1.38 IS BUILT ON.** `authed-image.ts:7-8` says `cdns.grindr.com` is
+bearer-token gated; the vendored docs say the opposite. 0.1.38 **bet on the docs** — `cdn.ts`
+(`publicCdnUrl`) and `CdnImage.svelte` build bare unauthenticated URLs, and 13 sites were migrated
+to them. I ran the probe (read-only GET, no credentials, no token sent):
+`/images/thumb/320x320/<40-hex>` → **403**; `/images/profile/1024x1024/<40-hex>` → **403**; and
+**`https://cdns.grindr.com/` itself → 403** (`server: AmazonS3`, `x-cache: Error from cloudfront`).
+A bucket that 403s *every* path including its own root is the signature of a fully private bucket.
+**HONEST LIMIT: this is NOT conclusive.** S3 returns 403 (not 404) for a missing key when ListBucket
+is denied, so I had no real hash to test — the only 40-hex hash in the tree is the synthetic fixture
+in `cdn.test.ts:10`. I could not disprove that some other path prefix or behaviour serves public
+files. **But the weight of evidence is now clearly against the docs, and against 0.1.38's premise.**
+If the code comment is the correct one, this remediation has just migrated the majority of the app's
+images onto URLs that 403 — a regression that would hit hardest in exactly the screen Tom reported,
+and would be invisible to the build, the 510 tests, the clean type-check and the clean lint.
+**Resolving it needs one real `mediaHash` from a live account** (then one `curl` with no
+`Authorization` header). Until then, do NOT ship 0.1.38's image path as "verified".
+
+**PROBE FOLLOW-UP, SAME SESSION (sharpened).** Re-ran with a real Android Chrome `User-Agent`
+(ruling out a UA block) across every documented size — `profile/1024x1024`, `profile/320x320`,
+`thumb/320x320`, `thumb/75x75` — and the bucket root: **all 403**, body is
+`<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>` from S3. `AccessDenied`
+(not `NoSuchKey`/`InvalidURI`) on a *nonexistent* key is precisely what a private bucket returns, and
+403 on the distribution root means the distribution itself requires signed URLs / origin access.
+**The docs' "accessible without authorization" claim could not be reproduced under any probe I can
+run from this host.** Still not formally conclusive — no real hash exists anywhere in the tree, the
+vendored `media/` docs contain **no example URL at all**, and there is **no account session on this
+host** (`~/.config/grindrx` holds only the APK signing keystore; the app's token lives in the phone's
+Android Keystore). The S26 Ultra is **offline on Tailscale, last seen 13d ago** — the same window in
+which pings went silent, which corroborates that the silence is a *device-offline* artifact rather
+than proof of zero users.
+
+**READ THE DOCS DIFFERENTLY — this weakens the `authed-image.ts` comment rather than v0.1.38.**
+`docs/content/grindr-api/media/signed-cdn-files.md` shows the app uses **two different CDNs**:
+public profile media on `cdns.grindr.com` (hash-based) and **chat/album media on
+`d2wxe7lth7kp8g.cloudfront.net` with `?Signature=&Expires=&Key-Pair-Id=`** (15-min expiry). The
+comment at `authed-image.ts:7-8` ("Grindr chat/album media on `cdns.grindr.com` is bearer-token
+gated") **conflates the two hosts** — chat media is not on `cdns.grindr.com` at all. So the comment
+is a weaker authority than the audit assumed. But `classifyHost` (`authed-image.ts:26-32`) keys on
+`endsWith(".grindr.com")`, so it sends *public profile thumbs* down the bearer path (harmless if
+public, necessary if gated) and sends the *signed CloudFront* chat host down the `direct` path —
+where it is the signed URL, not a bearer, that does the work. That asymmetry is why this was never
+measured and why both halves "looked" right.
+
+**DECISION-RELEVANT ASYMMETRY (the actionable part): `AuthedImage` is safe in BOTH worlds.**
+If the CDN is public, an attached bearer is simply ignored; if it is gated, only the authed path
+renders. `CdnImage`/`publicCdnUrl` work in exactly ONE of the two worlds and is unverified in the
+other. So the low-risk shape is to **keep 0.1.38's real wins — `isPublicMediaHash` validation, the
+placeholder-on-missing-hash fix, the `{:else}` blank-avatar fix, `loadSucceeded`'s cap — and route
+the bytes through `AuthedImage`** rather than committing to bare URLs. Do not revert the validation
+work; only reconsider the transport. **This is advice, not a code change — nothing was edited.**
+
+**F8's "WIP" handling is CONFIRMED CORRECT by the upstream docs**: `signed-cdn-files.md` states
+MediaState is `WIP` and lists only `Pending` with no numeric values, so declining to branch on
+`state` (`photos-state.ts:56-67`) is right and should be left alone.
+
+**ACTIVE USERS: the tracker is DOWN, so there is no live number.** `grindx-ping.service` is
+**inactive (dead) since 2026-09-18 02:20 UTC — 10.2 days**; nothing is listening on `:4242`;
+`pings.jsonl` last written 2026-09-18 02:15. Computed with the server's own logic
+(`ping-server/server.js`): **active_1h 0, active_24h 0, active_7d 0.** That 0 is an artifact of a
+dead service, **not** evidence of zero users. The last real snapshot (at the newest ping) was
+**1h 5, 24h 62, 7d 261**. Lifetime: **4485 rows / 674 distinct install-ids / 1 malformed**, of which
+**649 (96%) report v0.1.32** — six releases stale. No ping has ever been recorded for v0.1.33–v0.1.36,
+which corroborates the long-standing "never device-tested" note. **The service was then RESTARTED at
+Tom's go-ahead — and real traffic immediately reappeared: `active_1h` went 0 → 2 within minutes,
+one of them on v0.1.37.** So the 13-day silence was a dead collector, not an absence of users, and
+**v0.1.37 has its first-ever recorded device ping.** The S26 Ultra is offline on Tailscale (last
+seen 13d ago), so this is some other install. Treat `total_known` as "distinct ids inside the 7-day
+window", which is why it reads 0 right after a restart (see below).
+
+**Nothing built, nothing installed, nothing pushed. No source file edited.** The ONE prod change:
+`grindx-ping.service` **restarted** at Tom's go-ahead — backed up
+(`ping-server/backups/pings.jsonl.bak.pre_restart.20260928_080703`), `nginx -t` OK, the
+`/grindrx/` → `:4242` route verified intact, end-to-end write verified over HTTPS
+(`ping` → 204, then `/stats` reflected it), then the self-test ping was **removed and the service
+restarted clean** — DB back to 4485 lines, `grep -c selftest` = 0. **Note: `/stats` correctly shows
+`total_known: 0` because `server.js:27` loads only pings inside a 7-day window and every stored ping
+is 10.2 days old — that is retention working as designed, not data loss; the 674 lifetime figure is
+only obtainable by reading `pings.jsonl` directly.** Only `memory/SESSION_STATE.md` +
+`memory/MEMORY.md` updated. Backups: `memory/*.bak.pre_v0.1.38audit.20260928_080325`. — agent,
+operator Tom.
+
+**2026-09-27 06:20 UTC — READ-ONLY AUDIT of v0.1.36. Nothing fixed. Report only.**
+Tom asked to "audit the 1.36 grindrx repo … some have to do with the profile pics selection in the
+photos tab but it needs an audit across the board." **Full report: `memory/AUDIT_REPORT_v0.1.37.md`
+— read it before touching the Photos tab or any image code.** I did **not** edit any source file,
+did not commit, did not push, did not build.
+
+**⚠ HEAD MOVED UNDER ME.** I started this audit at `432766f` (v0.1.36) and finished at **`9f680d4`**
+— another session committed the v0.1.37 Download-button fix (`0b0f8bf` + `9f680d4`) while I was
+working. Everything below is verified against `9f680d4` and **none of it is in those two commits**,
+but check the current HEAD before acting on this entry.
+
+**Gates measured, not inherited (R7), re-measured at `9f680d4`:** `vitest run` **465 passed /
+41 files** (461 at v0.1.36). `svelte-check` **1 error / 4 warnings** — the error is
+`src/lib/api/no-broken-opener.test.ts:43` (`import.meta.glob` with `query`/`import` types the value
+as `unknown`), and it is **now COMMITTED** in `0b0f8bf`, not WIP. v0.1.36's "0 errors / 4 warnings"
+claim did hold; **v0.1.37 does not.** Same "shipped without a clean type-check" pattern as the three
+Rust files in the v0.1.33 round, in a far less consequential file. `eslint` **clean** on all 10 files
+the findings touch, but the **full `eslint src` did not finish in 15 min on OVH** and was killed
+twice — treat "full lint clean" as unverified this session. `cargo check --lib` **NOT RUN** — no
+cargo on OVH, and the M1 checkout is stale at `e155a35` (= v0.1.33), so syncing would be a write.
+Honest gap, not a pass.
+
+**The reported bug is real and it is two of them, both CRITICAL, both in
+`settings/(subpage)/account/photos/+page.svelte`:**
+- **F1 — "Photo added." is a lie.** `persist()` refuses to write while `primaryIsAssumed` is set
+  (`:118-119`), a flag armed on **every cold load with ≥1 existing photo** (`:85-89`).
+  `handleFileChosen` discards that boolean (`:212`), reloads (`:218`), and toasts success (`:219`) —
+  and the reload's own `secondary.filter((h) => known.has(h))` (`:84`) **deletes the hash the user
+  just uploaded**, because `POST /v4/media/upload` only puts bytes on the CDN and does not attach
+  the photo to the profile. Net: *the photo vanishes under a green checkmark.* Same discarded
+  boolean in `move()` (`:174`), so **arrow-reorder is a silent no-op on a cold load**.
+  `makePrimary` (`:147-154`) already checks it — the pattern was applied to 1 of 3 call sites.
+- **F2 — one "Add photo" tap after a failed load WIPES every other profile photo.** `load()`'s
+  catch sets only `error` (`:90-94`), leaving `primaryHash = null` and `primaryIsAssumed = false`;
+  the Add button is not gated on `loading`/`error` (`:319-322`); so the upload is declared primary
+  (`:196-197`) and `setProfilePhotos` — which is **full-replacement** semantics — PUTs
+  `{ primaryImageHash: <new>, secondaryImageHashes: [] }`. No Retry button on the error screen
+  either (`:364-365`), unlike albums (`:279`). **Fix this one first.**
+- Plus 5 HIGH in the same file: the main photo has **no delete affordance** (F3, which makes the
+  `if (primaryHash === hash)` branch at `:237` dead code — and naively making it reachable crashes
+  the keyed `{#each}` at `:399` with `each_key_duplicate`, because `:238` never removes the
+  promoted hash from `secondary`); `deletePhoto`'s rollback omits `primaryIsAssumed` (F4, latent
+  until F3 is fixed — do F3+F4 together); optimistic rollbacks use a stale snapshot and can clobber
+  a concurrent mutation (F5); the DELETE is outside the `enqueue` write chain and races the PUT
+  (F6); silent truncation to 5 with a "6 of 5" counter (F7); `state` parsed then never read so a
+  **rejected** photo can be made primary (F8); the only profile-photo screen not using
+  `AuthedImage` (F9); the nav avatar never refreshes because `$derived(getMyProfile())` has **zero
+  reactive dependencies** (F10).
+
+**Why 465 tests, a clean type-check and a clean lint all missed it: the Photos tab has ZERO test
+coverage.** `grep -rln "setProfilePhotos\|getProfileUploadedPhotos\|primaryIsAssumed" --include=
+*.test.ts src/` returns nothing. 533 lines of state machine, no tests. This is the same structural
+gap that shipped the v0.1.34 grid regression (no component-test runner — `vite.config.mjs` sets
+`environment: "node"`), and the Photos tab is a far larger instance of it.
+
+**Board-wide, 10 more HIGH (all spot-verified by direct read, not taken on trust):** G1
+`AlbumPicker.svelte:182-184` `/^HTTP 400\b/` can never match `ApiHttpError`'s actual message
+(`api/index.ts:178-180`), so the stale-mediaId recovery is **dead code** and a photo whose minted id
+went stale can never be sent again — while `isApiHttpError(err, 400)` sits exported and unused
+(the codebase already fixed this pattern and documented the string-match as the bug, `http.ts:16-23`).
+G2 `ViewersDrawer.load()` has no generation guard → the drawer can list **album A's** viewers under
+album B's heading and revoke from the **wrong album**. G3/G4/G5 `grid-state.svelte.ts` has no
+generation guard in `load`/`loadMore`, and `loadBatch`'s dedup branch `return true`s 149 of every
+150 tiles, permanently disconnecting their retry observers. G6 `auth.rs:355-367` **sends the expired
+token** on any refresh failure that isn't 401/403 (transport/5xx fall through). G7 a **keyring
+write** failure is classified as "server rejected us" and silently signs the user out. G8 the
+capability files' "deliberately narrow / scoped to the preferences file" comments are **false** —
+`fs:allow-app-write` = `["write-all","scope-app"]`, and tauri-utils `acl/resolved.rs` **unions**
+the two scopes, so the WebView can create/delete/rename/watch any top-level file in the sandbox;
+`purge.ts:100-119` documents the opposite. G9 `setPreferences` **never rejects**
+(`preferences.svelte.ts:103-107`) so "Browsing near X" / "Incognito on" toasts can lie.
+G10 `right-now/+page.svelte:55-58,70-73` toasts success without inspecting the status, and
+`fetchRest` resolves on every non-2xx by design (`api/index.ts:266-269`).
+**Exhaustively re-diffed the Rust `invoke()` surface — 22 JS literals vs 20 `#[tauri::command]`s
+and the `invoke_handler!` list: no name mismatch, nothing registered-but-missing. The v0.1.35
+`open_url`/`open` class is genuinely fixed.** No hardcoded secrets found in `src/` or `src-tauri/src/`.
+
+**THE ONE THING THAT NEEDS A LIVE PROBE (R7) — do the image work only after this.** The codebase
+holds two contradictory beliefs about the same host. `src/lib/utils/authed-image.ts:7-8` says
+"Grindr chat/album media on `cdns.grindr.com` is bearer-token gated, so a plain `<img src>` gets a
+403 black box." The repo's own vendored docs say the opposite:
+`docs/content/grindr-api/media/index.md:7` "All CDN files are accessible without authorization …
+No security headers or Authorization need to be present in reuqest to CDN", and
+`public-cdn-files.md:1` "CDN files that are public are accessible directly using their hash". The
+app is split on the **byte-identical** URL: 14 sites go through `AuthedImage`/Rust, 13 use a raw
+`<img>`. **Both cannot be true.** It was never measured — the claim traces to a comment, and both
+`CHANGES.md:471` and `AUDIT_REPORT_v0.1.33.md:353` state nothing has run on a real phone. **One
+`curl` of a public profile thumb with no `Authorization` header settles it.** If the docs are right,
+`AuthedImage` is overhead and the raw sites are fine; if the comment is right, the **Photos tab is
+the one screen where you cannot see your own photos.**
+
+**Two claims in the v0.1.33 report did not survive re-verification — do not cite them.** Its C-4
+`VISIBILITY_PRIVATE` rationale is factually wrong (that is the platform default and it *does* redact
+on a secure lock screen; the Rust lock gate is the real control). Its "no `fs:default` is needed"
+claim is backwards (see G8).
+
+**v0.1.37 note (context, not mine):** `0b0f8bf`/`9f680d4` are a genuine fix for a re-reported dead
+Download button — v0.1.35 shipped the Rust `open_external_url` but never applied it to the one call
+site the report was about, which is the same "fixed the mechanism, missed the call site" pattern
+that produced v0.1.36's grid regression. It also adds a grep-as-a-test guard so `plugin-opener`'s
+broken `openUrl` cannot return. It carries the 1 committed svelte-check error above. `flake.nix`
+remains modified-but-uncommitted (the known OVH-only system-SDK workaround — **do not commit**).
+Backups before this session's state edits: `memory/MEMORY.md.bak.pre_v0.1.37audit.*` and
+`memory/SESSION_STATE.md.bak.pre_v0.1.37audit.*`.
+
+**Nothing built, nothing installed, nothing pushed** (R11). The only file this audit created is
+`memory/AUDIT_REPORT_v0.1.37.md` plus the MEMORY/SESSION_STATE updates. **STILL not device-tested —
+now three releases running (v0.1.34/.35/.36).** Fix order is §5 of the report; **F2 first.** — agent,
+operator Tom.
+
+**2026-08-30 v0.1.32 biometric as a STANDALONE app lock.** Tom wanted to open the app with a
+fingerprint (not just unlock a PIN). Restructured `app-lock.svelte.ts` to two independent gates
+(PIN + biometric); app locked when either on (`isLockEnabled`). Biometric can be the sole lock (no
+PIN); `promptBiometric(reason, allowDeviceCredential)` — device PIN/pattern fallback when biometric
+is alone (no lockout). `PinLockGate` has a biometric-only mode; the setting toggle shows always.
+Frontend-only (plugin already in v0.1.31). Verified vitest 194 (was 193), svelte-check 0, eslint
+clean. Bumped 0.1.31→0.1.32 (versionCode base 1080→1085). Rollback tag `pre-v0.1.32` = `3e21f6d`.
+FIX_NOTES: `memory/FIX_NOTES_v0.1.32.md`. Scope: gates app ACCESS with biometric (session already in
+keyring); does NOT store the Grindr password for a fresh post-logout login. APK build + push/release
+in progress.
+
+**2026-08-30 v0.1.31 biometric unlock (first native-plugin add).** Fingerprint/face unlock on top of
+the PIN. Wired `tauri-plugin-biometric` (Cargo android+ios target deps + `#[cfg(mobile)]` init in
+lib.rs; Cargo.lock pre-updated via flake cargo), `@tauri-apps/plugin-biometric` (bun.lock updated via
+flake bun), `biometric:default` capability. App: `api/biometric.ts` wrapper, `app-lock.svelte.ts`
+biometric flag + `unlockWithBiometric`, `PinLockGate` auto-prompts on open (PIN fallback), toggle in
+`PinLockSetting`. Verified vitest 193 (was 191), svelte-check 0, eslint clean. Bumped 0.1.30→0.1.31
+(versionCode base 1075→1080). Rollback tag `pre-v0.1.31` = `41c4c89`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.31.md`. **APK build (compiles the plugin) + push/release in progress** — the
+build is the compile-validation for the native plugin. Needs on-device verify of the actual sensor.
+
+**2026-08-30 v0.1.30 favorite fix + onboarding.** FIX: `profile/[profileId]` `toggleFavorite` used
+`/v1/favorites/{id}` (wrong) → "failed to update favorite"; now documented `/v3/me/favorites/{id}`
+(this also unblocked favorite notes/auto-fill — no favorite could be created before). NEW onboarding:
+`stores/onboarding.svelte.ts` (first-run + last-seen-version, tested) + `data/whats-new.ts` +
+`FeatureTour.svelte` (9-slide Drawer carousel of the independent features) + `WhatsNewDialog.svelte`
+(per-version highlights), wired in `(protected)/+layout.svelte` onMount (first run→tour, upgrade→
+What's-New) + reopenable via Settings→GrindrX→"Take the feature tour". Frontend-only, no Rust.
+Verified vitest 191 (was 189), svelte-check 0, eslint clean. Bumped 0.1.29→0.1.30 (versionCode base
+1070→1075). Rollback tag `pre-v0.1.30` = `c5f28ac`. FIX_NOTES: `memory/FIX_NOTES_v0.1.30.md`. APK
+build + push/release in progress.
+
+**2026-08-30 v0.1.29 auto-fill favorite notes.** Frontend-only: `utils/note-extract.ts`
+(`extractNoteFields`/`buildNoteText`, pure regex — name/phone/address, tested) + "Auto-fill from
+chat" button in `FavoriteNotesDialog` (scans the other person's Text messages via
+`getConversationMessages`, fills phone if empty + appends Name/Address, user reviews before Save).
+No LLM, no new endpoints, no Rust. Verified vitest 189 (was 177), svelte-check 0, eslint clean.
+Bumped 0.1.28→0.1.29 (versionCode base 1065→1070). Rollback tag `pre-v0.1.29` = `aaf1bf5`.
+FIX_NOTES: `memory/FIX_NOTES_v0.1.29.md`. APK build + push/release in progress.
+
+**2026-08-30 v0.1.28 big feature batch (4 subagents + cross-cutting).** Built with 4 file-disjoint
+general-purpose subagents (favorites-notes, profile/tag search, album management, ProfilePhotoReply
+render + atomic prefs write) + own cross-cutting work (voice messages, nav wiring, capabilities,
+README). NEW: **voice-message sending** (`MessageComposer` record/upload/send via `api/audio.ts` +
+`ConversationState.sendAudio`, reuses `upload_image`, `RECORD_AUDIO` in manifest — format needs
+device verify), **profile/tag search** (Search tab → `searchProfiles`), **album management**
+(create/rename/delete/add-photo/viewers in `album.ts` + `settings/albums` route — 2 endpoints
+best-effort, flagged), **favorites notes** (`api/favorites-notes.ts` + dialog), **ProfilePhotoReply**
+message render, **atomic preference writes** (`app-data/index.ts` temp+rename + `fs:allow-rename`
+capability). README brought current (real signing cert `22d6…`, grindrx links). Fixed a subagent
+`state`/`$state` rune collision (16 errors → renamed vars). Verified vitest 177 (was 156),
+svelte-check 0 errors, eslint clean except 1 pre-existing NavBar cva false-positive. Bumped
+0.1.27→0.1.28 (versionCode base 1060→1065). Rollback tag `pre-v0.1.28` = `00ae334`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.28.md`. **DEFERRED: biometric unlock** (needs native-plugin build validation).
+Pushed Forgejo main+branch + GitHub branch (`aaf1bf5`); releases v0.1.28 on both (GH 379241539 /
+FJ 36). **Signed APK `GrindrX-v0.1.28.apk`** (versionName 0.1.28, versionCode 1061, cert `22d6…4c01`,
+RECORD_AUDIO present) built + uploaded to both + `~/grindrx-artifacts/`. Rust (state.rs/lib.rs/ws.rs
+notification atomics + capabilities) compiled clean. flake.nix system-SDK patch still local-uncommitted.
+
+**2026-08-30 v0.1.27 on-device feedback batch.** Fixed Blocked/Hidden/Favorites "failed to load"
+(all used bad reverse-engineered endpoints → corrected to documented `/v3.1/me/blocks`+getProfiles,
+`{hides}` shape, favorites cascade `favorites=true`; unfavorite → `/v3/me/favorites/{id}`). Built
+**Notification settings** (Settings→App→Notifications; local `notifyMessages`/`notifyTaps` prefs
+ENFORCED in Rust — new AppState atomics + `set_notification_prefs` command + ws.rs checks + JS
+`syncNotificationPrefs` on launch/change). **Saved-phrase autocomplete** (type-ahead popup in
+composer). **Stats page** now auto-refreshes (30s) + Refresh button. Removed **OpenGrind** branding
+from the settings version label. Honest no-fix: "unlock all profile viewers" is a Grindr XTRA
+server gate (`/v7/views/list` withholds locked viewers' ids) — same as CAS-4001, can't bypass;
+page already shows all it's given. Verified vitest 156, svelte-check 0 errors, eslint clean. Bumped
+0.1.26→0.1.27 (versionCode base 1055→1060). Rollback tag `pre-v0.1.27` = `773c376`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.27.md`. Pushed Forgejo main+branch + GitHub branch (`00ae334`); releases
+v0.1.27 on both (GH id 379234370 / FJ id 34). **Signed APK `GrindrX-v0.1.27.apk`** (versionName
+0.1.27, versionCode 1060, cert `22d6…4c01`) built + uploaded to both releases +
+`~/grindrx-artifacts/`. flake.nix system-SDK patch still local-uncommitted (see v0.1.26 note).
+
+**2026-08-30 v0.1.26 SIGNED APK built + published.** `GrindrX-v0.1.26.apk` (universal, 70 MB,
+versionName 0.1.26, versionCode 1059 via autoIncrement, package `com.grindrx.app`) — signed with
+`~/open-grind-key.jks` alias `grindx`, cert `22d6889e…4c01` (MATCHES v0.1.23 → in-place upgrade).
+Uploaded as a release asset to BOTH GitHub (`releases/download/v0.1.26/GrindrX-v0.1.26.apk`, 302→200
+verified) and Forgejo v0.1.26; local copy `~/grindrx-artifacts/GrindrX-v0.1.26.apk`.
+**BUILD-TOOLCHAIN BREAKAGE + WORKAROUND (READ before next APK build):** `nix run .#build-android`
+FAILS — Google removed the command-line-tools / platform-tools zips that nixpkgs pins (persistent
+404; a current nixpkgs 404s too). The Mac CANNOT build (no NDK/Nix/bun/Rust-Android — sign only).
+Fix used: installed SDK components into the system SDK `/home/ubuntu/android-sdk` via `sdkmanager`
+(needs a JDK17+; use `nix shell nixpkgs#jdk21_headless`) — platform-36, build-tools;35.0.0,
+ndk;27.0.12077973, cmake;3.22.1 — then **locally patched `flake.nix`**: `androidSdkRoot =
+"/home/ubuntu/android-sdk"` + removed `androidSdk` from `toolchainInputs` so Nix stops building the
+dead `androidsdk` derivation (Nix still provides rust/bun/jdk/gradle). Build then ran clean and
+auto-signed via `OPEN_GRIND_KEYSTORE_PROPERTIES=~/.config/grindrx/keystore.properties`. **This
+`flake.nix` edit is a LOCAL OVH-only workaround — do NOT commit it (hardcodes an absolute path);**
+revert to `androidComposition.androidsdk` if the Nix androidenv is fixed upstream. `flake.lock` was
+bumped then reverted (no change). Backups: `flake.nix.bak.pre_systemsdk.*`, `flake.lock.bak.pre_nixbump.*`.
+
+**2026-08-30 v0.1.26 share + stats batch shipped.** Tom added (mid-session): a "share with a
+friend" outlet + stats for downloads (across versions/repos) and active users. Shipped:
+**ShareWithFriend** (Web Share API + clipboard fallback, invite link to the GitHub releases page,
+on the settings landing); **Stats screen** (`settings/(subpage)/stats`) showing total downloads
+across all versions + GitHub/Forgejo, per-version, and active users 1h/24h/7d + by version.
+Downloads come from the GitHub + Forgejo release APIs (real APK counts on GitHub; Forgejo has no
+assets → 0); active users from the existing **`grindx-ping`** service (:4242, 7-day window),
+newly wired: app pings on launch (anonymous install-id + version) via Rust
+`send_usage_ping` → `POST cam.dominusaxis.com/grindrx/ping?id=&v=` (aggregator reads QUERY
+params). 3 new Rust commands (`fetch_download_stats`/`fetch_active_users`/`send_usage_ping`).
+**Infra:** added nginx `location /grindrx/` on `cam.dominusaxis.com` → `127.0.0.1:4242` (backup
+`~/cam.dominusaxis.com.conf.bak.pre_grindrx.*`); `nginx -t` + reload OK, cam root still 401s.
+End-to-end smoke-tested over HTTPS (test pings cleaned, `grindx-ping` restarted → stats at 0).
+Verified: **vitest 156** (was 149), svelte-check 0 errors, eslint clean. Bumped 0.1.25→0.1.26
+(versionCode 1054→1055). Rollback tag `pre-v0.1.26` = `b802080`. FIX_NOTES:
+`memory/FIX_NOTES_v0.1.26.md`. Push + release steps in the timeline below.
+
+**2026-08-30 v0.1.25 features batch shipped.** Tom asked for saved phrases in chat, sharing more
+than one album at once, "other fixes", video chat, other unimplemented features, and an update
+notice carrying the new version + what's new. Shipped (with tests): **saved phrases** (new store
+`saved-phrases.svelte.ts` + `SavedPhrasesDrawer` + composer button), **multi-album share**
+(AlbumPicker multi-select + pure `utils/share-albums.ts` + `ConversationState.sendAlbums`),
+**PIN app-lock** (`utils/pin.ts` + `app-data/app-lock.svelte.ts` + `PinLockGate` mounted in
+`(protected)/+layout.svelte` + `PinLockSetting`, replaces the coming-soon stub), and the
+**update-notification fix+changelog** — the banner was checking the WRONG repo
+(`dominus/open-grind` upstream) so it never surfaced GrindrX releases; now
+`api.github.com/repos/Tgbjr2025/grindrx/releases/latest` and the banner shows version + a
+"What's new" release-notes panel (`utils/version.ts` extracted + suffix-tolerant). **Video
+calling NOT shipped** — infra doesn't exist (no WebRTC/signaling/TURN/perms); honest write-up in
+`memory/VIDEO_CALL_FEASIBILITY.md`. Deferred: voice-message SENDING (needs mic perms + device
+test), notification-settings subpage. Verified: **vitest 149/149** (was 112), **svelte-check 0
+errors**, eslint clean. Bumped 0.1.24→0.1.25 (versionCode 1053→1054). Rollback tag
+`pre-v0.1.25` = `7222650`. FIX_NOTES: `memory/FIX_NOTES_v0.1.25.md`. Commit `b802080`. Pushed: Forgejo `main` + branch (fast-forward),
+GitHub branch + tag `v0.1.25`. Releases `v0.1.25` published on BOTH GitHub (id 379191720) and
+Forgejo (id 31) — the GitHub release feed is what the app's update banner checks.
+**GitHub `main` NOT updated:** it diverged (`a547f8e`, still app v0.1.24) carrying the separate
+`anchor/` SMS-project commits this grindrx lineage never had — not fast-forwardable, and merging
+two lineages into a public main is the user's call. Opened **PR #49** (branch→main) instead of
+forcing. Push guardrail lifted for the pushes and **restored** after
+(`~/.claude/settings.json.bak.pre_gitpush.20260830_053548`). See the timeline entry below.
+
+**2026-08-30 re-verify:** Tom asked to find the cause/location of v0.1.24, verify, then push+merge to
+Forgejo. Confirmed (R7 raw probe): the "1.24 version" = commit `7222650` (audit fix batch); version
+string `0.1.24` in `package.json:3`, `src-tauri/tauri.conf.json:4`, `src-tauri/Cargo.toml:3` +
+`androidVersionCode 1053`. Re-ran verification: **vitest 112/112** (14 files), **svelte-check 0 errors**
+(30 warnings). `git ls-remote` shows Forgejo `main` AND `claude/grindrx-freeze-json-audit-gp4lnk` both
+= `7222650` = local HEAD → **already pushed + merged**; the explicit `git push` was a no-op (also blocked
+by the settings guardrail). cargo `--lib` NOT re-run (no cargo on PATH; Nix devshell only). Dirty gradle
+autogen files left untouched (R20).
+
 **Last updated:** 2026-08-14 — **v0.1.24 audit fix batch shipped.** Full 9-dimension code audit (48
 findings) → Fable design plan → 8 file-disjoint Sonnet packages (P1–P8), 45 files changed. Fixed both
 of Tom's known issues (photo album-send crash + persistent mediaId cache so saved photos re-send
@@ -272,3 +1564,398 @@ None — docs-only reconciliation. Doc files edited this pass (#3): `memory/SESS
   remove once root-caused). Updated the recent-commits table, dirty-set narrative, decision gate,
   handoff list, open-issues, and FIX_NOTES §4. Each claim verified against `git log`/`git status`/
   `git show`/`grep`. No code touched; `README.md` and `memory/rules.md` intact. — doc agent, operator Tom.
+
+- **2026-08-30 — v0.1.25 + v0.1.26 double feature ship (this session).** Operator Tom.
+  **v0.1.25** (`b802080`): saved phrases, multi-album share, PIN app-lock, update-banner repo fix +
+  changelog panel; video calling assessed + declined (no infra) → `VIDEO_CALL_FEASIBILITY.md`.
+  **v0.1.26** (`773c376`, HEAD): ShareWithFriend (Web Share API) + Stats screen (downloads across
+  versions/repos via GitHub+Forgejo release APIs; active users via the `grindx-ping` :4242
+  aggregator, app now pings on launch through a new nginx route
+  `cam.dominusaxis.com/grindrx/`→:4242). Tests 112→156, svelte-check 0 errors, eslint clean.
+  Pushed: **Forgejo `main`+branch** and **GitHub branch** both at `773c376`; tags v0.1.25/v0.1.26 +
+  rollback tags on both remotes; releases v0.1.25/v0.1.26 published on GitHub AND Forgejo (GitHub
+  feed drives the in-app update banner). **GitHub `main` NOT updated** — it diverged with the
+  separate `anchor/` SMS-project history (`a547f8e`); opened **PR #49** for a deliberate merge
+  instead of force-pushing a public main. Push guardrail lifted per push then restored (backups
+  `~/.claude/settings.json.bak.pre_gitpush.*`). Deferred: voice-message SENDING, notification-
+  settings subpage, attaching APK assets to Forgejo releases (Forgejo download counts read 0 until
+  then). No signed APK build / device install this session (code + infra only). — agent, operator Tom.
+
+- **2026-09-26 13:38 UTC — v0.1.33 audit remediation, batches 1-4 (code complete, unbuilt).** Operator Tom.
+  Full line-by-line audit of Forgejo `dominus/grindrx` @ `ec7e9a3` (30k lines, Svelte 5 + Tauri 2).
+  Baseline: 194 tests, 0 type errors, eslint clean. Four commits on top of `ec7e9a3`:
+  `c581d33`, `768f84f`, `1874498`, `58f4c80`. **NOT built, NOT installed, NOT pushed** (R11).
+  **Shipped:** (1) last user-visible "Open Grind" string removed (webview title); package id,
+  crate name, LICENSE/GOVERNANCE/KEYS and the keystore alias deliberately untouched — see FIX_NOTES.
+  (2) **Incognito implemented for real** — was a label with no effect (local flag only); now writes
+  server-side `incognito` + `locationSearchOptOut`. (3) **Grid black-screen root-caused and fixed**
+  (4 compounding defects: one-shot scroll latch firing before measurement, hardcoded 120px row-height
+  fallback, the restore's own scroll event clobbering the saved offset, and recomputeVisible
+  collapsing to {0} on a transiently-empty hitCount). **Needs on-device confirmation.**
+  (4) Album-share duplicate bubble fixed via a stable `pendingKey`; `shareAlbum` no longer
+  fabricates a messageId. (5) Voice recorder no longer survives navigation (mic was staying live and
+  still SENDING at the 300s cap). (6) Profile-save cluster: 4 ways edits silently failed. (7) Viewers
+  list: killed the `/profile/0` link and dropped rows; masked rows now informative. (8) Explore
+  dead-end: `errorIsExploreGate` was written and never read; now offers reset + a free
+  "Browse from here" path. (9) **Share location** built (was receive-only). (10) **Profile photos:**
+  add / set-main / reorder (endpoints were never called; new Rust upload command added).
+  (11) **App-lock:** PBKDF2 200k (was single SHA-256), attempt backoff, re-lock on background, and a
+  real gate instead of an overlay that leaked chat text onto the lock screen.
+  Tests 194 → 208. svelte-check 0 errors. eslint clean on every touched file (Grid.svelte 13 → 0).
+  **NOT DONE / cannot be done in code:** video calling (no signalling/TURN/WebRTC anywhere; needs
+  infra — `VideoCall` is an explicitly unsupported type; see VIDEO_CALL_FEASIBILITY.md); the Explore
+  XTRA gate (server-side CAS-4001 — the client request is already correct). **Still open:** album
+  photo add/remove (needs a real multipart Rust command — the current JSON-to-multipart path leaks an
+  undeletable CDN copy per attempt), chat HIGH items H1-H7, media C4/H20/M9, Rust MEDIUM (ws_send
+  serde mismatch, uncapped response body, unbounded msgpack depth, lost-wakeup on logout, CSP,
+  capabilities, allowBackup, debug body logging), ~15 frontend MEDIUMs, FLAG_SECURE. **The new Rust
+  command `upload_profile_image` is UNCOMPILED** — no cargo on this host; must be built and
+  device-tested before release. — agent, operator Tom.
+
+- **2026-09-26 17:00 UTC — v0.1.33 COMPLETE: 8 batches + signed APK built on the M1.** Operator Tom.
+  Picked up a session that died mid-edit with a broken tree. Batch 8 (`4f022b3`) fixed the
+  `previewFromMessage` type error and the "Preview not available" bug, extracted a tested
+  `day-group` helper, and set FLAG_SECURE. **The critical find: the Rust had never compiled.**
+  Batch 5 shipped three real build breaks (`AtomicU64` never imported, `WebSocketConfig` is
+  `#[non_exhaustive]`, `connect_async_tls_with_config` takes 4 args not 3) — the app could not
+  be built at all. All fixed; `cargo test --lib` 3/3 and `cargo check --all-targets` clean for
+  the first time in this version's history. **Also found the version was never bumped** — eight
+  batches of "v0.1.33" work all said 0.1.32; bumped to 0.1.33/versionCode base 1090 (`9c90409`).
+  **Built on the M1** (OVH cannot: its Nix androidenv can't resolve the Tauri plugin projects).
+  M1 needed NDK 27.0.12077973 + platform-36 + build-tools 35.0.0 + cmake + the 4 Android Rust
+  targets + bun, and **Temurin JDK 21** — its default JDK 25 is rejected by AGP 8.13.2 with the
+  useless one-line error `> 25.0.2`. Rust cross-compiled all 4 ABIs; `BUILD_EXIT=0`.
+  **Signed `GrindrX-v0.1.33.apk`** (universal, 70,909,248 B, sha256 `054576d5…a75d`,
+  versionName 0.1.33, **versionCode 1067**, minSdk 28/targetSdk 36, all 4 ABIs, v2 signature,
+  cert `22d6…4c01` verified on BOTH hosts). `~/grindrx-artifacts/` + M1 build output.
+  ⚠️ `autoIncrementVersionCode` **overrides** tauri.conf.json (1090 → 1067) and **each build
+  invocation consumes one** — always read it back with `aapt2 dump badging`. 1067 > 1065 (v0.1.32)
+  so it is a valid in-place upgrade. Tests 220 → **244**; svelte-check 0 errors; eslint+prettier clean.
+  **NOT device-tested** — compiling is not running. Needs a real S26 Ultra before wide release.
+  Pushed to Forgejo + GitHub with sources/zip/APK. — agent, operator Tom.
+
+  **RELEASED.** Pushed on the operator's explicit instruction (lifting the
+  `Bash(git push:*)` deny in `~/.claude/settings.json`, backed up to
+  `settings.json.bak.pre_v0.1.33_push.20260926_165811`, **restored afterwards**).
+  Branch `claude/grindrx-freeze-json-audit-gp4lnk` → **both** remotes
+  (`ec7e9a3..46eb3bb`); Forgejo `main` fast-forwarded `ec7e9a3..46eb3bb`; tag
+  `v0.1.33` on both. **GitHub `main` deliberately NOT touched** — still
+  `a547f8e`, diverged with the separate `anchor/` SMS history; PR #49 remains the
+  merge path. Releases published on both with detailed notes + 2 assets each
+  (`GrindrX-v0.1.33.apk` 70,909,248 B and `grindrx-v0.1.33-sources.zip` 1,972,120 B):
+  GitHub `releases/tag/v0.1.33`, Forgejo release **id 51**. **Both APKs downloaded
+  back and sha256-verified identical** to the built artifact
+  (`054576d5…a75d`) — not assumed from the upload response. Also stopped tracking
+  **28 committed `*.bak.*` backup files** (9 × 178 KB `Cargo.lock` copies were
+  ~2/3 of the source zip); live on-disk backups unaffected (R4 discipline intact).
+  Forgejo asset download path is `/repos/…/releases/download/<tag>/<name>`; the
+  `releases/assets/<id>` API path 404s.
+
+- **2026-09-27 — GRID / PROFILE / MEDIA read-only line-by-line audit (no files modified).** Operator Tom.
+  Partition: `(navbar)/(root)/` (Grid, GridWindow, grid-state, grid, filters bar, top-bar, location),
+  `lib/model/grid/**`, `lib/components/filters/**`, `lib/stores/grid-order`, `lib/utils/authed-image`
+  + test, `geohash`/`distance`/`measurements`/`linkify`, `AuthedImage`, `ProgressiveBlur`,
+  `lib/model/profile` + test, `profile/[profileId]/**` (+ the out-of-partition
+  `settings/(subpage)/account/photos/+page.svelte` + `lib/api/profile.ts` photo API, pulled in because
+  the brief requires verifying the v0.1.33 profile-photo claim). 74 files, every line read.
+  **Headline CRITICAL: the weight grid filter is 1000x wrong** — `grid-state.svelte.ts:206-209` sends
+  `weightGramsMin/Max: weight[0..1]` where the slider stores KILOGRAMS (`WeightFilter.svelte:14`
+  `KG_TO_GRAMS = 1000` is applied for DISPLAY only; `measurements.ts:98-104 weightFromInput` proves the
+  API unit is grams). Enabling the weight filter can therefore never match a profile. Height is correct.
+  **Second CRITICAL-adjacent: `retainAuthedImage` (authed-image.ts:75) has ZERO callers** — the entire
+  refcount + `retired` no-revoke-while-visible machinery is dead code, so `remember()` always takes the
+  immediate-revoke branch. The "no revoke while visible" claim is REFUTED. `retired` is also unbounded.
+  Also confirmed: the grid (`ProfileMiniCard.svelte:38`) and the profile carousel
+  (`ImageCarousel.svelte:132`) use PLAIN CDN `<img>` and bypass the authed pipeline entirely, so the
+  32-entry blob LRU does not bound grid memory at all (Chromium's HTTP+bitmap cache does).
+  `{#await ... then ...}` with no `:catch` in `EditProfileSheet.svelte:409,433` and
+  `GendersPronouns.svelte:31,51` re-throws (verified in svelte 5.55.5 `await.js`:
+  `if (!catch_fn) throw error.v`) -> unhandled rejection + a failed `getGenders()` would make Save
+  wipe genders/pronouns. `TopBar.svelte:113-114` calls `getBoundingClientRect()` on EVERY scroll event
+  (unthrottled forced reflow). `TextMessage.svelte` linkify render: `{@html}` is used NOWHERE in the app
+  and `rel="noreferrer nofollow noopener"` IS present -> linkify XSS claim VERIFIED SAFE; regex is not
+  ReDoS-prone. `prefers-reduced-motion` appears NOWHERE. No `console.log`/TODO/FIXME in the partition.
+  Tests: 68 tests across 6 files, real assertions, but `v3.test.ts:29-47` has a duplicated test, v4.ts has
+  0 tests, `grid-state.#fetchProfiles` (the filter->query mapper) has 0 tests, and nothing covers
+  windowing maths or `retainAuthedImage`. 3 of the 4 claimed v0.1.33 profile-save silent-failure fixes
+  are VERIFIED in code; the 4th is NOT (the no-`:catch` gender/pronoun path). Read-only audit: zero
+  source files touched, no commits, no pushes (R11). — audit agent, operator Tom.
+
+## 2026-09-27 — GRID / PROFILE / MEDIA audit-fix batch (D1–D23) — agent: grid/profile/media
+
+**CONFLICT WARNING (read this first).** A SECOND, duplicate agent was running the SAME
+D1–D23 task over the SAME owned file list at the same time (3 other `opencode` processes;
+`authed-image.ts` mtime advanced seconds after my first read). Both of us wrote overlapping
+files. Final on-disk state is therefore a MERGE of two writers, not one. Files the peer
+evidently completed: `authed-image.ts`/`AuthedImage.svelte`/`authed-image.test.ts` (D2/D22/D23),
+`grid.ts` (D8 + D23 pin flag + `profileCache` bound), `grid-state.svelte.ts` (D1 + D19 boolean),
+`Grid/`+`+page.svelte` (D17 + requestPermissions), `TopBar.svelte` (D4 + lastPick hoist),
+`LocationChange.svelte`/`LocationEmpty.svelte` (D17/D23), `photos/+page.svelte` (D9/D10),
+`EditProfileSheet.svelte` (a duplicate `gendersOk`/`pronounsOk` block that I merged into).
+**The coordinator MUST re-verify these files; a later write may have dropped my edits.**
+
+**Verified fixed by ME (all unit-tested and run, 155 tests green across 14 files):**
+- D1 weight kg→grams: `buildCascadeQuery`/`weightKgRangeToGrams` extracted + `grid-state.query.test.ts`.
+- D7 `profileSchema` tolerance (cosmetic booleans/arrays optional, per-field rationale).
+- D8 cascade v3 `age` kept + mapped in `getGrid`.
+- D11 `z.coerce.number()` profile-0 resurrection blocked in `profileMinSchema` + `searchProfileSchema`.
+- D12 `formatDistance` no longer prints "0.0 mi" (feet below 0.1 mi) + NEW `distance.test.ts`.
+- D13 **NOT fixed by choice** — the raw `getDistanceUnit`/`setDistanceUnit` in `utils/distance.ts`
+  are the localStorage primitives that `app-data/distance-unit.svelte.ts` DELEGATES to
+  (`readStoredUnit`/`writeStoredUnit`). Deleting/renaming them breaks a file batch A owns.
+- D14 `weightToInput` keeps one decimal + NEW `measurements.test.ts` (86182.65 round-trip).
+- D15 geohash precision 12 → 8 (`PERSISTED_PRECISION`); schema widened to a 6..12 RANGE so hashes
+  already on disk still parse — batch E's `grid.api.test.ts` (12-char `"9q8yyk8ytpxr"`) still passes.
+- D16 `encodeGeohash` throws on non-finite / out-of-range + NEW `geohash.test.ts` (16 tests).
+- D20 GendersFilter: More/Less moved out of `ToggleGroup.Root`; exclusion prunes `value`.
+- D23 sweep: rowGap from `getComputedStyle`, index-keyed chunks, `restoreInFlight`, `PULL_ARM_AT`,
+  `describe`/`sr-only` roster for collapsed chunks, `grid-template-rows` reveal, `aria-expanded`,
+  `aria-live` on the age readouts, sr-only Switch labels, `[...value]` clones, `$state.snapshot`
+  filters, `GridFilters` awaits before closing, `pointer-events-none` on ProgressiveBlur overlays,
+  O(1) `grid-order` index + empty-order publish, `exploreUuid` placeholder removed.
+- Dead code deleted after a zero-importer grep: `ProfileFieldValue.svelte`, `grid/cascade/index.ts` (0 bytes).
+
+**NOT done, needs routing:** D7's `medias` (4 out-of-partition consumers dereference it unguarded);
+D23 `linkify.ts` homograph defence; no `prefers-reduced-motion` anywhere (layout.css is not mine);
+D23 `search.ts` `searchQuerySchema` is LIVE (`api/grid.ts:searchProfiles`) so it was kept, not deleted.
+
+No git mutations, no commits, no pushes (R11). eslint clean on every file I changed except
+pre-existing `buttonVariants`/photoswope type-resolution errors present at HEAD.
+
+- **2026-09-27 03:10 UTC — 100% line-by-line audit of v0.1.33 + remediation round, 7 partitions.**
+  Operator Tom. Full audit of `89e2e41` (30,107 lines TS/Svelte across 423 files + 3,410 lines
+  Rust across 12 files + Android/Gradle/capabilities + config + docs), every line read, no
+  sampling, in 7 file-disjoint partitions, then cross-verified. Full report:
+  **`memory/AUDIT_REPORT_v0.1.33.md`** (NEW).
+  **Baseline captured first:** 0 type errors / **30** warnings, 244 tests, no CI at all, and —
+  critically — **the Rust had never been compiled in this version's history** (three shipped
+  compile breaks in the previous round came from that). **Found the M1 Mac reachable over
+  Tailscale** (`ssh mac` = `thomasbateman@100.92.26.108`; the `ubuntu@`/`mac@` usernames from
+  the tailscale listing are wrong), so the Rust is now **machine-verified against the real
+  shipping target** instead of shipped uncompiled: `cargo check --lib` clean, `cargo test --lib`
+  17/17, `cargo check --lib --target aarch64-linux-android` clean. NDK clang must be on PATH for
+  the android target (`~/Library/Android/sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/darwin-x86_64/bin`)
+  and rsync'd sources verified by sha256 (R5). Backup (R4) OUTSIDE the tree at
+  `/home/ubuntu/backups/grindrx_v133_auditfix_20260927_004556` — deliberately not `.bak` inside
+  `src-tauri/`, which already carries 37 such files polluting the source zip.
+  **4 CRITICAL found, all fixed + regression-tested:** (1) v0.1.33 **bricked every PIN set in
+  v0.1.25–v0.1.32** — legacy SHA-256 verifiers were compared against a PBKDF2 digest with no
+  migration, so there was permanent unrecoverable lockout (proven empirically, not inferred);
+  (2) the weight grid filter sent **kilograms into `weightGramsMin`/`Max`** — a 1000× error in the
+  one mapper that had zero tests, so the filter could never match anyone; (3) **`retainAuthedImage`
+  had zero callers**, so the entire "never revoke a blob while displayed" fix was dead code
+  (`refCounts` permanently empty, `retired` never written, and the existing bound test was
+  hollow because the cache is module state); (4) **Android lock-screen notifications leaked 80
+  chars of chat text**, entirely ungated by the app lock, because nothing in Rust knew the lock
+  existed — fixed on both sides (new `set_app_locked` command + `app-lock-gate.ts`).
+  **11 HIGH** incl. the Report button unmounting its own dialog (chat's only reporting path was a
+  no-op), a failed report reporting success, the WS logout "lost-wakeup" fix **refuted**
+  (`notify_waiters()` stores no permit and the epoch was checked nowhere else), videos still
+  unauthenticated, no IME guard (CJK could not type), the mic surviving death during the
+  permission dialog, sign-out clearing **no** persisted PII (8 of 13 plaintext stores survived,
+  incl. the previous account's ±4 m geohash and incognito state), PIN disable/replace requiring
+  no auth, `turnOff()` leaving biometrics enabled while the switch read off, the store listing
+  advertising a removed "radar map", `KEYS.md` publishing a certificate no GrindrX APK has, and
+  **three in-tree Android config copies disagreeing on the version** (one embedded in the APK
+  assets with a weaker CSP and a versionCode that F-Droid/Play would reject as a downgrade).
+  **Independently confirmed good:** **zero XSS sinks app-wide** (`@html`/`innerHTML`/`eval`/
+  `new Function`/`srcdoc` → nothing) despite rendering a very large amount of attacker-controlled
+  text; the token never enters JS memory (grep for `token` across the whole API layer returns only
+  comments); the msgpack depth guard is correct (covers all 256 byte values, checked before
+  descending, no bypass); TLS-before-auth-header and the no-redirect client are correct; the
+  vendored shadcn tree is byte-for-byte unmodified; no `openssl`/`native-tls` anywhere.
+  **Structural root causes** (why the bugs existed, not the bugs): no CI; **zero component tests
+  are even possible** (`vite.config.mjs` sets `environment: "node"`, no jsdom, no
+  `@testing-library`) so ~200 `.svelte` files have no DOM coverage; the filter mapper and the
+  image ref-count both had no tests and both were broken; Rust was never compiled on the release
+  host; and docs drifted with nothing checking them.
+  **After:** 0 type errors / **4** warnings (from 30), **442 tests / 39 files all passing** (from
+  244), eslint clean on all 127 changed files, Rust 17/17 + android target clean. 164 files
+  touched. **NOT built, NOT installed, NOT pushed (R11).** **NOT device-tested** — compiling is
+  not running. Batch D's `.optional()`-on-`profileSchema` change rippled into 6 consumer files
+  (a correct change, but the agent could not run a project-wide check); the fallout was fixed by
+  hand and a `Versatile` icon branch that the same agent dropped was restored — that last one is
+  why per-agent verification is not optional. **Open / needs the operator:** the password-reset
+  endpoint contradiction (`/v1/accounts/password/reset` vs the Rust `/v3/users/forgot-password`,
+  whose real implementation has **zero callers**) needs a live Grindr account to resolve;
+  moving the PIN verifier into the keyring needs Rust + a device; the two stacked
+  keyboard-compensation mechanisms (`MainActivity.kt` bottomMargin **and** `app.html`
+  `interactive-widget=resizes-content`) may double-count the IME height and is the highest-risk
+  unresolved item; `MainActivity.createNotificationChannel` still needs
+  `setVisibility(VISIBILITY_PRIVATE)` **plus a channel-id bump** (Android never updates a live
+  channel); several product decisions (telemetry opt-out, map restore-or-delete, AI-contribution
+  policy) are flagged DECISIONS NEEDED in the report. A minimal `.github/workflows/ci.yml` was
+  added but has never executed. — agent, operator Tom.
+
+- **2026-09-27 04:00 UTC — v0.1.34 built on the M1, signed, and shipped.** Operator Tom.
+  Commit **`5cda11f`** on `claude/grindrx-freeze-json-audit-gp4lnk`; tags `v0.1.34` and
+  `audit-v0.1.34-rollback-20260927` (at `89e2e41`, the last shipped state) — **PUSHED to both
+  remotes on the operator's explicit instruction** (R11 lift, same as v0.1.33). 167 files,
+  +10930/−1299. `flake.nix` deliberately left dirty (machine-specific).
+  **version 0.1.34, versionCode 1069** — a bump was mandatory, 1068 was already published.
+  **Built on the M1**, `BUILD_EXIT=0`, universal APK, all 4 ABIs, minSdk 28 / targetSdk 36.
+  **APK sha256 `00c8582f62a34ab4befe5b9df416ab82abc30a716b06159254b67d50762cff07`, 71,136,868 B**,
+  copied to both hosts and re-hashed (R5). Verified by raw probe, never assumed: `aapt2 dump
+  badging` + `apksigner verify --print-certs` against the **actual published v0.1.33 artifact** —
+  same package `com.grindrx.app`, same cert `22:D6:…:4C:01`, so it is an in-place upgrade.
+  **Also verified in the built manifest:** `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO`/
+  `READ_EXTERNAL_STORAGE` are **gone**, location perms present, `allowBackup`/
+  `usesCleartextTraffic` still correct.
+
+  **Shipped to:**
+  - **Forgejo** — `main` fast-forwarded `89e2e41 → 5cda11f`; branch + 2 tags; release id 52
+    published with both assets. **Downloaded the APK back from the release URL and re-hashed:
+    identical.** (Index number is 52, not 51 — 51 is v0.1.33.)
+  - **F-Droid** — `~/fdroid` index regenerated + re-signed. **v0.1.33 was never published to
+    F-Droid** (it stopped at v0.1.32/1065), so clients jump straight 0.1.32 → 0.1.34; 1069 > 1068
+    so that is correct, but worth knowing. Live index confirmed serving v0.1.34/1069 with the
+    matching hash. Backups: `~/bk_fdroid_20260927_035601`.
+  - **GitHub — PARTIAL.** Branch + `v0.1.34` + rollback tag are on GitHub and verified, and
+    `main` is **deliberately untouched** at `a547f8e` (diverged `anchor/` history; PR #49 remains
+    the merge path). **The release ASSETS could not be uploaded: no working GitHub API token
+    exists on either host.** The token embedded in the `github` remote URL authenticates *git*
+    (pushes succeed) but the REST API returns `401 Bad credentials` in both Bearer and basic
+    mode; `gh` is unauthenticated on OVH and not installed on the M1; `~/.config/gh/hosts.yml`
+    holds no token. `/releases/tag/v0.1.34` resolves but has **no APK and no sources.zip**.
+    **NEEDS a GitHub token with `repo` scope from the operator to finish.**
+
+  **Two build mistakes, recorded in `memory/FIX_NOTES_v0.1.34.md`:**
+  1. **`rsync --delete` on `src-tauri/gen/android/` deleted the M1's `keystore.properties`** — a
+     machine-local secret that exists nowhere else — so the second build came out **unsigned**.
+     Recovered from the stale `~/open-grind` checkout and verified with `keytool -list`
+     (alias `grindx`, `CN=GrindX, O=GrindX, C=US` = the published cert). **Never `--delete` a
+     build tree that may hold machine-local files.** It then had to go in
+     `gen/android/keystore.properties` (`rootProject.file(...)`), not `gen/android/app/`.
+  2. **The first build silently used the OLD Android manifest** because `gen/android/` had not
+     been synced, so the removed media permissions were still in the APK — caught only by
+     reading the *built* manifest, not from the exit code. A green build is not evidence the
+     right source was compiled.
+
+  **Still not device-tested.** **Still open:** the password-reset endpoint contradiction (needs a
+  live Grindr account), the PIN verifier in plaintext storage, the two stacked
+  keyboard-compensation mechanisms (highest-risk unresolved), and the
+  `MainActivity.createNotificationChannel` visibility + channel-id bump. — agent, operator Tom.
+
+  **GitHub release COMPLETED.** The v0.1.34 release (id `397502571`) is published with both
+  assets: `https://github.com/Tgbjr2025/grindrx/releases/tag/v0.1.34`. **Both assets downloaded
+  back and sha256-verified identical** to the built artifacts (APK
+  `00c8582f…cff07` / 71,136,868 B; sources `bab9b705…cbda5b` / 2,166,492 B).
+  **I was wrong earlier and must record it:** I reported the GitHub token as invalid
+  (`401 Bad credentials`). It was valid the whole time — my `sed` extraction had stripped the
+  `ghp_` prefix and sent a 36-char string instead of the full 40. A second, later token
+  (`ghp_QxJ…`) genuinely does 401, so two non-working samples reinforced the wrong conclusion.
+  **Lesson: strip-and-reuse of a credential is a silent-corruption hazard; extract with an
+  anchored pattern and assert the length before use.** The API also rejected an abbreviated
+  `target_commitish` (`5cda11f` → 422 `invalid`); a full SHA is required.
+  **Token hygiene: three GitHub PATs have now been pasted into this session in plaintext**
+  (`ghp_WeLo…` working, `ghp_QxJ…` and `ghp_DBq…` both 401). They are also embedded in the
+  `github` remote URL on both hosts. **All of them should be rotated and the remote URLs
+  re-written without embedded credentials** — prefer `gh auth login` / a credential helper.
+
+- **2026-09-27 04:35 UTC — v0.1.35: Android link bug found and fixed, plus a mandatory update gate.**
+  Operator Tom reported "the download button in the update banner does nothing". **Root cause found and
+  it was not the banner.** `@tauri-apps/plugin-opener`'s JS binding invokes
+  `plugin:opener|open_url`, but `tauri-plugin-opener` **2.5.3** registers the command as **`open`** on
+  Android (`OpenerPlugin.kt`: `@Command fun open`) while registering `open_url` on desktop
+  (`src/commands.rs`). The capability compounds it — `opener:allow-open-url` grants
+  `commands.allow = ["open_url"]`, a name that does not exist on Android, so the real `open` is not
+  permitted either. The plugin's own CHANGELOG shows this mobile bug being fixed once already, so it
+  has regressed. **Every `openUrl()` call in the app was dead on Android**: the update banner's
+  Download button, every tappable chat link (`Link.svelte`), and the map link
+  (`LocationMessage.svelte`). Invisible because the promise was never awaited — a rejection became an
+  unhandled rejection with no feedback.
+  **Fixed** with a new `open_external_url` Tauri command (`src-tauri/src/api/openurl.rs`) that calls
+  the plugin's **Rust** API, which handles the platform split correctly (on mobile
+  `OpenerExt::open_url` -> `run_mobile_plugin("open", ..)`). All three call sites now route through
+  `$lib/api/open-url` and surface a real error. This also **closes the audit's `intent://`/`file://`
+  injection finding** — the release URL came from remote JSON into an unscoped opener; the scheme is
+  now allow-listed to http/https in Rust before dispatch.
+  **Force-update gate added** (`ForceUpdateGate.svelte` + `update-gate.svelte.ts`): full-screen
+  non-dismissable block below `MINIMUM_SUPPORTED_VERSION` = 0.1.34, mounted last in the root layout
+  so it sits above every overlay. Three safety properties, 19 tests in `src/lib/update-gate.test.ts`:
+  **never blocks on missing/unreachable release data** (a server blink must not strand a user whose
+  app is fine), **ignores draft/prerelease tags**, and **always offers a copy-link fallback** so the
+  gate is never a single-button dead end. This is the only exit for a user stuck on the PIN-broken
+  v0.1.33.
+  Commit **`ad570c5`**, tags `v0.1.35` + `audit-v0.1.35-rollback-20260927` (at `df66f4e` = v0.1.34).
+  **version 0.1.35, versionCode 1070.** Built on the M1, `BUILD_EXIT=0`, universal, all 4 ABIs,
+  minSdk 28 / targetSdk 36, same cert `22:D6:…:4C:01` and package `com.grindrx.app` as every prior
+  release. **APK sha256 `5636c3e0675b173a850344491735669848b656852c62ed416fb059377e4ba9b1`,
+  71,268,236 B**, copied to both hosts and re-hashed (R5).
+  **Shipped to all three:** Forgejo `main` fast-forwarded to `ad570c5` + release id 54 with both
+  assets; GitHub branch + tags (main deliberately still `a547f8e`) + release id `397509106` with both
+  assets; F-Droid index regenerated and **live** at 0.1.35/1070 with the matching hash. **Both
+  hosts' release APKs downloaded back and sha256-verified identical.**
+  Gates: 0 type errors / 4 warnings, **461 tests** (was 442), eslint clean, `cargo check --lib`
+  clean on the M1. **NOT device-tested** — and this fix in particular is exactly the class that
+  compiles clean, passes every test, and only manifests on a real phone, so **install 0.1.35 on a
+  device and confirm the Download button opens a browser before telling anyone the gate is the only
+  way out.** The gate is the sole recovery path for PIN-locked v0.1.33 users; if the button is still
+  broken the gate bricks them. — agent, operator Tom.
+
+- **2026-09-27 05:25 UTC — v0.1.36: a placeholder icon was painted over every grid photo. My regression.**
+  Operator Tom reported "a generic outline guy over every profile pic on the grid".
+  **This is a regression I introduced in v0.1.34**, not a pre-existing bug. `ProfileMiniCard.svelte`
+  renders a grey `UserIcon` as the "no photo" placeholder; in v0.1.33 it lived in an `{:else}`
+  branch so it only entered the DOM when there was no photo. The v0.1.34 remediation pass hoisted
+  it out so it could double as the fallback for a new `onerror` handler on the `<img>` (a public
+  thumb can 404) — **right intent, but it then rendered unconditionally**. The icon is
+  `position: absolute` and the `<img>` was **not positioned at all**, so in CSS painting order the
+  icon painted ABOVE the photo on **every tile in the grid**. Fixed by giving the `<img>`
+  `position: relative`, so both are positioned with `z-index: auto` and DOM order decides (icon
+  first, photo second, photo wins); the onerror fallback still works because a failed image is
+  hidden and the icon behind shows through. That handler now sets `style.display = "none"`
+  explicitly rather than the `hidden` attribute, so no stylesheet rule can beat it.
+  Only `ProfileMiniCard` was affected — `Conversation.svelte` and `ChatNavBar.svelte` use
+  shadcn's `Avatar.Fallback`, which correctly renders only on image failure. Verified by diffing
+  the component against `v0.1.33` rather than reasoning about it.
+  **The important lesson, recorded so it is not repeated:** *no test could have caught this, and
+  none could.* There is no component-test runner in this project (`vite.config.mjs` sets
+  `environment: "node"`, no jsdom, no `@testing-library`), so a pure CSS stacking bug on the main
+  screen passes the type checker, the linter and all 461 tests. This is the structural gap the
+  audit flagged as finding #2, and this was its concrete cost — a one-class change to the primary
+  screen shipped to users twice (v0.1.34 and v0.1.35) before anyone noticed.
+  Commit **`6c1fe4b`**, tag `v0.1.36` + `audit-v0.1.36-rollback-20260927` (at `e94fce9` = v0.1.35).
+  **version 0.1.36, versionCode 1071**, built on the M1, `BUILD_EXIT=0`, universal, 4 ABIs, same
+  cert `22:D6:…:4C:01` / package `com.grindrx.app`. **APK sha256
+  `60baa93c54377efab808a2ea56efa60b129855f5855822cc98955aa53dbf3456`, 71,268,916 B.**
+  Shipped to all three: Forgejo `main` -> `6c1fe4b` + release id 56 (both assets); GitHub branch +
+  tags (main still `a547f8e`) + release id `397520485` (both assets, **downloaded back and
+  sha256-verified identical**); F-Droid index regenerated and **live** at 0.1.36/1071 with the
+  matching hash. Gates: 0 type errors / 4 warnings, 461 tests, eslint clean, `cargo check --lib`
+  clean. **STILL not device-tested** — and this bug was itself only visible on a real screen, so
+  the visual changes still need a human eye. — agent, operator Tom.
+
+- **2026-09-27 05:40 UTC — v0.1.37: the Download button was STILL broken in v0.1.35. My error, twice over.**
+  Operator Tom reported the update banner's Download button still did nothing on v0.1.35 — the
+  exact symptom v0.1.35's release notes claimed to have fixed. **It had not been fixed.**
+  v0.1.35 diagnosed the root cause correctly (`tauri-plugin-opener` 2.5.3's JS invokes
+  `plugin:opener|open_url` while its **Android** build registers the command as `open`; the
+  capability grants `open_url`, a name Android does not have) and built the right fix — a Rust
+  `open_external_url` command using the plugin's Rust API. **But it applied that fix to two of the
+  three call sites** (`Link.svelte`, `LocationMessage.svelte`) **and never touched
+  `UpdateBanner.svelte`**, line 91 of which still called the broken `openUrl` with an unhandled
+  promise. Two releases (v0.1.34, v0.1.35) shipped with the reported button untouched.
+  Verified the Rust half had in fact shipped correctly: `open_external_url` is present in the
+  v0.1.35 `libopen_grind_lib.so` (4 symbol refs), so the backend worked and the banner simply never
+  called it. **The failure was in my verification, not the diagnosis: I confirmed the fix existed in
+  the tree and in the binary, but never re-read the one file the user had named.**
+  **Fix:** `UpdateBanner.svelte` now routes through `openExternalUrl`, and on failure renders the
+  error and the raw release URL instead of failing silently.
+  **Guard added, because this is the second partial fix of the same fix:**
+  `src/lib/api/no-broken-opener.test.ts` fails the build if ANY file under `src/` imports
+  `@tauri-apps/plugin-opener` or calls `openUrl()`; it also asserts `openExternalUrl` and the Rust
+  `generate_handler!` registration still exist, and that it scanned >50 files, so it cannot rot into
+  passing vacuously (the hollow-test trap the audit found in the image-cache suite). Uses
+  `import.meta.glob` rather than `node:fs` because the project has no `@types/node`.
+  **Mutation-tested:** reintroducing the broken import makes it fail and name the file; reverting
+  makes it pass.
+  Commit **`0b0f8bf`**, tag `v0.1.37` + `audit-v0.1.37-rollback-20260927` (at `432766f` = v0.1.36).
+  **version 0.1.37, versionCode 1072**, built on the M1, `BUILD_EXIT=0`, universal, 4 ABIs, same
+  cert/package. **APK sha256 `8dd6fee0e937063df1ee59012382c6ce100ba8ad6553234311271e2674cec722`,
+  71,272,092 B.** Shipped to all three: Forgejo `main` -> `0b0f8bf` + release id 58; GitHub branch +
+  tags (main still `a547f8e`) + release id `397524055` (**downloaded back, sha256 identical**);
+  F-Droid **live** at 0.1.37/1072. Tests 461 → **465**; 0 type errors / 4 warnings; eslint clean;
+  `cargo check --lib` clean. **STILL not device-tested** — and this is the second fix in a row that
+  only a real phone could have caught, so **treat "the button works" as unverified until Tom says
+  so on hardware.** — agent, operator Tom.

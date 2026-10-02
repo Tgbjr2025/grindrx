@@ -1,74 +1,379 @@
-# README_HANDOFF — grindrx-work
+# README_HANDOFF — GrindrX
 
-> Handoff doc for the **grindrx-work** project. Operator: **Tom**. Created 2026-06-09 06:57 UTC (bootstrap).
-> Last reconciled 2026-06-23 08:16 UTC. This file does NOT replace the upstream `README.md` (the product readme). Read both.
+> Handoff entry point for this project. Per HANDOFF_SYSTEM v2.
+> Last updated: 2026-10-01 ~17:00 UTC — gap work session.
+> Operator: Thomas Bateman.
+
+---
 
 ## TL;DR (90 seconds)
 
-- **What:** `GrindrX` — a privacy-focused, ad-free Grindr client for **Android**, built with **Tauri 2** (Rust) + **SvelteKit**. A fork of `open-grind`. [verified: README.md, package.json]
-- **Version:** `0.1.13` (package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml all agree). [verified]
-- **This is a BUILD TREE, not a running service.** There is no app daemon here. The only related running service on the build host is `grindx-ping.service` (the active-user tracker, see Inventory) — that is a *separate* program at `/home/ubuntu/ping-server/`, NOT part of this tree. [verified: `systemctl`]
-- **Working tree:** **CLEAN** at HEAD (this checkout). The audit fixes the prior handoff flagged as uncommitted are now all committed (`17d47f3`); the old `[diag-mediaid]` probe is gone. **One NEW temp trap exists** — the `[GrindrX-API]` logcat diagnostic added at HEAD. **See Critical Traps.** [verified: `git status -s`]
-- **Last commit (HEAD):** `b112cb3` (2026-06-20 06:48 UTC) — "chore(api): log real HTTP status + body for non-2xx responses" (the temporary CAS-4001 diagnostic). [verified: `git log`]
-- **Re-probe before trusting state:** this project has had multiple agents editing in parallel historically; always re-probe `git log --oneline -8` and `git status -s` / `git diff` (R7).
-- **Artifact:** a debug `grindrx-arm64-debug.apk` has historically sat in `~` on the build host (`/home/ubuntu/...`). It is a **debug** apk, not a signed release. Re-probe `~` on the build host; it is NOT in a fresh clone.
+**GrindrX** is a SvelteKit + Tauri v2 Android client for Grindr, forked from
+[open-grind](https://git.opengrind.org/open-grind/open-grind) at `bcfac9f` (2026-05-27).
 
-## Recent commits (since v0.1.9 ship)
+Work this session implemented **4 of 8 endpoint work packages** plus **WP-8**, wired three of
+them into the UI, and committed all of it to a feature branch — **not** `main`.
 
-| Commit | Date | What it did |
-|--------|------|-------------|
-| `28b1648` | 2026-06-12 | **v0.1.9 audit ship** — schema-drift robustness, authed-media lightbox fix, WS self-notify, host-test devshell, branding, manifest media perms; bumped 0.1.8→0.1.9. See `memory/FIX_NOTES_v0.1.9.md`. |
-| `d3c0392` | 2026-06-12 | **Icon** — GrindrX monogram-G launcher icon (concept A) + regenerated android/ios/desktop assets. |
-| `eaf60dc` | 2026-06-13 | **media compat** — CSP allows CloudFront (made images/albums display), conversation/profile schema-drift tolerance, direct signed-URL image loads, album thumb-probe, graceful saved-photo send. See `memory/FIX_NOTES_media_features.md`. |
-| `1d09c10` | 2026-06-13 | **3 features + map-tile CSP** — pull-to-refresh + refresh button (grid), swipe between profiles, Explore-location; map-tile hosts added to CSP so map tiles render. |
-| `03f88f2` | 2026-06-18 | **grid windowing** — viewport windowing (`GridWindow.svelte`) to bound image memory and fix the WebView freeze. |
-| `17d47f3` | 2026-06-18 | **audit fixes committed** (was the prior "dirty tree") — album-share grant/unlock via `/v4/albums/{id}/shares`, `fetch_authed_bytes` token-leak/redirect hardening, chat live-update + dup-message race, Explore geohash plumbing. See `memory/FIX_NOTES_media_features.md` §4. |
-| `a6fed16` | 2026-06-18 | **photo-send fix + units + nav** — saved-photo `mediaId` now sourced from `/v4/me/profile` (the 400 root cause); metric/imperial for height+weight; **Map/nearby bottom tab removed**. |
-| `bccb55d` | 2026-06-19 | **release v0.1.12** — collapse 9-layer backdrop blur to fix compositor freeze, off-main-thread image decode + upload downscale, real `mediaId` via `/v5/chat/media/upload`, background notifications (foreground service + deep-link), inbox newest-first sort, masked views/previews, tolerant taps schema. |
-| `715a248` | 2026-06-19 | feat(chat): port unsend-messages (#89) from v0.1.11; docs: api-discoveries. |
-| `b5d182e` | 2026-06-19 | **v0.1.13** — eliminate lightbox-open freeze on shared photos (drop the PhotoSwipe border-radius morph that re-rasterized the full-res bitmap every frame). |
-| `3e1d412` | 2026-06-20 | **surface server error codes** — `ApiHttpError` raises a structured HTTP-status + server-code error (e.g. `CAS-4001`) instead of JSON-parsing the error body; grid maps it to an actionable message; drop the map/location-picker full-screen blur that froze the picker. |
-| `b112cb3` | 2026-06-20 | **(HEAD)** — temporary `[GrindrX-API]` logcat diagnostic logging real HTTP status + body for non-2xx responses, to root-cause CAS-4001. **Temp — remove once diagnosed.** |
+**`main` has not moved since May and is 107 commits behind.** All real work is on
+`claude/grindrx-freeze-json-audit-gp4lnk`.
 
-## Inventory — where the real docs live
+**⚠️ RETRACTED 2026-10-01: the "network is broken" claim below was WRONG.** It was based on probing
+`api.grindr.com`, which this app never calls. Our base URL is `https://grindr.mobi`
+(`src-tauri/src/api/client.rs:13`) and it answers **HTTP 403 with TLS completing** — a live server
+with no root route, not an outage. Upstream open-grind uses the same host and works with 60k users.
+See "THE 'OUTAGE' WAS WRONG" below. The original text is preserved there for history.
 
-Upstream-style product docs already exist in the tree root. Use them; this handoff only points at them:
+> ~~**Something is broken at the network level and it is not our code.** `api.grindr.com` and
+> `cdn.grindr.com` refuse the TLS handshake (CloudFront alert 552) from the s26 on two different
+> networks *and* from the OVH server, while google.com / github.com / pypi.org return 200 from all
+> three. Version 0.1.40 and 0.1.39 fail identically. **No build of this app will load profiles
+> until that changes, and nothing in the codebase can affect it.**~~
 
-| File | What it covers |
-|------|----------------|
-| `README.md` | Product overview, features, install, download links (Forgejo). **Do not clobber — leave as-is (R23).** |
-| `BUILDING.md` | **Authoritative build pipeline.** Nix-flake based. `nix run .#build-android`. Output apk path, jniLibs symlink fix, signing, reproducibility. |
-| `CHANGES.md` | Full changelog of `@Tgbjr2025` branch fixes/features on top of upstream. |
-| `KEYS.md` (+ `KEYS.md.asc`) | **Signing keys.** PGP fingerprint `CB72 2EE9 67E4 FCAD 7C65 8FC6 9A1F 7F5F 5929 19D2`; Android APK cert SHA-256 `28:05:FD:D8:F0:BA:DB:94:24:D3:24:4C:5E:5B:34:73:CE:F5:B8:79:8E:C1:11:73:82:E8:9E:DA:45:C3:65:8C`. |
-| `CONTRIBUTING.md`, `GOVERNANCE.md`, `CODE_OF_CONDUCT.md`, `FUNDING.md`, `LICENSE` | Project governance / legal. |
-| `memory/FIX_NOTES_v0.1.9.md`, `memory/FIX_NOTES_media_features.md` | Per-ship FIX_NOTES (R10). |
+If you do nothing else: read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`, then
+`docs/ENDPOINT_GAP_SPEC.md`.
 
-Code layout: `src-tauri/` = Rust API layer (`src/api/`: `auth.rs`, `client.rs`, `headers.rs`, `rest.rs`, `ws.rs`, `mod.rs`); `src/` = SvelteKit frontend (`src/lib/`, `src/routes/`). Android Gradle project generated under `src-tauri/gen/android/`. [verified: `ls`]
+---
 
-## Build / install workflow (as actually used)
+## Where everything stands
 
-1. **Build:** `nix run .#build-android` (Nix flake; per BUILDING.md). Do NOT hand-roll cargo/gradle (R21). Output unsigned apk under `src-tauri/gen/android/app/build/outputs/apk/...`.
-2. **Install:** **adb over Tailscale** to the **S26 Ultra** (SM-S948U1, Android 17, Tailscale IP `100.64.176.13:5555`). Wireless debugging must be on + phone online. **The phone keeps dropping off Tailscale — confirm it is reachable before attempting an install.** Uninstall wipes app data → re-login required.
-3. **Sign** only with the keystore whose cert SHA-256 matches `KEYS.md` (R22). The apk in `~` is debug.
+| | |
+|---|---|
+| Working branch | `claude/grindrx-freeze-json-audit-gp4lnk` @ `05410c7` (code at `6fc45a4`) |
+| Pushed to | `github` and `grindrx-forgejo`, both in sync |
+| `main` | **untouched on every remote.** local `21d7538` (v0.1.8), github `a547f8e`, forgejo `30e6a1e` |
+| **In-progress version** | **0.1.41.** This is the WP-1/2/3/7/8 gap work. **Not yet bumped, not tagged, not built.** |
+| Last shipped version | **0.1.40** / versionCode 1075 — tag `v0.1.40` = `482f9f6`, APK built 2026-09-30 22:50 |
+| Code version today | `package.json` / `Cargo.toml` / `tauri.conf.json` all still read **0.1.40 / 1075**; the version gate passes because they agree |
+| Untagged | `v0.1.24` — commit `7222650` exists, tag never created |
+| README drift | still claims **v0.1.38** |
+| Tests | **668 / 668 passing**, 54 files |
+| No git safety net on `main` until you fast-forward it | backups made — see §6 |
 
-## Critical Traps
+**Version note for the next session.** The gap work sitting on this branch *is* the 0.1.41 line — there
+is no 0.1.42 and nothing has consumed 0.1.41. Before the next APK ships, all three of
+`package.json`, `src-tauri/tauri.conf.json` (`version` **and** `versionCode`) and
+`src-tauri/Cargo.toml` must be bumped **together** (0.1.40 → 0.1.41, versionCode 1075 → 1076), or
+`sh ci/check-release-version.sh` fails. That gate was ported from upstream precisely because a bump
+was once done inconsistently — `versionName 0.1.39 / versionCode 1075` shipped by mistake.
 
-1. **NEW temp diagnostic at HEAD — remove once CAS-4001 is diagnosed.** `b112cb3` added a **TEMPORARY `[GrindrX-API]` logcat probe** that logs the real HTTP status + body for non-2xx API responses (`adb logcat | grep GrindrX-API`), to surface the server-side cause of cascade error codes like `CAS-4001`. It is diagnostic scaffolding; expected to be removed once the cause is identified. (The older `[diag-mediaid]` probe in `profile.ts` is **gone** — the saved-photo 400 was root-caused in `a6fed16`.) [verified: `git show b112cb3`, `grep diag-mediaid` → none]
-2. **Machine-specific gradle autogen — dirty ON PURPOSE on a build host.** `src-tauri/gen/android/app/tauri.build.gradle.kts` and `src-tauri/gen/android/tauri.settings.gradle` carry the build host's absolute paths (`/home/ubuntu/…` vs `/Users/thomasbateman/…`) + plugin ordering. On a checkout that has run a build they will show modified — **leave them dirty, never commit them** (committing breaks the other host's build). They are NOT present in a fresh clone. **Do NOT `git checkout`/`stash`/`reset`/`clean` a dirty build tree (R20).**
-3. **Re-probe before trusting state (R7).** This project has had multiple agents editing in parallel; the commit log and tree move. Always re-run `git log --oneline -8` and `git status -s` / `git diff`. A docs agent must NOT edit `src/` or `src-tauri/`.
-4. **Signing keys are load-bearing — see `KEYS.md`.** A build is only a *real* deliverable once signed with the keystore whose cert SHA-256 matches KEYS.md. Any apk in `~` is **debug**, unsigned-for-release. Do not invent or rotate keys (R22). [verified: KEYS.md]
-5. **Build is Nix-driven, not raw cargo/gradle.** Per BUILDING.md the supported path is `nix run .#build-android` (R21). [verified: BUILDING.md]
-6. **`grindx-ping.service` is NOT this project.** Separate Node active-user tracker at `/home/ubuntu/ping-server/server.js` on `:4242`. Leave it alone unless the task explicitly concerns it. [verified: `systemctl status grindx-ping.service`]
+---
 
-## Known open issues
+## The three remotes
 
-- **CAS-4001 / cascade bare-text error codes (active).** The explore/cascade endpoint can answer with a bare text code (e.g. `CAS-4001`) rather than JSON, which previously surfaced as a misleading `JSON.parse` error in the grid after changing the explore location. `3e1d412` added `ApiHttpError` (structured HTTP-status + server-code) and an actionable grid message; `b112cb3` added the temp `[GrindrX-API]` logcat probe. **The server-side reason for the code is still under investigation.**
-- **App freeze under image memory / WebView compositor** — addressed across several commits: `03f88f2` (grid viewport windowing), `bccb55d` (collapse 9-layer backdrop blur + off-main-thread decode + upload downscale), `b5d182e` (drop lightbox border-radius morph), `3e1d412` (drop map/location-picker full-screen blur). **Confirm the freezes are gone on-device** under heavy media.
-- **WS DNS flakiness on cellular + phone drops off Tailscale** — WebSocket DNS resolution unreliable off Wi-Fi; separately the S26 Ultra keeps dropping off Tailscale, blocking adb installs.
-- *(Resolved since the prior handoff:* saved-photo send 400 → fixed in `a6fed16` / `bccb55d`; album-share unlock → committed `17d47f3`; `fetch_authed_bytes` token-leak → committed `17d47f3`.*)*
+| Name | Points at | State |
+|---|---|---|
+| `github` | `github.com/Tgbjr2025/grindrx.git` | branch at `a5915c1` (code at `6fc45a4`), `main` diverged |
+| `grindrx-forgejo` | `dominus/grindrx.git` (this box) | branch at `a5915c1` (code at `6fc45a4`), `main` = v0.1.39 |
+| `origin` | `dominus/open-grind.git` (this box) | **frozen at May 27 — NOT latest upstream** |
 
-## How to resume
+**There is no `upstream` remote.** Latest open-grind is `f377bd0` (2026-09-30), cloned read-only to
+`/home/ubuntu/upstream-compare/upstream`. If you want to track it properly, add the remote — do
+not assume `origin` is upstream.
 
-1. Read `memory/MEMORY.md`, then `memory/SESSION_STATE.md`. (R3 — read state before acting.)
-2. `git status -s && git log --oneline -8 && git diff --stat` — re-probe (R7); on a build host expect the 2 gradle autogen files to show dirty (on purpose), otherwise the tree should be clean at HEAD `b112cb3`.
-3. Next substantive work: root-cause **CAS-4001** (then remove the temp `[GrindrX-API]` logcat probe), and field-verify the freeze fixes on the S26 Ultra. If Tom authorises a ship, tag first (R9), write FIX_NOTES (R10), build only via the Nix path in `BUILDING.md`, sign only with the keystore in `KEYS.md`. Do not push from an agent loop (R11).
+---
+
+## What this session did
+
+### Closed (code + tests, committed)
+
+| WP | Package | Files | Notes |
+|---|---|---|---|
+| **WP-1** ⭐ | Report a profile | `api/report.ts` 199, `model/report.ts` 76, 12 tests | **The only package that is an ethical/legal requirement, not a feature.** Wired to `Message.svelte` / `MessageContextMenu.svelte`. v5 flags only — v3.1/v4 unprobed. **The reason vocabulary is a guess, flagged ⚠️ in-code.** |
+| **WP-2** | Hide | `api/hide.ts` 96, 7 tests | `POST /v1/me/hides/{id}`. Wired to the profile screen. |
+| **WP-3** | Views + received taps | `api/view.ts` 101, `taps.ts` +48, 2 test files | `recordProfileView` wired fire-and-forget. |
+| **WP-7** | Tags | `api/tags.ts` 78, `model/tags.ts`, 9 tests | `ProfileTagsSheet.svelte`, saves via `PATCH /v4/me/profile`. |
+| **WP-8** | Analytics assignment | `api/assignment.ts` 123, geohash helper +7 tests | Read-only A/B bucket. Geohash coarsened to 6 chars inside the function so a caller cannot bypass it. |
+
+### Deliberately left unwired
+
+`getViews` and `getReceivedTaps`. Both endpoints already have richer, working, NavBar-reachable
+screens (`navbar/views`, `navbar/interest`) carrying fields the committed schemas do not model —
+`totalViewers`, `previews`, `isSecretAdmirer`, the mutual-tap emoji. Repointing those screens at
+the new functions would delete working affordances. **These are not gaps**; the schemas are just
+narrower than the surfaces. Closing them properly is a probe away.
+
+### Still open
+
+**None of these are blocked by a network outage — that was wrong (see the retraction above). They
+are blocked only because nobody has run the probe yet, which requires a signed-in session.**
+
+| WP | Blocked on |
+|---|---|
+| **WP-4** push | Firebase Android app **not yet registered**. Partial Gradle work is in the tree uncommitted — see §4. |
+| **WP-5** location | Needs a live signed-in session to probe. Has a stop condition: if it needs `entitlements/bypass`, report, do not work around it. |
+| **WP-6** cascade v3→v4 | Needs a live signed-in session to probe. **Highest-value open item** — see §5. |
+
+**To unblock all of them:** the session token is in the phone's Android Keystore, not on any dev
+box. Either run the probe from the phone, or explicitly authorise one authenticated request from a
+dev host. Until then every path in this table is transcribed from `docs/ENDPOINT_GAP_SPEC.md` and
+vendored docs, **not observed**.
+
+---
+
+## Two things the spec gets wrong — read before doing gap work
+
+### 1. The Trap 1 greps are too narrow
+
+`docs/ENDPOINT_GAP_SPEC.md` says to grep `src/lib/api` and `src-tauri/src`. That misses
+**route components**. `GET /v1/hides` and `DELETE /v1/hides/{id}` already existed in
+`src/routes/(protected)/(navbar)/settings/(subpage)/account/hidden/+page.svelte` — the spec
+reported WP-2 as wholly absent when the only real gap was the *hide* action.
+
+**Widen every trap grep to all of `src/`.**
+
+### 2. The v4 port is a risk, not just a task
+
+This fork is already ad-free, and not by suppression — its v3 `cascadeResponseSchema` names no ad
+entity types, so they are dropped at parse time. Upstream's v4 model names eight
+(`XtraMpuV`, `SponsoredProfileV`, `AdvertV`, `BoostUpsellV`, `FavsUnlimitedUpsellV`,
+`FavsXtraUpsellV`, `UnlimitedMpuV`, `BrazeEventProfileV`) and upstream still renders none.
+
+**So the v3→v4 port makes eight ad/upsell entities recognised for the first time.** Whoever does it
+must explicitly ignore each, or the XTRA upsell could start rendering. Add this as a stated
+requirement before WP-6 is started.
+
+---
+
+## ⚠️ THE "OUTAGE" WAS WRONG — RETRACTED 2026-10-01. The API is NOT blocked.
+
+**Everything below this line used to say the API was down and that this was the top blocker. It
+is not. Do not repeat it.**
+
+The failing probe was against **`api.grindr.com`** — a host **this app never calls**. It appears
+exactly once in the whole tree, in a comment (`src/lib/api/assignment.ts:13`).
+
+**Our actual API base URL is `https://grindr.mobi`** (`src-tauri/src/api/client.rs:13`):
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://grindr.mobi/
+# 403  <- TLS completed fine. A live API host with no root route.
+```
+
+403 on `/` is a healthy server answering. It is not a handshake failure.
+
+Measured 2026-10-01 from this box:
+
+| Host | TLS | HTTP | Called by us? |
+|---|---|---|---|
+| `grindr.mobi` | ✅ | 403 | **YES — this is the base URL** |
+| `cdns.grindr.com` | ✅ | 403 | yes, 46 call sites |
+| `api.grindr.com` | ❌ handshake failure | — | **no** |
+| `cdn.grindr.com` | ❌ handshake failure | — | **no** |
+
+Upstream open-grind uses the **same** `grindr.mobi` host — its test fixtures pin
+`https://grindr.mobi/v4/cascade` (`src/lib/api/redact/text.test.ts:90`). That is why open-grind
+works with 60k users, and why so does this fork.
+
+**Therefore: "all 7 probes are unprobeable" and "WP-5/WP-6 are blocked" are UNFOUNDED.** Do not
+skip probe work on the grounds that the API is unreachable.
+
+**Still NOT proven end-to-end:** a 403 on `/` does not prove an authenticated route responds. One
+real request settles it. The only session token lives in the phone's Android Keystore, not here, so
+that call has to come from the phone or be explicitly authorised.
+
+**Do not confuse this with the 0.1.38 `cdns.grindr.com` 403**, which is a *different* and still-open
+question: that bucket returns `AccessDenied` on every path including its own root, and the code
+comment claiming `cdns.grindr.com` is public is contradicted by the evidence.
+
+---
+
+## Firebase / push — half-done, needs an operator step
+
+**Not committed.** A cancelled agent left this in the working tree:
+
+```
+ M src-tauri/gen/android/build.gradle.kts        +1   google-services classpath
+ M src-tauri/gen/android/app/build.gradle.kts   +24  conditional plugin application
+ M src-tauri/Cargo.lock                         +1-
+?? src-tauri/gen/android/FIREBASE_SETUP.md
+```
+
+**The graceful-degradation guard in it is correct and worth keeping.** The plugin is applied only
+when `google-services.json` exists, because applying it unconditionally hard-fails with *"File
+google-services.json is missing"* and would block **every** Android build, not just push. It uses
+`apply(plugin = ...)` rather than an `id(...)` line because Kotlin DSL cannot call `file(...)`
+inside `plugins { }`.
+
+**To finish it you must do the step I cannot:**
+
+1. Firebase console → Project `grindrx-3c0ae` → **Add an Android app**
+2. Package name **must** be exactly `com.grindrx.app` (matches `applicationId` in
+   `src-tauri/gen/android/app/build.gradle.kts`)
+3. Download `google-services.json` → place at
+   `src-tauri/gen/android/app/google-services.json`
+
+**Not yet built:** the Rust FCM token bridge, the `v5/push-settings` API layer, the settings UI,
+and the AndroidManifest permissions. That is the bulk of the 2,292 LOC upstream has, and none of
+it can be verified until the API is reachable.
+
+Note: upstream does **not** use Firebase — it ships a custom Kotlin plugin
+(`org.opengrind.push.PushPlugin`). We are going the Firebase route, so the transport differs even
+though the shape is similar.
+
+---
+
+## Genuine upstream gaps (measured, not guessed)
+
+Counting upstream's LOC directories as "missing" overstates it badly. Most of that is
+**restructured, not absent** — upstream re-nested `interest/`, `views/`, `search/`, `map/` into
+subdirectories, and you already have those screens at top level.
+
+**You have already ported:** the whole update mechanism (`fetch_latest_release`,
+`ForceUpdateGate.svelte`, `UpdateBanner.svelte`). Upstream's 2,338-line `updates/` dir is a
+*rewrite* of what you have, not a missing capability.
+
+**`platform/` IS NOW PARTIALLY PORTED — 2026-10-01, uncommitted.** See
+`memory/FIX_NOTES_platform_port.md`. Landed: `android-native-bridge.ts` (29 → 128 LOC, now with
+IME-inset deferral), `back-gesture-event.svelte.ts` (3 → 47, gains `dismissOnBackGesture()`),
+`src/lib/platform/{os,touch-origin,block-zoom,video-codecs,hover-pointer,scroll-gesture}.ts`, and
+`MainActivity.kt` gains `imeVisible()` + `@Volatile` on the inset fields. **30 tests, all
+mutation-verified** (`*.dom.test.ts`, jsdom project).
+
+**Two things the notes got wrong, now corrected:**
+- **`screen-chrome.svelte.ts` is NOT ported.** It needs a DOM runner *and* has no consumer here;
+  upstream calls it only from the `remeasureScreenChrome()` line, which was dropped.
+- **`link-opener.ts` is deliberately NOT ported — ours is better.** Upstream calls `openUrl()`
+  directly, which is the Android bug documented at `src/lib/api/open-url.ts:9-28` (the plugin
+  registers `open`, not `open_url`, on Android, so every call rejects). Also skipped:
+  `app-settings.ts` (invokes a Rust command that does not exist here), `keybindings.ts` (needs
+  `tinykeys`), `store.ts` (upstream-only env var).
+
+**Still blocked on the Rust/Kotlin half:** `scroll-gesture.ts` needs `set_scroll_gesture_capture`;
+`system-back-gesture.ts` needs `__AndroidBack.gestureProgress()`; `block-native-menu.ts` needs
+`$lib/haptics`. `media-failure.ts` / `media-file.ts` / `media-picker.ts` / `desktop-entry.svelte.ts`
+not started.
+
+**Two upstream-version traps, both hit:**
+1. **Svelte 5.55.5 here vs `^5.57.0` upstream.** In 5.55.5 `createContext()` returns a 2-tuple and
+   `get` **throws** when unset; upstream destructures a 3-tuple with `insideScreen`. Copied verbatim
+   it fails type-check *and* throws at runtime. `back-gesture-event.svelte.ts` re-implements the
+   5.57 shape on the 2-tuple API, with a comment saying what to delete on upgrade.
+2. **`resolve.conditions: ["browser"]`** is needed before `mount()` works in tests. Upstream sets it
+   globally; doing that here would re-resolve all 668 node tests, so it is scoped to the `dom`
+   project.
+
+**Worth porting, in order:**
+
+| Area | LOC | Why |
+|---|---:|---|
+| ~~`platform/` (rest)~~ | — | Partly done — see above. Remainder blocked on Rust/Kotlin. |
+| `blur/` | 600 | Progressive NSFW blur with calibration + compositing. You have `ProgressiveBlur.svelte` as a component but not the calibration layer. |
+| onboarding | 101 | **Already have this** — `stores/onboarding.svelte.ts` + `FeatureTour.svelte`. Smaller than listed. |
+| `ShowDistanceSetting` | small | Privacy control; absent from your settings tree. |
+
+**Do not port:** `demo/` (2,703 LOC of Playwright scaffolding — the spec says no), `entitlements/`
+(that is `bypass.ts`, which the spec calls *"real legal exposure in an app you sign and
+distribute"*), `credits/` (cosmetic), `util/` (shared helpers — port only the ones you actually hit).
+
+**Missing screens, really:** just four wrappers totalling **167 lines** — `settings/profile/`
+(51), `onboarding/` (101), `account/privacy/` (7), `auth/sign-in/google/` (8). The real work is in
+the components behind them.
+
+---
+
+## A SECOND FRONT WAS REQUESTED — iOS. It is not buildable from here.
+
+The operator asked to also produce an **iOS/Apple build, forked from open-grind, with GrindrX
+features coded into it.** That cannot be done from this box, and the premise does not hold. Both
+facts below were verified, not assumed.
+
+**1. Open-grind has never shipped an iOS build.** There is nothing to fork iOS *from*:
+- No `src-tauri/gen/ios` or `src-tauri/gen/apple` — the directories do not exist.
+- Upstream's `tauri.conf.json` has `bundle.targets = ["deb", "nsis", "app"]` — Linux, Windows and
+  macOS-**desktop**. No `ios` target, no iOS platform block.
+- No Xcode project, no Swift, no Apple tooling anywhere in its tree.
+- Its README says "Cross-platform", but that means desktop + Android.
+
+**2. This host cannot build for iOS at all.** `xcodebuild`, `xcrun`, `swiftc` and `lipo` are all
+absent and the host is Linux. Tauri's iOS target requires macOS + Xcode. Producing an `.ipa` also
+needs a paid Apple Developer account and a Mac to run it. No workaround exists.
+
+**So the iOS front needs a Mac host, not a different approach on this one.** The operator's global
+CLAUDE.md does list a Mac in the multi-host topology as the canonical build host, so the work is
+possible *there*.
+
+**If that front is picked up, the honest scope is larger than "port some features":**
+- `tauri ios init` — generates the entire iOS project
+- `tauri.conf.json` iOS platform block, Podfile / CocoaPods resolution
+- **A new bundle identifier.** The Android `com.grindrx.app` does not transfer to iOS.
+- An Apple Developer account and a provisioning profile for signing
+- Re-solving app-lock / biometrics — Android `BiometricPrompt` has no direct iOS equivalent
+- No iOS precedent exists anywhere in either tree to copy from
+
+**Also relevant:** Tauri iOS would call the *same* `/v3/cascade` endpoints against the *same*
+`grindr.mobi` host, so this front carries the same **unverified-endpoint** risk as Android — not the
+same outage, which was never real. Porting before any of it is probe-verified still means porting
+something that cannot be checked.
+
+**Recommendation recorded:** finish Android (register the Firebase app, finish the `platform/` port,
+run the seven probes), then treat iOS as a separate Mac-hosted project. The decision is the
+operator's; this section exists so the next session does not lose an hour rediscovering these walls.
+
+---
+
+## Backups taken before any of this
+
+`/home/ubuntu/backups/grindrx-main-backup-20261001/` — four `git bundle` files, all verified
+readable with `git bundle verify`. Safety tags `backup/{local,github,forgejo}-main-20261001`, also
+pushed to GitHub so the backup exists off this box.
+
+**`main` remains 107 commits behind and was never advanced past v0.1.8 in May.** It is a clean
+fast-forward (`git merge-base --is-ancestor main HEAD` → true). Fast-forwarding it is cheap and
+unlocks the normal review path.
+
+---
+
+## Open probe list — the real remaining work
+
+Every path shipped this session is **transcribed, not observed.** No signed-in session was ever
+available. In priority order:
+
+1. **Does `/v3/cascade?` still return data?** → closes WP-6 as "no change needed" or makes the v4
+   port mandatory.
+2. **`POST /v5/flags/{profileId}`** — object body? which reason values? v3.1/v4/v5 all live?
+3. **`GET /v7/views/list`** — paginated or flat? envelope key?
+4. **`GET /v1/hides` envelope key.** `hides.md` says `{ hides: [...] }`; `api-discoveries.md` says
+   `/v1/blocks` → `{ profiles: [...] }`; `blocks.md` says `/v3.1/me/blocks` → `{ blocking: [...] }`.
+   Envelope keys demonstrably drift between API generations. The existing Hidden screen parses only
+   `{ hides }` with `.catch([])` — **a drifted key renders it silently empty, never erroring.**
+5. **`/v1/me/hides` ack body** — can it arrive empty?
+6. **`GET /v1/tags` payload nesting.**
+7. **`DELETE /v1/me/hides/{profileId}`** — does it exist, or is the spec's table wrong?
+
+---
+
+## Rules for the next session
+
+- **R1** Honesty over completion. Do not report a suite green without pasting the output.
+- **R2** Cite, don't infer. I twice concluded from absence of evidence that a gate was proven and a
+  component verified. Both were wrong. Probe before concluding.
+- **R4** Backup before every prod write.
+- **R9** Single-batch ships with rollback tags.
+- **R11** No pushes from agent loops — the operator pushes.
+- **Definition of done** (from the spec): both-layer greps, house conventions, zod schemas, no ids
+  in error toasts, mocked-transport tests, vitest green, svelte-check 0 errors, eslint clean,
+  version gate passes, FIX_NOTES written, SESSION_STATE updated — **and device-tested on the s26
+  before it is called working.**
+
+That last one matters: **v0.1.38 shipped two grid regressions through a fully green build.** A green
+suite is not evidence that a screen works.
+
+---
+
+## Quick orientation commands
+
+```bash
+git log --oneline -5                       # what happened recently
+git worktree list                          # no worktrees in use
+sh ci/check-release-version.sh             # version gate
+npx vitest run                             # 698 tests (node 668 + dom 30)
+npx vitest run --project dom               # just the jsdom/component tests
+npx svelte-check --tsconfig ./tsconfig.json
+curl -sS -o /dev/null -w '%{http_code}\n' https://grindr.mobi/   # the REAL base URL
+```
+
+**Test runner:** `vite.config.mjs` now has TWO vitest projects. `node` (the original, unchanged,
+`src/**/*.test.ts` minus `*.dom.test.ts`) and `dom` (jsdom + `resolve.conditions: ["browser"]`, for
+`*.dom.test.ts`). The `conditions` line is load-bearing — without it Svelte resolves to the server
+build and `mount()` throws `lifecycle_function_unavailable`. This closes the long-standing gap that
+let the v0.1.34/0.1.36/0.1.38 visual regressions ship through green gates.

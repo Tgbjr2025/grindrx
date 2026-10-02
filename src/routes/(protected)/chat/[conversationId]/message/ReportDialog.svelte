@@ -41,13 +41,25 @@
 		if (selectedReasonId === null) return;
 		submitting = true;
 		try {
-			await fetchRest(`/v4/flags/${profileId}`, {
+			// `fetchRest` only rejects on an IPC failure — it never rejects on an
+			// HTTP error status. A 400/403/500 used to fall straight into the
+			// success path, so the user was told their report went through when
+			// the server had refused it. Check the status explicitly, matching
+			// `lib/api/conversation.ts` / `lib/api/audio.ts`.
+			const res = await fetchRest(`/v4/flags/${profileId}`, {
 				method: "POST",
 				body: {
 					reasonId: selectedReasonId,
 					...(comment.trim() ? { comment: comment.trim() } : {}),
 				},
 			});
+			if (res.status >= 400) {
+				console.error(
+					`[GrindrX] report failed (${res.status}) for profile ${profileId}`,
+				);
+				toast.error("Failed to submit report");
+				return;
+			}
 			toast.success("Report submitted");
 			open = false;
 		} catch {

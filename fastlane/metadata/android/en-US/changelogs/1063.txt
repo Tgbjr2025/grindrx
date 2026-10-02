@@ -1,0 +1,1 @@
+Fixed favoriting a profile (it was silently failing). Added a first-run feature tour and a per-version What's-new card.

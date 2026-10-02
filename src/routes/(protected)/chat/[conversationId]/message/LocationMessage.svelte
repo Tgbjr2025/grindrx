@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { MapPinIcon } from "phosphor-svelte";
 
+	import { openExternalUrl } from "$lib/api/open-url";
 	import type { LocationMessage } from "$lib/model/message";
 	import { MessageMediaState } from "./message-media.svelte";
 
@@ -37,11 +38,9 @@
 	);
 
 	async function openInMaps() {
-		try {
-			const { openUrl } = await import("@tauri-apps/plugin-opener");
-			await openUrl(mapsUrl);
-		} catch (error) {
-			console.error("[GrindrX] failed to open location in maps:", error);
+		const result = await openExternalUrl(mapsUrl);
+		if (!result.opened) {
+			console.error("[GrindrX] failed to open location in maps:", result.error);
 		}
 	}
 </script>

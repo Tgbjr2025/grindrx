@@ -1,48 +1,283 @@
 <script lang="ts">
-	import { CameraIcon, ImagesIcon, MicrophoneIcon, PaperPlaneRightIcon } from "phosphor-svelte";
+	import { CameraIcon, ChatTextIcon, ImagesIcon, MapPinIcon, MicrophoneIcon, PaperPlaneRightIcon, TrashIcon } from "phosphor-svelte";
 	import { toast } from "svelte-sonner";
 	import { expoOut } from "svelte/easing";
 	import { fade } from "svelte/transition";
 
+	import { pickAudioMimeType, uploadAudioBlob } from "$lib/api/audio";
 	import { uploadProfileImage } from "$lib/api/profile";
-	import ToastUnimplemented from "$lib/components/ToastUnimplemented.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import { Textarea } from "$lib/components/ui/textarea";
+	import { getSavedPhrases } from "$lib/stores/saved-phrases.svelte";
 	import type { AlbumExpirationType } from "$lib/model/album";
 	import type { Message } from "$lib/model/message";
 	import AlbumPicker from "./AlbumPicker.svelte";
+	import LocationShareSheet from "./LocationShareSheet.svelte";
+	import SavedPhrasesDrawer from "./SavedPhrasesDrawer.svelte";
 
 	let {
 		onSend,
 		onSendAlbum,
 		onSendPhotoOptimistic,
+		onSendAudio,
 		recipientProfileId,
 	}: {
-		onSend: (params: Message) => void | Promise<void>;
-		onSendAlbum: (albumId: number, expirationType: AlbumExpirationType) => Promise<void>;
+		/**
+		 * Resolves to whether a bubble was actually created. `ConversationState.send`
+		 * *bails* (rather than throwing) when the conversation's profile has not
+		 * resolved yet, so a `Promise<void>` here made every bail indistinguishable
+		 * from a success — the caller cleared the typed text and (for locations)
+		 * toasted "sent" for a message that was never transmitted.
+		 */
+		onSend: (params: Message) => Promise<boolean>;
+		onSendAlbum: (albumIds: number[], expirationType: AlbumExpirationType) => Promise<void>;
 		onSendPhotoOptimistic: (params: { mediaId: number; mediaHash: string; url?: string; createdAt: number | null }) => Promise<void>;
+		onSendAudio: (params: { mediaId: number; mediaHash: string; url: string; contentType: string; length: number }) => Promise<void>;
 		recipientProfileId: number | null;
 	} = $props();
 
-	let textContent = $state("");
-	let albumPickerOpen = $state(false);
-	let uploading = $state(false);
-	let fileInputEl = $state<HTMLInputElement | null>(null);
+	// --- Share a location ---------------------------------------------------
+	// The `Location` message type could be received and rendered but never sent.
+	// `LocationShareSheet` reuses the existing map picker to choose a point, then
+	// confirms before sending — sharing a location is a real disclosure, so the
+	// user always sees the exact coordinates before it leaves the device.
+	let locationShareOpen = $state(false);
 
-	async function onSubmit() {
-		const text = textContent.trim();
-		if (text === "") return;
+	async function sendSharedLocation(
+		lat: number,
+		lon: number,
+		label: string | null,
+	) {
 		try {
-			await onSend({ type: "Text", body: { text } });
-			textContent = "";
+			// Sharing a location is the most sensitive disclosure this app makes, so
+			// the success toast must be conditional on a bubble actually appearing.
+			// A bail (profile not resolved) already toasted its own error; saying
+			// "Location sent." on top of that told the user their exact coordinates
+			// were transmitted when they were not.
+			const sent = await onSend({ type: "Location", body: { lat, lon } });
+			if (sent) toast.success(label ? `Sent ${label}.` : "Location sent.");
 		} catch (error) {
-			console.error(error);
-			toast.error("Failed to send message");
+			console.error("Failed to send location", error);
+			toast.error("Failed to send location");
 		}
 	}
 
-	async function onShareAlbum(albumId: number, expirationType: AlbumExpirationType) {
-		await onSendAlbum(albumId, expirationType);
+	let textContent = $state("");
+	let albumPickerOpen = $state(false);
+	let savedPhrasesOpen = $state(false);
+	let uploading = $state(false);
+	// Guards against a double-tap on Send firing two submits in the same task:
+	// `onSubmit` read `textContent`, awaited, and only then cleared it, so both
+	// submits saw the same non-empty field and both sent. Every other async
+	// action in this component already has such a flag.
+	let sending = $state(false);
+	let fileInputEl = $state<HTMLInputElement | null>(null);
+
+	// --- Voice messages (record → upload → send) ---
+	let recording = $state(false);
+	let sendingAudio = $state(false);
+	let recordSeconds = $state(0);
+	let mediaRecorder: MediaRecorder | null = null;
+	let audioStream: MediaStream | null = null;
+	let audioChunks: Blob[] = [];
+	let recordStartMs = 0;
+	let recordTimer: ReturnType<typeof setInterval> | null = null;
+	let cancelledRecording = false;
+	// Set when the component is torn down (navigation, conversation switch,
+	// app background). Without it, a recording started before the user left
+	// kept the microphone live and the 5-minute cap still fired `onstop`,
+	// which uploaded and SENT a voice message into a conversation the user had
+	// already left — silently, with no UI.
+	let destroyed = false;
+
+	// Stop the mic and drop the recording when this component goes away.
+	// `cancelledRecording` covers the explicit Cancel button; this covers every
+	// other exit path (back gesture, conversation switch, app close).
+	$effect(() => {
+		return () => {
+			destroyed = true;
+			cancelledRecording = true;
+			if (mediaRecorder && mediaRecorder.state !== "inactive") {
+				try {
+					mediaRecorder.stop();
+				} catch {
+					// Already stopped / errored — teardown below is enough.
+				}
+			}
+			teardownRecording();
+		};
+	});
+
+	function teardownRecording() {
+		if (recordTimer) {
+			clearInterval(recordTimer);
+			recordTimer = null;
+		}
+		if (audioStream) {
+			for (const track of audioStream.getTracks()) track.stop();
+			audioStream = null;
+		}
+		mediaRecorder = null;
+		recording = false;
+	}
+
+	async function startRecording() {
+		if (destroyed) return;
+		if (recording || sendingAudio || recipientProfileId === null) return;
+		if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+			toast.error("Voice recording isn't available on this device.");
+			return;
+		}
+		let stream: MediaStream;
+		try {
+			stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		} catch {
+			toast.error("Microphone permission is needed to record a voice message.");
+			return;
+		}
+		// The `getUserMedia` await is where the Android runtime-permission dialog
+		// blocks. If the user navigates back while it is showing, the teardown above
+		// already ran with `audioStream === null` and had no tracks to stop — so
+		// without this re-check the resolved stream is simply assigned and the mic
+		// stays live for the rest of the process (indicator on, tracks not
+		// collectable). Stop them and drop them on the spot instead.
+		if (destroyed || cancelledRecording) {
+			for (const track of stream.getTracks()) track.stop();
+			return;
+		}
+		audioStream = stream;
+		cancelledRecording = false;
+		audioChunks = [];
+		const mimeType = pickAudioMimeType();
+		try {
+			mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+		} catch {
+			mediaRecorder = new MediaRecorder(audioStream);
+		}
+		mediaRecorder.ondataavailable = (e) => {
+			if (e.data.size > 0) audioChunks.push(e.data);
+		};
+		mediaRecorder.onstop = () => {
+			const lengthMs = Date.now() - recordStartMs;
+			const type = mediaRecorder?.mimeType || mimeType;
+			teardownRecording();
+			if (cancelledRecording || audioChunks.length === 0) return;
+			const blob = new Blob(audioChunks, { type });
+			void uploadAndSendAudio(blob, lengthMs);
+		};
+		recordStartMs = Date.now();
+		recordSeconds = 0;
+		recording = true;
+		recordTimer = setInterval(() => {
+			recordSeconds = Math.floor((Date.now() - recordStartMs) / 1000);
+			// Hard cap at 5 minutes.
+			if (recordSeconds >= 300) stopRecording();
+		}, 250);
+		mediaRecorder.start();
+	}
+
+	function stopRecording() {
+		if (!recording || !mediaRecorder) return;
+		// onstop handles upload/send.
+		mediaRecorder.stop();
+	}
+
+	function cancelRecording() {
+		if (!recording) return;
+		cancelledRecording = true;
+		if (mediaRecorder) mediaRecorder.stop();
+		else teardownRecording();
+	}
+
+	async function uploadAndSendAudio(blob: Blob, lengthMs: number) {
+		// Too short to be intentional. Previously this just `return`ed, so a
+		// mis-tap on the mic followed by a release produced literally nothing —
+		// no bubble, no error, no hint that anything had happened. Say so.
+		if (lengthMs < 500) {
+			toast.error("Recording was too short to send.");
+			return;
+		}
+		// The conversation may have been closed while we were recording.
+		if (destroyed || cancelledRecording) return;
+		sendingAudio = true;
+		try {
+			const media = await uploadAudioBlob(blob, lengthMs);
+			await onSendAudio(media);
+		} catch (err) {
+			console.error("Failed to send voice message", err);
+			const detail = err instanceof Error ? `: ${err.message.slice(0, 120)}` : "";
+			toast.error(`Failed to send voice message${detail}`);
+		} finally {
+			sendingAudio = false;
+		}
+	}
+
+	function formatRecordTime(s: number): string {
+		const m = Math.floor(s / 60);
+		const sec = s % 60;
+		return `${m}:${sec.toString().padStart(2, "0")}`;
+	}
+
+	function insertPhrase(text: string) {
+		const current = textContent;
+		if (current.trim() === "") {
+			textContent = text;
+		} else {
+			// Append to whatever is typed, with a single separating space.
+			textContent = current.replace(/\s+$/, "") + " " + text;
+		}
+	}
+
+	// Live saved-phrase suggestions: as the user types, saved phrases that match
+	// the current text surface above the composer for one-tap completion. An exact
+	// match is excluded, so a just-picked phrase doesn't keep suggesting itself.
+	const phraseSuggestions = $derived.by(() => {
+		const q = textContent.trim().toLowerCase();
+		if (q.length < 1) return [];
+		return getSavedPhrases()
+			.filter((p) => {
+				const t = p.text.toLowerCase();
+				return t.includes(q) && t !== q;
+			})
+			.sort((a, b) => {
+				// Prefer phrases that START with the query.
+				const as = a.text.toLowerCase().startsWith(q) ? 0 : 1;
+				const bs = b.text.toLowerCase().startsWith(q) ? 0 : 1;
+				return as - bs;
+			})
+			.slice(0, 4);
+	});
+
+	function applySuggestion(text: string) {
+		textContent = text;
+	}
+
+	async function onSubmit() {
+		// A second submit in the same task (double-tap) must not start a second
+		// send: `textContent` is only cleared after the first `await` resolves, so
+		// without this both submits read the same field.
+		if (sending) return;
+		const text = textContent.trim();
+		if (text === "") return;
+		sending = true;
+		try {
+			const sent = await onSend({ type: "Text", body: { text } });
+			// Only clear the field when a bubble was actually produced. `send()`
+			// bails (with its own error toast) when the conversation's profile has
+			// not resolved; awaiting a `void` return used to clear the field anyway,
+			// so the user got an error toast AND silently lost what they typed —
+			// reachable on every cold open of a conversation.
+			if (sent) textContent = "";
+		} catch (error) {
+			console.error(error);
+			toast.error("Failed to send message");
+		} finally {
+			sending = false;
+		}
+	}
+
+	async function onShareAlbum(albumIds: number[], expirationType: AlbumExpirationType) {
+		await onSendAlbum(albumIds, expirationType);
 	}
 
 	async function onSendPhoto(params: {
@@ -79,15 +314,58 @@
 	}
 </script>
 
+{#if phraseSuggestions.length > 0}
+	<div class="mx-2 mb-1 flex flex-col gap-1 shrink-0" transition:fade={{ duration: 120 }}>
+		{#each phraseSuggestions as phrase (phrase.id)}
+			<button
+				type="button"
+				class="text-left text-sm px-3 py-2 rounded-xl bg-card/90 backdrop-blur-sm border border-border/60 shadow-sm hover:bg-accent active:bg-accent/70 transition-colors cursor-pointer"
+				onclick={() => applySuggestion(phrase.text)}
+			>
+				<span class="line-clamp-1 break-words">{phrase.text}</span>
+			</button>
+		{/each}
+	</div>
+{/if}
+
 <div class="relative mx-2 mb-1 shrink-0 min-w-0 flex items-end gap-0 bg-card/80 backdrop-blur-sm rounded-[24px] border border-border/60 px-1 py-1 shadow-sm">
+	{#if recording}
+		<div class="absolute inset-0 z-10 flex items-center gap-3 bg-card rounded-[24px] px-3" transition:fade={{ duration: 120 }}>
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				class="size-9.5 shrink-0 cursor-pointer rounded-full"
+				aria-label="Cancel recording"
+				onclick={cancelRecording}
+			>
+				<TrashIcon color="var(--destructive)" class="size-4.5" />
+			</Button>
+			<span class="size-2.5 rounded-full bg-red-500 animate-pulse shrink-0"></span>
+			<span class="flex-1 text-sm tabular-nums text-muted-foreground">
+				Recording… {formatRecordTime(recordSeconds)}
+			</span>
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon"
+				class="size-9.5 shrink-0 cursor-pointer rounded-full"
+				aria-label="Send voice message"
+				onclick={stopRecording}
+			>
+				<PaperPlaneRightIcon weight="fill" color="var(--primary)" class="size-4.5" />
+			</Button>
+		</div>
+	{/if}
 	<!-- Albums / My Photos picker -->
 	<Button
 		type="button"
 		variant="ghost"
 		size="icon"
 		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Share an album"
+		disabled={recipientProfileId === null}
 		onclick={() => {
-			if (recipientProfileId === null) return;
 			albumPickerOpen = true;
 		}}
 	>
@@ -96,6 +374,35 @@
 			color="var(--muted-foreground)"
 			class="size-4.5"
 		/>
+	</Button>
+
+	<!-- Saved phrases / quick replies -->
+	<Button
+		type="button"
+		variant="ghost"
+		size="icon"
+		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Saved phrases"
+		onclick={() => (savedPhrasesOpen = true)}
+	>
+		<ChatTextIcon
+			weight="fill"
+			color="var(--muted-foreground)"
+			class="size-4.5"
+		/>
+	</Button>
+
+	<!-- Share a location -->
+	<Button
+		type="button"
+		variant="ghost"
+		size="icon"
+		class="size-9.5 shrink-0 cursor-pointer p-2 mb-0 rounded-full"
+		aria-label="Share a location"
+		disabled={recipientProfileId === null}
+		onclick={() => (locationShareOpen = true)}
+	>
+		<MapPinIcon weight="fill" color="var(--muted-foreground)" class="size-4.5" />
 	</Button>
 
 	<!-- Camera / device gallery upload -->
@@ -133,7 +440,20 @@
 					currentTarget: EventTarget & HTMLTextAreaElement;
 				},
 			) => {
-				if (event.key === "Enter" && !event.shiftKey) {
+				// IME composition guard. While an IME is composing (Japanese, Korean,
+				// Chinese, Vietnamese, and any other multi-tap keyboard), Enter is
+				// "accept this candidate", not "send". The keydown still reports
+				// `key === "Enter"`, so without this check the commit was cancelled and
+				// the half-finished romaji/pinyin was sent instead. `isComposing` is
+				// the standard signal; `keyCode === 229` is the belt-and-braces form
+				// for older Android WebViews that report `isComposing: false` for the
+				// confirming keydown.
+				if (
+					event.key === "Enter" &&
+					!event.shiftKey &&
+					!event.isComposing &&
+					event.keyCode !== 229
+				) {
 					event.preventDefault();
 					event.currentTarget.form?.requestSubmit();
 				}
@@ -147,20 +467,19 @@
 					variant="ghost"
 					size="icon"
 					class="size-full cursor-pointer p-2"
-					onclick={() => {
-						toast(ToastUnimplemented, {
-							componentProps: {
-								feature: "Voice messages",
-								issue: 35,
-							},
-						});
-					}}
+					aria-label="Record voice message"
+					disabled={sendingAudio || recipientProfileId === null}
+					onclick={() => void startRecording()}
 				>
-					<MicrophoneIcon
-						weight="fill"
-						color="var(--muted-foreground)"
-						class="size-4.5"
-					/>
+					{#if sendingAudio}
+						<span class="size-4.5 border-2 border-muted-foreground/40 border-t-muted-foreground rounded-full animate-spin"></span>
+					{:else}
+						<MicrophoneIcon
+							weight="fill"
+							color="var(--muted-foreground)"
+							class="size-4.5"
+						/>
+					{/if}
 				</Button>
 			</div>
 		{:else}
@@ -170,12 +489,18 @@
 					variant="ghost"
 					size="icon"
 					class="size-full cursor-pointer p-2"
+					aria-label="Send message"
+					disabled={sending || recipientProfileId === null}
 				>
-					<PaperPlaneRightIcon
-						weight="fill"
-						color="var(--primary)"
-						class="size-4.5"
-					/>
+					{#if sending}
+						<span class="size-4.5 border-2 border-muted-foreground/40 border-t-muted-foreground rounded-full animate-spin"></span>
+					{:else}
+						<PaperPlaneRightIcon
+							weight="fill"
+							color="var(--primary)"
+							class="size-4.5"
+						/>
+					{/if}
 				</Button>
 			</div>
 		{/if}
@@ -183,6 +508,10 @@
 </div>
 
 <AlbumPicker bind:open={albumPickerOpen} onShare={onShareAlbum} {onSendPhoto} />
+
+<SavedPhrasesDrawer bind:open={savedPhrasesOpen} onInsert={insertPhrase} />
+
+<LocationShareSheet bind:open={locationShareOpen} onSend={sendSharedLocation} />
 
 <style lang="postcss">
 	@reference "$layout";

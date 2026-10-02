@@ -5,21 +5,23 @@
 
 	import type { ApiResponseMessage } from "$lib/model/message";
 	import AlbumMessage from "./AlbumMessage.svelte";
+	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
+	import AudioMessage from "./AudioMessage.svelte";
 	import { setMessageContext } from "./context";
+	import GaymojiMessage from "./GaymojiMessage.svelte";
+	import GiphyMessage from "./GiphyMessage.svelte";
 	import ImageMessage from "./ImageMessage.svelte";
+	import LocationMessage from "./LocationMessage.svelte";
 	import MessageContextMenu from "./MessageContextMenu.svelte";
 	import MessageDateGroup from "./MessageDateGroup.svelte";
 	import MessageTime from "./MessageTime.svelte";
 	import MessageWrapper from "./MessageWrapper.svelte";
+	import ProfilePhotoReplyMessage from "./ProfilePhotoReplyMessage.svelte";
 	import Reaction from "./Reaction.svelte";
+	import ReportDialog from "./ReportDialog.svelte";
 	import TextMessage from "./TextMessage.svelte";
 	import UnsentMessage from "./UnsentMessage.svelte";
 	import UnsupportedMessage from "./UnsupportedMessage.svelte";
-	import AlbumReactionMessage from "./AlbumReactionMessage.svelte";
-	import LocationMessage from "./LocationMessage.svelte";
-	import AudioMessage from "./AudioMessage.svelte";
-	import GaymojiMessage from "./GaymojiMessage.svelte";
-	import GiphyMessage from "./GiphyMessage.svelte";
 	import VideoMessage from "./VideoMessage.svelte";
 
 	let {
@@ -35,8 +37,11 @@
 		onVisible,
 		onUnsend,
 		onRetry,
+		ourProfileId,
 	}: {
 		message: ApiResponseMessage;
+		/** The current user, so a reaction badge can show which one is ours. */
+		ourProfileId?: number;
 		isOut: boolean;
 		indexInStack: number;
 		stackLength: number;
@@ -70,6 +75,39 @@
 				height: number;
 		  } = $state(false);
 	let messageElement: HTMLElement | null = $state(null);
+
+	// The report dialog lives HERE, not inside `MessageContextMenu`. Rendered
+	// there, the Report button was a guaranteed no-op: the handler set
+	// `reportOpen = true` and called `onClose()` in the same task, `onClose` set
+	// `contextMenuOpen = false` in the parent, and Svelte batched both writes into
+	// one flush in which `{#if contextMenuOpen}` unmounted the menu — taking the
+	// dialog (a child of that menu) with it before it ever mounted. The only
+	// reporting path in chat did nothing at all.
+	let reportOpen = $state(false);
+	const reportProfileId = $derived(
+		!isOut && message.type !== "Retract" ? message.senderId : undefined,
+	);
+
+	// `reactionAvailable` used to count EVERYONE's reactions, so six reactions
+	// from the other party removed the picker entirely. The cap is about how many
+	// distinct reaction TYPES exist, so count those.
+	const distinctReactionTypes = $derived(
+		new Set(message.reactions.map((r) => r.reactionType)).size,
+	);
+	// Which reaction types WE hold, so the picker can mark them pressed.
+	const ourReactionTypes = $derived(
+		message.reactions
+			.filter((r) => ourProfileId !== undefined && r.profileId === ourProfileId)
+			.map((r) => r.reactionType),
+	);
+
+	// The tombstone depends on more than the type. `unsent: true` is set by
+	// `markMessageAsUnsent` and by the retract handler BEFORE/independently of the
+	// server having cleared `type`/`body`, and `unsent` was never consulted
+	// anywhere in the renderer — so an optimistically-unsent message still showed
+	// its original text and attachments until the server caught up. Dispatch on
+	// both, matching `previewFromMessage`.
+	const showTombstone = $derived(message.unsent === true);
 
 	function setRef(el: HTMLElement | null) {
 		messageElement = el ?? null;
@@ -160,12 +198,22 @@
 				(m, r) => m.set(r.reactionType, (m.get(r.reactionType) ?? 0) + 1),
 				new Map<number, number>(),
 			)}
+			<!-- Which reaction types WE added, so the badge can say so. -->
+			{@const myReactionTypes = new Set(
+				message.reactions
+					.filter((r) => ourProfileId !== undefined && r.profileId === ourProfileId)
+					.map((r) => r.reactionType),
+			)}
 			<div
 				class="flex items-center gap-0.5 mt-1 mr-1"
 				transition:scale={{ duration: 150, easing: expoOut }}
 			>
 				{#each reactionMap.entries() as [type, count]}
-					<Reaction type={Number(type)} {count} />
+					<Reaction
+						type={Number(type)}
+						{count}
+						mine={myReactionTypes.has(Number(type))}
+					/>
 				{/each}
 			</div>
 		{/if}
@@ -174,7 +222,16 @@
 
 {#snippet content(clone?: boolean)}
 	<MessageWrapper {clone} {setRef} {adornments}>
-		{#if message.type === "Text"}
+		<!-- Dispatch on `showTombstone` (`unsent === true`), not only on
+		     `type === "Unsent"`. `apiResponseMessageSchema` ALSO accepts
+		     `{ type: "Text", body: {…}, unsent: true }` (the overlay constrains
+		     `unsent` independently of the type), so a server that flags a message
+		     unsent without rewriting its type would otherwise still render the
+		     original text and attachments. `previewFromMessage` uses the same
+		     condition. -->
+		{#if showTombstone}
+			<UnsentMessage />
+		{:else if message.type === "Text"}
 			<TextMessage message={message.body} />
 		{:else if message.type === "Image" || message.type === "ExpiringImage"}
 			<ImageMessage message={message.body} />
@@ -194,8 +251,8 @@
 			<VideoMessage message={message.body} />
 		{:else if message.type === "Gaymoji"}
 			<GaymojiMessage message={message.body} />
-		{:else if message.type === "Unsent"}
-			<UnsentMessage />
+		{:else if message.type === "ProfilePhotoReply"}
+			<ProfilePhotoReplyMessage {message} />
 		{:else}
 			<UnsupportedMessage type={message.type} />
 		{/if}
@@ -228,28 +285,42 @@
 		<div use:observeRead>
 			{@render retractedContent()}
 		</div>
+	{:else if showTombstone}
+		<!--
+			`markMessageAsUnsent` sets `unsent: true` and clears the body BEFORE the
+			server confirms, but the renderer only looked at `type === "Unsent"`, so
+			an optimistically-unsent message kept rendering its full text, photo and
+			attachments until the server caught up. Dispatch on `unsent` as well —
+			`previewFromMessage` does the same.
+		-->
+		<div use:observeRead>
+			{@render content()}
+		</div>
 	{:else}
+		<!--
+			Double-tap reaction removed. The old `ondblclick` called
+			preventDefault() and removeAllRanges() on every double-tap, so a user
+			double-tapping to SELECT and copy a word instead fired a 🔥. The context
+			menu now carries a real reaction picker (see MessageContextMenu), which
+			also works on touch where a double-tap is ambiguous with scroll/zoom.
+
+			Accessibility: this wrapper used to carry `role="button"` and
+			`aria-label="Message"`. That gives the whole bubble the accessible name
+			"Message" and, in the usual ARIA mappings, makes every descendant
+			PRESENTATIONAL — so a screen-reader user heard "Message, button" for
+			every bubble and could never reach the text, the links or the reaction
+			counts. The wrapper is now a plain element and the actions are exposed as
+			a real, separately focusable control below.
+		-->
 		<div
 			class={{
 				"*:me-auto *:float-start pe-3": !isOut,
 				"*:ms-auto *:float-end ps-3": isOut,
 			}}
-			role="button"
-			tabindex="0"
-			aria-label="Message"
-			ondblclick={(event) => {
-				if (!isOut && onReact) {
-					event.preventDefault();
-					onReact(1);
-				}
-				window.getSelection()?.removeAllRanges();
-			}}
-			onkeydown={(event) => {
-				if (event.key === "Enter" || event.key === " ") {
-					if (event.key === " ") event.preventDefault();
-					onContextMenu();
-				}
-			}}
+			// `role="group"`, not `role="button"`: `group` is a structural role, so
+			// the bubble's text, links and reaction counts stay in the accessibility
+			// tree, while still satisfying the "static element with a handler" rule.
+			role="group"
 			oncontextmenu={(event) => {
 				event.preventDefault();
 				onContextMenu();
@@ -259,6 +330,26 @@
 		>
 			{@render content()}
 		</div>
+		<!-- The real control that replaced `role="button"` on the wrapper: a
+		     keyboard/screen-reader-reachable button with a meaningful name, sitting
+		     beside the bubble rather than replacing its content. `sr-only` keeps the
+		     visual layout identical. -->
+		<button
+			type="button"
+			class={[
+				"sr-only focus-visible:not-sr-only focus-visible:absolute focus-visible:z-10",
+				isOut ? "right-2" : "left-2",
+			]}
+			onkeydown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					if (event.key === " ") event.preventDefault();
+					onContextMenu();
+				}
+			}}
+			onclick={onContextMenu}
+		>
+			Message actions
+		</button>
 	{/if}
 	{#if lastInStack}
 		<span
@@ -302,9 +393,24 @@
 		onClose={() => (contextMenuOpen = false)}
 		style={inheritedStyles}
 		textContent={message.type === "Text" ? message.body.text : undefined}
-		reactionAvailable={message.reactions.length === 0 && !isOut}
-		reportProfileId={!isOut ? message.senderId : undefined}
+		reactionAvailable={distinctReactionTypes < 6}
+		{ourReactionTypes}
+		{onReact}
+		reportProfileId={reportProfileId}
+		onReport={() => (reportOpen = true)}
 		{onDelete}
 		{onUnsend}
 	/>
+{/if}
+
+<!--
+	Rendered here, NOT inside `MessageContextMenu`. The dialog used to be a child
+	of the menu, and the Report button set `reportOpen = true` and closed the menu
+	in the same task; Svelte batched both state writes into one flush in which the
+	menu (and therefore this dialog) was unmounted before it ever mounted. So the
+	only reporting path in chat silently did nothing. Owning it here gives it a
+	component that outlives the menu.
+-->
+{#if reportProfileId !== undefined}
+	<ReportDialog bind:open={reportOpen} profileId={reportProfileId} />
 {/if}

@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -19,10 +20,29 @@ import androidx.core.view.WindowInsetsControllerCompat
 import io.crates.keyring.Keyring
 
 class MainActivity : TauriActivity() {
-	private var insetsTop = 0
-	private var insetsBottom = 0
-	private var insetsLeft = 0
-	private var insetsRight = 0
+	// @Volatile because `InsetsInterface` is invoked on the WebView's JS-bridge
+	// thread, not the UI thread that writes these in the insets listener. Without
+	// it the JS side can read a stale (or torn) value. Upstream open-grind guards
+	// the same state the same way, via a single @Volatile data class.
+	@Volatile private var insetsTop = 0
+	@Volatile private var insetsBottom = 0
+	@Volatile private var insetsLeft = 0
+	@Volatile private var insetsRight = 0
+
+	/**
+	 * Whether the soft keyboard is currently up. Exposed to JS as
+	 * `__AndroidInsets.imeVisible()`.
+	 *
+	 * The frontend needs this to tell a keyboard transition apart from any other
+	 * inset change: `android-native-bridge.ts` defers applying new insets until the
+	 * WebView actually resizes when — and only when — the IME visibility flipped,
+	 * so `--safe-area-*` does not jump ahead of the layout. `softKeyboardVisibility()`
+	 * reads the same flag.
+	 *
+	 * This was already computed in the insets listener and thrown away.
+	 */
+	@Volatile private var imeVisibleNow = false
+
 	private var webViewRef: WebView? = null
 
 	/** conversationId pulled from a tapped notification, delivered to the webview once ready. */
@@ -36,6 +56,7 @@ class MainActivity : TauriActivity() {
 		@JavascriptInterface fun bottom() = insetsBottom
 		@JavascriptInterface fun left() = insetsLeft
 		@JavascriptInterface fun right() = insetsRight
+		@JavascriptInterface fun imeVisible() = imeVisibleNow
 	}
 
 	inner class DiscreetModeInterface {
@@ -136,6 +157,20 @@ class MainActivity : TauriActivity() {
 		enableEdgeToEdge()
 		Keyring.initializeNdkContext(applicationContext)
 		super.onCreate(savedInstanceState)
+
+		// FLAG_SECURE: without it the OS captures the current screen into the
+		// recents/multitasker thumbnail and allows screenshots and screen
+		// recording. This app shows intimate content by design — chat text,
+		// profile photos, album photos and precise location — so any of those
+		// landing in a screenshot the user then shares, or in a thumbnail
+		// visible from the recents switcher, is a real disclosure. Setting it on
+		// the window covers the WebView surface too, so it cannot be bypassed by
+		// the page rendering its own canvas.
+		window.setFlags(
+			WindowManager.LayoutParams.FLAG_SECURE,
+			WindowManager.LayoutParams.FLAG_SECURE
+		)
+
 		createNotificationChannel()
 		requestNotificationPermissionIfNeeded()
 
@@ -161,6 +196,7 @@ class MainActivity : TauriActivity() {
 			insetsBottom = if (isImeVisible) 0 else (bars.bottom / density).toInt()
 			insetsLeft = (bars.left / density).toInt()
 			insetsRight = (bars.right / density).toInt()
+			imeVisibleNow = isImeVisible
 
 			val bottomMargin = if (isImeVisible) ime.bottom else 0
 			webViewRef?.let { wv ->

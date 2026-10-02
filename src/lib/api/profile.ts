@@ -34,6 +34,11 @@ export function clearProfileCache(profileId: number) {
 export function clearAllProfileCaches() {
 	myProfileCache = null;
 	profilesCache.clear();
+	// The minted-mediaId cache is the one profile-side cache that is PERSISTED, so
+	// dropping only the in-memory maps left a signed CDN URL (bearer-equivalent
+	// for its ~15 min lifetime) and the user's photo mediaHashes in localStorage
+	// across a sign-out.
+	clearMediaIdCache();
 }
 
 const inflight = new Map<number, Promise<Profile>>();
@@ -236,6 +241,24 @@ export function invalidateCachedMediaId(key: string): void {
 }
 
 /**
+ * Drop every cached minted mediaId, in memory AND in localStorage.
+ *
+ * The persisted value pairs the user's photo mediaHashes with SIGNED CloudFront
+ * URLs, which are bearer-equivalent for their ~15 minute lifetime, so it must
+ * not survive a sign-out. Idempotent, and safe to call when the cache was never
+ * populated.
+ */
+export function clearMediaIdCache(): void {
+	mediaIdCache.clear();
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(MEDIAID_CACHE_KEY);
+	} catch (err) {
+		console.error("[GrindrX] Failed to clear media id cache:", err);
+	}
+}
+
+/**
  * Convert a byte array to a base64 string without stalling the main thread.
  *
  * The previous implementation built the binary string one `String.fromCharCode`
@@ -301,13 +324,30 @@ const MAX_UPLOAD_EDGE = 1920;
  * the WebView main thread froze the app; capping the longest edge keeps inline
  * bubbles, the lightbox, and the recipient cheap. Falls back to the original
  * bytes if anything goes wrong, and leaves animated GIFs untouched.
+ *
+ * Always reports the true pixel `width`/`height` of whatever bytes are being
+ * returned: the profile-photos upload has to declare a square `thumbCoords`
+ * crop, and a wrong dimension there makes the server silently drop the image.
  */
 async function downscaleImage(
 	file: File,
-): Promise<{ base64: string; mimeType: string }> {
+): Promise<{ base64: string; mimeType: string; width: number; height: number }> {
+	const dimensionsOf = async (): Promise<{ width: number; height: number }> => {
+		try {
+			const bitmap = await createImageBitmap(file);
+			const size = { width: bitmap.width, height: bitmap.height };
+			bitmap.close();
+			return size;
+		} catch {
+			// Unknown dimensions — Rust rejects a zero crop, which surfaces as a
+			// clear error rather than a silently dropped photo.
+			return { width: 0, height: 0 };
+		}
+	};
 	const original = async () => ({
 		base64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
 		mimeType: file.type || "image/jpeg",
+		...(await dimensionsOf()),
 	});
 	if (file.type === "image/gif") return original();
 	try {
@@ -335,15 +375,114 @@ async function downscaleImage(
 		);
 		if (!blob) return original();
 		const base64 = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
-		return { base64, mimeType: "image/jpeg" };
+		return { base64, mimeType: "image/jpeg", width: w, height: h };
 	} catch {
 		return original();
 	}
 }
 
+/**
+ * Prepare a picked image for upload: downscaled, EXIF-stripped, base64.
+ *
+ * Exported so the album path reuses exactly the same preprocessing as the
+ * profile/chat paths rather than uploading raw camera bytes (and raw EXIF,
+ * including GPS) to a different endpoint.
+ */
+export async function prepareImageForUpload(
+	file: File,
+): Promise<{ base64: string; mimeType: string; width: number; height: number }> {
+	return downscaleImage(file);
+}
+
 export async function uploadProfileImage(file: File): Promise<UploadedMedia> {
 	const { base64, mimeType } = await downscaleImage(file);
 	return uploadImageBytes(base64, mimeType);
+}
+
+// --- Profile photos (add / set primary / reorder) ----------------------------
+//
+// Previously the app could only DELETE a profile photo
+// (`DELETE /v3/me/profile/images`). `POST /v3/me/profile/images` (upload) and
+// `PUT /v3/me/profile/images` (set primary + secondaries) were never called from
+// anywhere, so there was no way to add a photo or choose your main picture.
+//
+// Why a second upload path: `uploadProfileImage` targets
+// `POST /v5/chat/media/upload`, the only endpoint that mints a numeric `mediaId`
+// — but it returns a SIGNED 64-char hash. The profile-photos endpoints take
+// PUBLIC 40-char hashes, so a chat-media hash is not a valid `primaryImageHash`.
+// `upload_profile_photo` posts to the legacy `POST /v4/media/upload` instead,
+// which returns the public hash.
+
+const profileUploadResponseSchema = z.object({
+	// The public CDN hash to feed to `primaryImageHash` / `secondaryImageHashes`.
+	hash: mediaHashPublicSchema,
+});
+
+/** `POST /v4/media/upload` response — only the public `hash` is needed. */
+export async function uploadProfilePhoto(file: File): Promise<string> {
+	const { base64, mimeType, width, height } = await downscaleImage(file);
+	const result = await invoke<{ status: number; body: string }>(
+		"upload_profile_image",
+		{ imageBase64: base64, mimeType, width, height },
+	);
+	if (result.status < 200 || result.status >= 300) {
+		throw new Error(`HTTP ${result.status}: ${result.body.slice(0, 200)}`);
+	}
+	const parsed = profileUploadResponseSchema.safeParse(asJson(result.body));
+	if (!parsed.success) {
+		throw new Error(
+			`Profile photo upload returned no usable public hash: ${result.body.slice(0, 200)}`,
+		);
+	}
+	return parsed.data.hash;
+}
+
+function asJson(body: string): unknown {
+	try {
+		return JSON.parse(body);
+	} catch {
+		return null;
+	}
+}
+
+/** Max secondary photos the API accepts (docs: `secondaryImageHashes`, max 5). */
+export const MAX_SECONDARY_PROFILE_PHOTOS = 5;
+
+/**
+ * Replace the profile's photo set. `PUT /v3/me/profile/images`, a plain JSON
+ * body, so it goes through `fetchRest` like any other call.
+ *
+ * Two documented traps, both handled here:
+ *  - `primaryImageHash` set while `secondaryImageHashes` is `null` is a 400.
+ *    Always send `[]`, never `null`.
+ *  - Repeating the primary inside `secondaryImageHashes` is silently dropped,
+ *    and a repeating secondary is saved as-is. De-duplicate defensively.
+ */
+export async function setProfilePhotos({
+	primaryImageHash,
+	secondaryImageHashes,
+}: {
+	primaryImageHash: string | null;
+	secondaryImageHashes: string[];
+}): Promise<void> {
+	const primary = primaryImageHash;
+	const seen = new Set<string>();
+	if (primary) seen.add(primary);
+	const secondary: string[] = [];
+	for (const hash of secondaryImageHashes) {
+		if (seen.has(hash)) continue;
+		seen.add(hash);
+		secondary.push(hash);
+		if (secondary.length >= MAX_SECONDARY_PROFILE_PHOTOS) break;
+	}
+	const res = await fetchRest("/v3/me/profile/images", {
+		method: "PUT",
+		// Never `null` for secondaryImageHashes — see above.
+		body: { primaryImageHash: primary, secondaryImageHashes: secondary },
+	});
+	if (res.status >= 400) {
+		throw new Error(`HTTP ${res.status}: ${res.text().slice(0, 200)}`);
+	}
 }
 
 /**

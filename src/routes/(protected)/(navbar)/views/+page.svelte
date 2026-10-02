@@ -1,14 +1,15 @@
 <script lang="ts">
 	import { formatDistanceToNowStrict } from "date-fns";
-	import { ArrowsClockwiseIcon, EyeIcon, LockSimpleIcon, UserIcon } from "phosphor-svelte";
+	import { ArrowsClockwiseIcon, EyeIcon, LockSimpleIcon } from "phosphor-svelte";
 	import z from "zod";
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
+	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
-	import { formatDistance } from "$lib/utils/distance";
 	import { Spinner } from "$lib/components/ui/spinner";
+	import { formatDistance } from "$lib/utils/distance";
 
 	// `/v7/views/list` returns TWO arrays:
 	//   - `profiles`: fully-visible viewers (have a profileId -> clickable). For a
@@ -16,35 +17,77 @@
 	//   - `previews`: the remaining viewers, returned MASKED (no profileId) — this
 	//     is what Grindr's own free tier blurs/hides. We surface them too so the
 	//     list matches the `totalViewers` count instead of showing just 1.
-	// Only `profileId` is essential for a clickable row; everything else is
-	// rendered defensively, so keep fields tolerant of Grindr schema drift.
-	const viewSchema = z
-		.object({
-			profileId: z.coerce.number(),
-			displayName: z.string().nullable().optional().catch(null),
-			profileImageMediaHash: z.string().nullable().optional().catch(null),
-			seen: z.number().nullable().optional().catch(null),
-			onlineUntil: z.number().nullable().optional().catch(null),
-			distance: z.number().nullable().optional().catch(null),
+	//
+	// The masking is SERVER-SIDE: `ProfileMasked`
+	// (docs/content/grindr-api/users/profiles.md#ProfileMasked) genuinely carries
+	// no `profileId`, so a masked row cannot be made clickable by any client
+	// change — that needs a paid tier. What we CAN fix is (a) not throwing away
+	// rows we do have ids for, and (b) making the masked rows informative rather
+	// than a row of identical "Anonymous" rows.
+	//
+	// Tolerant numeric-or-string timestamp: `seen` is documented as unix
+	// milliseconds, but a string form previously failed `z.number()` and was
+	// silently `.catch()`-ed to null, which dropped the "Viewed 2 hours ago"
+	// line entirely.
+	const millis = z
+		.union([z.number(), z.string()])
+		.nullish()
+		.transform((v) => {
+			if (typeof v === "number" && Number.isFinite(v)) return v;
+			if (typeof v === "string" && v.trim() !== "") {
+				const n = Number(v);
+				if (Number.isFinite(n)) return n;
+			}
+			return null;
 		})
-		.passthrough();
+		.catch(null);
 
-	// Masked preview entries have no profileId.
-	const previewSchema = z
-		.object({
-			// Some "preview" viewers still carry a profileId even on a free account;
-			// when present we can link straight to the profile like the grid does.
-			profileId: z.coerce.number().nullable().optional().catch(null),
-			displayName: z.string().nullable().optional().catch(null),
-			profileImageMediaHash: z.string().nullable().optional().catch(null),
-			seen: z.number().nullable().optional().catch(null),
-			lastViewed: z.number().nullable().optional().catch(null),
-			distance: z.number().nullable().optional().catch(null),
+	// A profileId is only usable when it is a real positive integer. A bare
+	// `z.coerce.number()` is actively harmful here: `Number(null)` is 0, so a
+	// masked row that leaked into `profiles[]` became a CLICKABLE row linking to
+	// /profile/0.
+	const profileIdOf = z
+		.union([z.number(), z.string()])
+		.nullish()
+		.transform((v) => {
+			const n =
+				typeof v === "number"
+					? v
+					: typeof v === "string" && v.trim() !== ""
+						? Number(v)
+						: Number.NaN;
+			return Number.isInteger(n) && n > 0 ? n : null;
 		})
-		.passthrough();
+		.catch(null);
+
+	// Fields shared by both arrays (docs: `profiles` is "everything from
+	// `previews`" plus ProfileShort).
+	const viewBase = {
+		profileId: profileIdOf,
+		displayName: z.string().nullable().optional().catch(null),
+		profileImageMediaHash: z.string().nullable().optional().catch(null),
+		seen: millis,
+		lastViewed: millis,
+		distance: z.number().nullable().optional().catch(null),
+		// Distinguishing signals the server does send for masked rows — using
+		// them is what makes a locked row read as information, not as a bug.
+		viewedCount: z
+			.object({
+				totalCount: z.number().nullish().catch(0),
+				maxDisplayCount: z.number().nullish().catch(0),
+			})
+			.nullish()
+			.catch(null),
+		isSecretAdmirer: z.boolean().nullish().catch(false),
+		isInBadNeighborhood: z.boolean().nullish().catch(false),
+	};
+
+	// `profiles` and `previews` share every field we read (the server documents
+	// `profiles` as "everything from previews" plus ProfileShort), so one schema
+	// covers both and the difference is only whether `profileId` is present.
+	const viewSchema = z.object(viewBase).passthrough();
 
 	type View = z.infer<typeof viewSchema>;
-	type Preview = z.infer<typeof previewSchema>;
 
 	// Parse each entry individually and drop only malformed ones, so a single bad
 	// profile can't blank the entire list (Grindr API schema drift).
@@ -60,7 +103,7 @@
 		.object({
 			totalViewers: z.number().catch(0),
 			profiles: dropBad(viewSchema).catch([] as View[]),
-			previews: dropBad(previewSchema).catch([] as Preview[]),
+			previews: dropBad(viewSchema).catch([] as View[]),
 		})
 		.passthrough();
 
@@ -72,36 +115,36 @@
 		profileImageMediaHash: string | null;
 		seen: number | null;
 		distance: number | null;
+		/** Times this person viewed you, when the server reports a count > 1. */
+		viewCount: number;
+		isSecretAdmirer: boolean;
 	};
 
 	let tick = $state(0);
 	const views = $derived.by(async () => {
 		void tick;
 		const r = await fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
+		const toRow = (p: View, i: number, bucket: string): Row => ({
+			// Key on the real id when we have one so a viewer present in both
+			// arrays can't collide, and the keyed each below stays stable.
+			key: p.profileId != null ? `p${p.profileId}` : `${bucket}${i}`,
+			// Only a genuine positive id is clickable — never `null`/0.
+			clickable: p.profileId != null,
+			profileId: p.profileId ?? undefined,
+			displayName: p.displayName ?? null,
+			profileImageMediaHash: p.profileImageMediaHash ?? null,
+			seen: p.seen ?? p.lastViewed ?? null,
+			distance: p.distance ?? null,
+			viewCount: p.viewedCount?.totalCount ?? 0,
+			isSecretAdmirer: p.isSecretAdmirer ?? false,
+		});
 		const rows: Row[] = [
-			...r.profiles.map(
-				(p): Row => ({
-					key: `p${p.profileId}`,
-					clickable: true,
-					profileId: p.profileId,
-					displayName: p.displayName ?? null,
-					profileImageMediaHash: p.profileImageMediaHash ?? null,
-					seen: p.seen ?? null,
-					distance: p.distance ?? null,
-				}),
-			),
-			...r.previews.map(
-				(p, i): Row => ({
-					key: p.profileId != null ? `p${p.profileId}` : `v${i}`,
-					// Link the row whenever the server actually gave us a profileId.
-					clickable: p.profileId != null,
-					profileId: p.profileId ?? undefined,
-					displayName: p.displayName ?? null,
-					profileImageMediaHash: p.profileImageMediaHash ?? null,
-					seen: p.seen ?? p.lastViewed ?? null,
-					distance: p.distance ?? null,
-				}),
-			),
+			...r.profiles.map((p, i) => toRow(p, i, "v")),
+			// A preview that DOES carry an id is clickable like any other row;
+			// de-duplicate against the profiles bucket so a viewer is listed once.
+			...r.previews
+				.filter((p) => p.profileId == null || !r.profiles.some((q) => q.profileId === p.profileId))
+				.map((p, i) => toRow(p, i, "w")),
 		];
 		return { totalViewers: r.totalViewers, rows };
 	});
@@ -139,17 +182,7 @@
 							<div
 								class="size-14 rounded-2xl bg-muted shrink-0 overflow-hidden flex items-center justify-center relative"
 							>
-								{#if view.profileImageMediaHash}
-									<img
-										src="https://cdns.grindr.com/images/thumb/320x320/{view.profileImageMediaHash}"
-										alt="{view.displayName ?? 'Anonymous'}'s profile"
-										class="w-full h-full object-cover"
-										loading="lazy"
-										draggable="false"
-									/>
-								{:else}
-									<UserIcon weight="fill" color="var(--color-stone-400)" class="size-8" />
-								{/if}
+																	<CdnImage hash={view.profileImageMediaHash} alt="{view.displayName ?? 'Anonymous'}'s profile" />
 								{#if !view.clickable}
 									<div
 										class="absolute bottom-0 right-0 m-0.5 rounded-full bg-black/60 p-0.5"
@@ -161,16 +194,30 @@
 							</div>
 							<div class="flex flex-col gap-1 min-w-0 flex-1">
 								<span class="font-semibold truncate">
-									{view.displayName ?? "Anonymous"}
+									{view.displayName ?? "Hidden viewer"}
 								</span>
 								{#if view.seen != null}
 									<span class="text-sm text-muted-foreground">
 										Viewed {formatDistanceToNowStrict(view.seen, { addSuffix: true })}
 									</span>
 								{/if}
+								{#if view.viewCount > 1}
+									<span class="text-xs text-muted-foreground/70">
+										Viewed you {view.viewCount}× recently
+									</span>
+								{:else if view.isSecretAdmirer}
+									<span class="text-xs text-muted-foreground/70">
+										Secret admirer
+									</span>
+								{/if}
 								{#if view.distance != null}
 									<span class="text-xs text-muted-foreground/70">
 										{formatDistance(view.distance, getDistanceUnit())} away
+									</span>
+								{/if}
+								{#if !view.clickable}
+									<span class="text-xs text-muted-foreground/70">
+										Grindr hides who this is until you subscribe to XTRA.
 									</span>
 								{/if}
 							</div>

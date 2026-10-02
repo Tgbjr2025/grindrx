@@ -85,13 +85,25 @@ export function heightFromInput(value: number, unit: DistanceUnit): number {
 	return value;
 }
 
-/** Convert stored weight (grams) into the editable display number. */
+/**
+ * Convert stored weight (grams) into the editable display number.
+ *
+ * PRECISION (the bug this fixes)
+ * ------------------------------
+ * This used to be `Math.round(kg)`, i.e. whole kilograms. The API value is
+ * FRACTIONAL grams (`measurements.ts` cites `86182.65`), so simply opening the
+ * edit sheet and pressing Save — without ever touching the weight field —
+ * rewrote `86182.65` to `86000` and reported success. Rounding to one decimal
+ * keeps the round-trip lossless to 100 g, which is finer than any scale the
+ * user could notice, and `weightFromInput` multiplies straight back.
+ */
 export function weightToInput(grams: number, unit: DistanceUnit): number {
 	const kg = grams / GRAMS_PER_KG;
 	if (measurementSystemFor(unit) === "imperial") {
 		return Math.round(kg * POUNDS_PER_KG);
 	}
-	return Math.round(kg);
+	// One decimal, not whole kilograms — see above.
+	return Math.round(kg * 10) / 10;
 }
 
 /** Convert an edited weight value back into stored grams. */

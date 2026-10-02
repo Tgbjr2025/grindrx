@@ -5,20 +5,42 @@ vi.mock("@tauri-apps/api/core", () => ({
 	invoke: vi.fn(),
 }));
 
+vi.mock("$app/navigation", () => ({
+	goto: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("svelte-sonner", () => ({
+	toast: vi.fn(),
+}));
+
+const { goto } = await import("$app/navigation");
+const { toast } = await import("svelte-sonner");
+const { isLocked } = await import("$lib/app-data/app-lock.svelte");
+vi.mock("$lib/app-data/app-lock.svelte", () => ({
+	isLocked: vi.fn().mockReturnValue(false),
+}));
+
 import { encode } from "@msgpack/msgpack";
 import { invoke } from "@tauri-apps/api/core";
 
 import {
 	ApiHttpError,
 	asAppError,
+	callMethod,
 	classifyResponseBody,
 	fetchRest,
+	KEYRING_ERROR_MESSAGE,
+	methods,
 	parseApiResponse,
+	resetAuthRedirectLatch,
 } from "$lib/api";
 import { requestBlockedAlertState } from "$lib/api/request-blocked/request-blocked-state.svelte";
 import { toBase64 } from "$lib/base64";
 
 const mockedInvoke = vi.mocked(invoke);
+const mockedGoto = vi.mocked(goto);
+const mockedToast = vi.mocked(toast);
+const mockedIsLocked = vi.mocked(isLocked);
 
 describe("ApiHttpError", () => {
 	it("captures a bare text error code like CAS-4001", () => {
@@ -154,6 +176,61 @@ describe("classifyResponseBody", () => {
 			"error-code",
 		);
 	});
+
+	// REGRESSION (2026-10-02): the old detector matched exactly two literals from
+	// ONE Cloudflare template, so every other template fell through to
+	// "error-code" and the user saw "Couldn't load profiles" instead of the
+	// "request blocked" dialog. Two live probes minutes apart returned two
+	// different templates, which is how this was found.
+	it.each([
+		[
+			"managed JS challenge",
+			403,
+			"<html><head><title>Just a moment...</title></head><body>Checking your browser before accessing</body></html>",
+		],
+		[
+			"rate-limit interstitial",
+			429,
+			"<html><head><title>Attention Required! | Cloudflare</title></head><body>Slow down</body></html>",
+		],
+		[
+			"bare block page with no title",
+			403,
+			"<!DOCTYPE html><html><body>Cloudflare Ray ID: abc123</body></html>",
+		],
+		[
+			"cookie-challenge page",
+			403,
+			"<html><body>Enable JavaScript and cookies to continue. cloudflare</body></html>",
+		],
+	])("classifies a Cloudflare %s as cloudflare-block", (_label, status, html) => {
+		expect(classifyResponseBody(status, html)).toBe("cloudflare-block");
+	});
+
+	// The looser match must not swallow a REAL API error that happens to be a
+	// 403: a JSON envelope is an API answer, not an interstitial, and reporting
+	// it as "blocked" would send the user chasing a WAF that never spoke.
+	it("still reports a JSON 403 envelope as error-code, with its code intact", () => {
+		expect(
+			classifyResponseBody(403, '{"code":403,"message":"forbidden"}'),
+		).toBe("error-code");
+		expect(
+			classifyResponseBody(403, '{"code":"CAS-4001","message":"nope"}'),
+		).toBe("error-code");
+	});
+
+	it("never classifies a 2xx body as a block, whatever it contains", () => {
+		// A 2xx is not a refusal by definition, so no content can make it one.
+		// (`<html>Cloudflare</html>` is short enough to classify as "error-code"
+		// by the bare-code rule — that is pre-existing behaviour and fine; what
+		// matters is that it is not "cloudflare-block".)
+		expect(classifyResponseBody(200, "<html>Cloudflare</html>")).not.toBe(
+			"cloudflare-block",
+		);
+		expect(
+			classifyResponseBody(200, "<html>" + "Cloudflare ".repeat(40) + "</html>"),
+		).toBe("parse-error");
+	});
 });
 
 // REGRESSION (Tom issue #2): these exercise the actual decision points behind
@@ -224,5 +301,181 @@ describe("fetchRest().json() error detection", () => {
 		const res = await fetchRest("/v4/me/profile");
 
 		expect(res.json()).toEqual({ profileId: 42 });
+	});
+});
+
+// E0a: `auth_state` changed from `Option<u64>` to a struct in Rust
+// (`AuthStateResponse`, `#[serde(rename_all = "camelCase")]`). A stale
+// `z.number()…nullable()` schema would reject EVERY auth_state result, so all
+// four consumers (this schema, hooks.client, and the two root layouts) silently
+// read `profileId === undefined` and the app behaved as if nobody were ever
+// logged in.
+describe("auth_state response schema", () => {
+	it("parses the new { profileId, keyringError } object shape", () => {
+		const parsed = methods.auth_state.response.safeParse({
+			profileId: 1234,
+			keyringError: null,
+		});
+		expect(parsed.success).toBe(true);
+		expect(parsed.success && parsed.data).toEqual({
+			profileId: 1234,
+			keyringError: null,
+		});
+	});
+
+	it("rejects the OLD bare-number shape, so the change cannot silently regress", () => {
+		expect(methods.auth_state.response.safeParse(1234).success).toBe(false);
+		expect(methods.auth_state.response.safeParse(null).success).toBe(false);
+	});
+
+	it("represents a broken keyring as profileId: null + a reason", () => {
+		const parsed = methods.auth_state.response.safeParse({
+			profileId: null,
+			keyringError: "no secret store",
+		});
+		expect(parsed.success).toBe(true);
+	});
+
+	it("callMethod passes the object through instead of collapsing it to an id", async () => {
+		mockedInvoke.mockResolvedValueOnce({
+			profileId: 99,
+			keyringError: null,
+		});
+		await expect(callMethod("auth_state")).resolves.toEqual({
+			profileId: 99,
+			keyringError: null,
+		});
+	});
+
+	it("exposes one actionable message for the unusable-keyring case", () => {
+		expect(KEYRING_ERROR_MESSAGE).toMatch(/secure storage/i);
+		expect(KEYRING_ERROR_MESSAGE).toMatch(/clear grindrx's app storage|reinstall/i);
+	});
+});
+
+// E1: the auth-failure path used to toast + `goto` PER CALL. The grid, the
+// conversations list and the 10s reconcile poll all fire concurrently, so an
+// expired session produced N stacked toasts and N racing navigations.
+describe("fetchRest session-lost handling", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		resetAuthRedirectLatch();
+		mockedIsLocked.mockReturnValue(false);
+		requestBlockedAlertState.open = false;
+		requestBlockedAlertState.disable = false;
+	});
+
+	it("redirects exactly ONCE for N concurrent 'Not logged in' failures", async () => {
+		mockedInvoke.mockRejectedValue({ kind: "Auth", message: "Not logged in" });
+
+		await Promise.all(
+			Array.from({ length: 5 }, (_, i) =>
+				fetchRest(`/v${i}/thing`).catch(() => undefined),
+			),
+		);
+
+		expect(mockedToast).toHaveBeenCalledTimes(1);
+		expect(mockedGoto).toHaveBeenCalledTimes(1);
+		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
+	});
+
+	it("handles a server-side HTTP 401 the same way (it used to be ignored entirely)", async () => {
+		const packed = encode({
+			status: 401,
+			body: new TextEncoder().encode(JSON.stringify({ code: 401 })),
+		});
+		mockedInvoke.mockResolvedValue(toBase64(packed));
+
+		// A 401 RESOLVES — session deletion only ever happened on the refresh
+		// path, so a revoked session kept rendering stale data.
+		const res = await fetchRest("/v3/cascade");
+
+		expect(res.status).toBe(401);
+		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
+		expect(mockedToast).toHaveBeenCalledTimes(1);
+	});
+
+	it("does NOT redirect for a `public: true` pre-session call", async () => {
+		mockedInvoke.mockRejectedValue({ kind: "Auth", message: "Not logged in" });
+
+		await expect(
+			fetchRest("/v8/accounts", { method: "POST", public: true }).catch(
+				() => undefined,
+			),
+		).resolves.toBeUndefined();
+
+		expect(mockedGoto).not.toHaveBeenCalled();
+		expect(mockedToast).not.toHaveBeenCalled();
+	});
+
+	it("does NOT toast or navigate while the app lock is engaged", async () => {
+		mockedIsLocked.mockReturnValue(true);
+		mockedInvoke.mockRejectedValue({ kind: "Auth", message: "Not logged in" });
+
+		await expect(fetchRest("/v3/cascade")).rejects.toBeTruthy();
+
+		// `PinLockGate` lives in (protected)/+layout.svelte, so navigating to
+		// /auth unmounts the lock screen and shows the inbox to whoever holds
+		// the phone. The error is still thrown; only the redirect is deferred.
+		expect(mockedGoto).not.toHaveBeenCalled();
+		expect(mockedToast).not.toHaveBeenCalled();
+	});
+
+	it("still redirects on the first failure AFTER unlock (the deferral must not eat it)", async () => {
+		mockedIsLocked.mockReturnValue(true);
+		mockedInvoke.mockRejectedValue({ kind: "Auth", message: "Not logged in" });
+		await fetchRest("/v3/cascade").catch(() => undefined);
+		expect(mockedGoto).not.toHaveBeenCalled();
+
+		mockedIsLocked.mockReturnValue(false);
+		await fetchRest("/v3/cascade").catch(() => undefined);
+
+		expect(mockedGoto).toHaveBeenCalledTimes(1);
+		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
+	});
+
+	it("re-arms after a successful login, so the next expiry redirects again", async () => {
+		mockedInvoke.mockRejectedValueOnce({ kind: "Auth", message: "Not logged in" });
+		await fetchRest("/v3/cascade").catch(() => undefined);
+		expect(mockedGoto).toHaveBeenCalledTimes(1);
+
+		mockedInvoke.mockResolvedValueOnce({ profileId: 7 });
+		await callMethod("login", { email: "a@b.c", password: "pw" });
+
+		mockedInvoke.mockRejectedValueOnce({ kind: "Auth", message: "Not logged in" });
+		await fetchRest("/v3/cascade").catch(() => undefined);
+
+		expect(mockedGoto).toHaveBeenCalledTimes(2);
+	});
+
+	it("leaves an ordinary non-auth failure alone", async () => {
+		const packed = encode({
+			status: 429,
+			body: new TextEncoder().encode(JSON.stringify({ code: 429 })),
+		});
+		mockedInvoke.mockResolvedValue(toBase64(packed));
+
+		const res = await fetchRest("/v3/cascade");
+		expect(() => res.json()).toThrow(ApiHttpError);
+		expect(mockedGoto).not.toHaveBeenCalled();
+	});
+});
+
+describe("ApiHttpError message hygiene", () => {
+	it("never pastes an arbitrary response body into the user-facing message", () => {
+		const html = "<html><body>" + "x".repeat(400) + "</body></html>";
+		const err = new ApiHttpError(500, html, "/v3/cascade");
+		expect(err.message).toBe("Request to /v3/cascade failed (HTTP 500)");
+		// The raw body is still available for logs.
+		expect(err.body).toBe(html);
+	});
+
+	it("keeps the server's own message when there is one", () => {
+		const err = new ApiHttpError(
+			402,
+			JSON.stringify({ code: 402, message: "Album limit reached" }),
+			"/v2/albums",
+		);
+		expect(err.message).toContain("Album limit reached");
 	});
 });

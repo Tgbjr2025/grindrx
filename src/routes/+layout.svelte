@@ -15,6 +15,9 @@
 		applyAndroidInsets,
 		applyBackGestureHandler,
 	} from "$lib/android-native-bridge";
+	import { syncNotificationPrefs } from "$lib/api/notifications";
+	import { sendUsagePing } from "$lib/api/usage";
+	import { isLockEnabled, lockNow } from "$lib/app-data/app-lock.svelte";
 
 	// Analytics is OFF by default: this is a privacy-focused client and the route
 	// path carries sensitive ids (which profiles you view, which chats you open).
@@ -63,16 +66,60 @@
 
 	onMount(() => {
 		void trackPageview(window.location.pathname);
+		// Anonymous launch ping so active-user counts can be aggregated (best-effort).
+		void sendUsagePing();
+		// Push the local notification toggles into the Rust notifier on launch.
+		void syncNotificationPrefs();
 		applyAndroidInsets();
 		applyBackGestureHandler();
 
-		// Track foreground/background so Rust knows when to fire OS notifications
+		// Track foreground/background so Rust knows when to fire OS notifications,
+		// and re-engage the app lock when the app comes back to the foreground.
+		//
+		// The lock previously only ever cleared: `lockNow()` existed but nothing
+		// called it, so pressing Home and returning left the app unlocked
+		// indefinitely and the gate only reappeared on a full process restart.
+		// Re-lock on any backgrounding, plus after a short grace period in the
+		// background so a brief app switch (notification shade, permission dialog)
+		// does not demand the PIN again.
+		//
+		// The grace was 30 s, which defeated the feature for its realistic case:
+		// press Home, and an attacker picks the phone up 10 s later — no re-lock.
+		// 2 s is enough to absorb a shade pull or a permission dialog (both of
+		// which return in well under a second of the user acting) and no more.
+		let backgroundedAt: number | null = null;
+		const RELOCK_GRACE_MS = 2_000;
+
 		const syncForeground = () => {
-			invoke("set_foreground", { foreground: document.visibilityState === "visible" }).catch(
-				() => {},
-			);
+			const foreground = document.visibilityState === "visible";
+			invoke("set_foreground", { foreground }).catch(() => {});
+
+			if (isLockEnabled()) {
+				if (foreground) {
+					const away =
+						backgroundedAt === null ? 0 : Date.now() - backgroundedAt;
+					if (backgroundedAt !== null && away >= RELOCK_GRACE_MS) {
+						lockNow();
+					}
+					backgroundedAt = null;
+				} else {
+					backgroundedAt = Date.now();
+				}
+			}
 		};
 		document.addEventListener("visibilitychange", syncForeground);
+
+		// `visibilitychange` alone is not enough: on Android the WebView can be
+		// torn down or backgrounded without a final visibilitychange being
+		// delivered, and the app can then be resumed from the recents list
+		// without ever having been observed as hidden. `pagehide` is the reliable
+		// "this document is going away" signal, and there is no grace period to
+		// apply to it — the moment we lose the foreground is the moment the
+		// attacker has the phone.
+		const lockOnPageHide = () => {
+			if (isLockEnabled()) lockNow();
+		};
+		window.addEventListener("pagehide", lockOnPageHide);
 
 		// Request notification permission on Android 13+
 		isPermissionGranted()
@@ -83,11 +130,13 @@
 
 		return () => {
 			document.removeEventListener("visibilitychange", syncForeground);
+			window.removeEventListener("pagehide", lockOnPageHide);
 		};
 	});
 
 	import RequestBlockedAlert from "$lib/api/request-blocked/RequestBlockedAlert.svelte";
 	import favicon from "$lib/assets/favicon.png";
+	import ForceUpdateGate from "$lib/components/ForceUpdateGate.svelte";
 
 	let {
 		children,
@@ -115,7 +164,14 @@
 	}}
 	expand
 />
+<!--
+	Mounted ABOVE the app content and after the request-blocked alert: the
+	force-update gate must be the last thing rendered so it sits on top of
+	everything, including any other overlay. See $lib/update-gate.svelte for why
+	it is safe to block on (it is not — a network failure never blocks).
+-->
 <IconContext values={{}}>
 	{@render children?.()}
 </IconContext>
 <RequestBlockedAlert />
+<ForceUpdateGate />

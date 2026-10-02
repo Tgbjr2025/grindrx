@@ -12,12 +12,14 @@ vi.mock("@tauri-apps/api/event", () => ({
 	listen: vi.fn(() => Promise.resolve(() => {})),
 }));
 
+import type { ApiResponseMessage } from "$lib/model/message";
 import {
+	albumPendingKey,
+	albumPendingKeyPrefix,
 	type OptimisticMessage,
 	reconcile,
 	removeDuplicateMessages,
 } from "./conversation-state.svelte";
-import type { ApiResponseMessage } from "$lib/model/message";
 
 const CONVERSATION_ID = "conversation-1";
 
@@ -246,5 +248,275 @@ describe("reconcile", () => {
 		expect(target?.type).toBe("Retract");
 		expect(target?.unsent).toBe(true);
 		expect(target?.body).toEqual({ targetMessageId: "orig-1" });
+	});
+});
+
+// Regression cover for the album-share duplicate bubble.
+//
+// `POST /v4/albums/{id}/shares` returns an EMPTY body, so there is no real
+// messageId to adopt. The previous implementation invented one and wrote it onto
+// the optimistic bubble, which broke every dedup path at once:
+//   - the WS `chat.v1.message_sent` echo matched neither the exact id nor the
+//     "single pending message" fallback, so a second album bubble was prepended;
+//   - `removeDuplicateMessages` keys on `messageId`, so it could not collapse
+//     them either (the ids differ by construction);
+//   - nothing reconciles while the WebSocket is healthy, so the duplicate never
+//     healed within a session and could not be unsent (it 400s server-side).
+//
+// The fix keeps the bubble `pending` and tags it with a `pendingKey` derived
+// from the album id AND a per-attempt temp id, which both the WS handler and
+// `reconcile` match on by PREFIX (oldest unconsumed attempt first).
+describe("album-share optimistic identity (pendingKey)", () => {
+	function makeAlbumMessage(
+		overrides: Partial<{
+			messageId: string;
+			status: OptimisticMessage["status"];
+			pendingKey: string;
+			timestamp: number;
+		}> & { albumId: number },
+	): OptimisticMessage {
+		return {
+			type: "Album",
+			body: {
+				albumId: overrides.albumId,
+				hasUnseenContent: false,
+				expiresAt: null,
+				expirationType: "INDEFINITE",
+				coverUrl: "",
+				ownerProfileId: 1,
+				isViewable: true,
+				hasVideo: false,
+				hasPhoto: true,
+				viewableUntil: null,
+			},
+			messageId: "pending-uuid",
+			conversationId: CONVERSATION_ID,
+			senderId: 1,
+			timestamp: 1_700_000_000_000,
+			unsent: false,
+			reactions: [],
+			status: "pending",
+			...overrides,
+		};
+	}
+
+	it("adopts the server's real messageId onto the pending bubble", () => {
+		const pending = makeAlbumMessage({
+			albumId: 42,
+			pendingKey: albumPendingKey(42, "temp-1"),
+		});
+		const serverMsg = toServerMessage({
+			...pending,
+			messageId: "server-real-id",
+			timestamp: pending.timestamp + 1_000,
+		});
+
+		const { messages } = reconcile([pending], [serverMsg], {
+			now: 1_700_000_060_000,
+			ourProfileId: 1,
+		});
+
+		// Exactly one bubble, carrying the server's real id, and the synthetic
+		// identity is cleared once adopted.
+		expect(messages).toHaveLength(1);
+		expect(messages[0].messageId).toBe("server-real-id");
+		expect(messages[0].status).toBe("sent");
+		expect(messages[0].pendingKey).toBeUndefined();
+	});
+
+	it("produces no duplicate when the server copy arrives while still pending", () => {
+		// A brand-new album (never shared before) has no type/timestamp twin, so
+		// the old type+timestamp fallback would have missed it entirely and left
+		// two bubbles. pendingKey is what makes this deterministic.
+		const pending = makeAlbumMessage({
+			albumId: 7,
+			pendingKey: albumPendingKey(7, "temp-1"),
+		});
+		const serverMsg = toServerMessage({
+			...pending,
+			messageId: "server-real-id",
+			// Deliberately a very different timestamp: proves the match is by
+			// pendingKey, not by proximity.
+			timestamp: pending.timestamp + 3_600_000,
+		});
+
+		const { messages, fresh } = reconcile([pending], [serverMsg], {
+			now: 1_700_000_060_000,
+			ourProfileId: 1,
+		});
+
+		expect(messages).toHaveLength(1);
+		// The adopted message is not reported as "fresh" — it is not a new
+		// inbound message, so it must not trigger a read receipt.
+		expect(fresh).toHaveLength(0);
+	});
+
+	it("keeps two concurrent shares of DIFFERENT albums as two bubbles", () => {
+		const a = makeAlbumMessage({
+			albumId: 1,
+			pendingKey: albumPendingKey(1, "temp-1"),
+		});
+		const b = makeAlbumMessage({
+			albumId: 2,
+			pendingKey: albumPendingKey(2, "temp-2"),
+		});
+		const serverB = toServerMessage({
+			...b,
+			messageId: "server-b",
+			timestamp: b.timestamp + 500,
+		});
+
+		const { messages } = reconcile([a, b], [serverB], {
+			now: 1_700_000_060_000,
+			ourProfileId: 1,
+		});
+
+		expect(messages).toHaveLength(2);
+		expect(messages.some((m) => m.messageId === "server-b")).toBe(true);
+		// The still-unconfirmed share stays pending and keeps its key.
+		expect(
+			messages.some((m) => m.pendingKey === albumPendingKey(1, "temp-1")),
+		).toBe(true);
+	});
+
+	// THE REGRESSION: two concurrent shares of the SAME album.
+	//
+	// With `pendingKey = "album:42"` (no per-attempt counter) both optimistic
+	// bubbles carried the SAME key, and both the WS handler (`find`) and
+	// `reconcile` (`findIndex`) took the FIRST — leaving the second on
+	// `status: "pending"` forever. `#syncCache` filters pendings out, so it was
+	// not even persisted: a ghost "Sending…" bubble for the whole session.
+	it("keeps two concurrent shares of the SAME album as two bubbles", () => {
+		// `reconcile` adopts server data onto the pending entry IN PLACE, which
+		// rewrites `attempt.timestamp` — so the expected values are captured in
+		// locals before the call.
+		const TS1 = 1_700_000_000_000 - 500;
+		const TS2 = 1_700_000_000_000;
+		// Newest-first, as `removeDuplicateMessages` sorts them: attempt #2 is at
+		// index 0, attempt #1 at index 1.
+		const attempt2 = makeAlbumMessage({
+			albumId: 42,
+			pendingKey: albumPendingKey(42, "temp-2"),
+			messageId: "pending-uuid-2",
+			timestamp: TS2,
+		});
+		const attempt1 = makeAlbumMessage({
+			albumId: 42,
+			pendingKey: albumPendingKey(42, "temp-1"),
+			messageId: "pending-uuid-1",
+			timestamp: TS1,
+		});
+		const serverEcho1 = toServerMessage({
+			...attempt1,
+			messageId: "server-1",
+			timestamp: TS1 + 200,
+		});
+		const serverEcho2 = toServerMessage({
+			...attempt2,
+			messageId: "server-2",
+			timestamp: TS2 + 200,
+		});
+
+		// Server order is oldest-first (a real page), and BOTH echoes are present.
+		const { messages, fresh } = reconcile(
+			[attempt2, attempt1],
+			[serverEcho1, serverEcho2],
+			{ now: 1_700_000_060_000, ourProfileId: 1 },
+		);
+
+		// Two bubbles, both confirmed, no third duplicate, nothing left pending.
+		expect(messages).toHaveLength(2);
+		expect(messages.filter((m) => m.status === "pending")).toHaveLength(0);
+		expect(messages.map((m) => m.messageId).toSorted()).toEqual([
+			"server-1",
+			"server-2",
+		]);
+		// Neither adoption is "fresh" (no read receipt for our own messages).
+		expect(fresh).toHaveLength(0);
+		// Each attempt adopted the echo for ITSELF: the older share took the older
+		// server message, i.e. the oldest unconsumed attempt was consumed first.
+		const byId = new Map(messages.map((m) => [m.messageId, m]));
+		expect(byId.get("server-1")?.timestamp).toBe(TS1 + 200);
+		expect(byId.get("server-2")?.timestamp).toBe(TS2 + 200);
+	});
+
+	// The pre-fix key really was ambiguous — this pins WHY the key format changed,
+	// so a future "simplification" back to `album:${albumId}` fails here.
+	it("gives two attempts at the same album DIFFERENT pending keys", () => {
+		expect(albumPendingKey(42, "temp-1")).not.toBe(
+			albumPendingKey(42, "temp-2"),
+		);
+		// ...and both are matched by the single prefix an inbound echo can compute.
+		expect(
+			albumPendingKey(42, "temp-1").startsWith(albumPendingKeyPrefix(42)),
+		).toBe(true);
+		expect(
+			albumPendingKey(42, "temp-2").startsWith(albumPendingKeyPrefix(42)),
+		).toBe(true);
+		// A different album must NOT match that prefix.
+		expect(
+			albumPendingKey(43, "temp-1").startsWith(albumPendingKeyPrefix(42)),
+		).toBe(false);
+	});
+
+	// `ExpiringAlbum` is a member of `messageSchema` and is rendered by
+	// `Message.svelte`, but the `pendingKeyForPayload` switch only matched
+	// "Album" and "ExpiringAlbumV2", so an echo for this variant could never be
+	// adopted onto its optimistic bubble.
+	it("adopts an ExpiringAlbum echo onto its pending bubble", () => {
+		// Same body as Album; only the `type` literal differs, so this has to be a
+		// separate literal rather than an option on the shared helper.
+		const pending: OptimisticMessage = {
+			type: "ExpiringAlbum",
+			body: {
+				albumId: 5,
+				hasUnseenContent: false,
+				expiresAt: null,
+				expirationType: "INDEFINITE",
+				coverUrl: "",
+				ownerProfileId: 1,
+				isViewable: true,
+				hasVideo: false,
+				hasPhoto: true,
+				viewableUntil: null,
+			},
+			messageId: "pending-expiring",
+			conversationId: CONVERSATION_ID,
+			senderId: 1,
+			timestamp: 1_700_000_000_000,
+			unsent: false,
+			reactions: [],
+			status: "pending",
+			pendingKey: albumPendingKey(5, "temp-1"),
+		};
+		const serverMsg = toServerMessage({
+			...pending,
+			messageId: "server-expiring",
+			timestamp: pending.timestamp + 10_000,
+		});
+
+		const { messages, fresh } = reconcile([pending], [serverMsg], {
+			now: 1_700_000_060_000,
+			ourProfileId: 1,
+		});
+
+		expect(messages).toHaveLength(1);
+		expect(messages[0].messageId).toBe("server-expiring");
+		expect(messages[0].status).toBe("sent");
+		expect(messages[0].pendingKey).toBeUndefined();
+		expect(fresh).toHaveLength(0);
+	});
+
+	it("leaves a pending share alone when the server has no copy yet", () => {
+		const pending = makeAlbumMessage({
+			albumId: 9,
+			pendingKey: albumPendingKey(9, "temp-1"),
+		});
+		const { messages } = reconcile([pending], [], {
+			now: 1_700_000_060_000,
+			ourProfileId: 1,
+		});
+		expect(messages).toHaveLength(1);
+		expect(messages[0].status).toBe("pending");
 	});
 });

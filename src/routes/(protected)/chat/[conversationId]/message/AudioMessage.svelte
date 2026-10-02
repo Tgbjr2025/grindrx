@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { onDestroy } from "svelte";
+
+	import { isAuthedHost, resolveAuthedImage } from "$lib/utils/authed-image";
 	import type { AudioMessage } from "$lib/model/message";
 	import { getMessageContext, getMessageMetaContext } from "./context";
 	import MessageTail from "./MessageTail.svelte";
@@ -24,6 +27,51 @@
 	const durationLabel = $derived(
 		message.length !== null ? formatDuration(message.length) : null,
 	);
+
+	// Voice messages were completely unplayable.
+	//
+	// `<audio src={message.url}>` sends no `Authorization` header, unlike every
+	// other media component in the app (all of which go through
+	// `resolveAuthedImage` / `fetch_authed_bytes`). For a bearer-token-gated
+	// `cdns.grindr.com` URL that is a silent 403 — the bubble renders, shows a
+	// duration, and pressing play does nothing, forever.
+	//
+	// Resolve through the same authenticated path as images so the bytes actually
+	// arrive. Signed CloudFront URLs are returned unchanged, so this costs
+	// nothing for those.
+	let playUrl = $state<string | null>(null);
+	let failed = $state(false);
+	let cancelled = false;
+
+	$effect(() => {
+		const url = message.url;
+		cancelled = false;
+		failed = false;
+		playUrl = null;
+		void resolveAuthedImage(url)
+			.then((resolved) => {
+				// The component may have been torn down while the bytes were in
+				// flight.
+				if (cancelled) return;
+				playUrl = resolved;
+			})
+			.catch((error) => {
+				if (cancelled) return;
+				console.error("[GrindrX] failed to resolve voice message audio", error);
+				failed = true;
+			});
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	// Whether the URL needs the auth round-trip at all — used only to make the
+	// loading state honest for direct (signed) URLs.
+	const needsAuth = $derived(isAuthedHost(message.url));
+
+	onDestroy(() => {
+		cancelled = true;
+	});
 </script>
 
 <div
@@ -47,9 +95,19 @@
 		/>
 	{/if}
 	<div class="flex items-center gap-2">
-		<audio controls preload="none" src={message.url} class="h-9 max-w-56 min-w-0">
-			<track kind="captions" />
-		</audio>
+		{#if failed}
+			<span class="text-xs text-black/70">Couldn't load audio</span>
+		{:else if playUrl === null}
+			<span class="text-xs text-black/60">
+				{needsAuth ? "Loading voice message…" : ""}
+			</span>
+		{:else}
+			<!-- No empty <track>: it added a dead captions entry to the native
+			     player with no src, which is worse than having no captions at all. -->
+			<audio controls preload="none" src={playUrl} class="h-9 max-w-56 min-w-0">
+				Your browser does not support audio playback.
+			</audio>
+		{/if}
 		{#if durationLabel}
 			<span class="text-xs text-black/60 tabular-nums shrink-0">{durationLabel}</span>
 		{/if}
