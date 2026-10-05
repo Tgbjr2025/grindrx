@@ -20,6 +20,16 @@ vite.config.ts.timestamp-*
 keystore.properties
 *.jks
 *.keystore
+# Firebase client config contains the API key for com.grindrx.app.
+google-services.json
+# Apple signing + distribution. *.p12 also covers ~/fdroid/keystore.p12.
+*.p12
+*.mobileprovision
+*.cer
+# App Store Connect API key (.p8)
+*.p8
+# Sideload artifacts. The signed .ipa lands in /dist, which is already ignored.
+*.ipa
 
 .local
 # Local pre-edit backups - these were being committed by accident since v0.1.24

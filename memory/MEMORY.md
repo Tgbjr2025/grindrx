@@ -15,36 +15,77 @@ This is the index. Read it first, then the file the task points you to.
 | `memory/rules.md` | Canonical operating rules R1–R11 (+ project R20–R23). |
 | `memory/FIX_NOTES_v0.1.9.md` | FIX_NOTES for the v0.1.9 audit ship (commit `28b1648`) + rollback tag. |
 | `memory/FIX_NOTES_platform_port.md` | **NEW 2026-10-01 — `platform/` ported from upstream open-grind, uncommitted.** IME-inset deferral, `dismissOnBackGesture()`, 6 new `src/lib/platform/` modules, and the `MainActivity.kt` `imeVisible()` Kotlin half (**UNCOMPILED** — no Android SDK on this box). 30 mutation-verified tests. Records what was deliberately NOT ported and why — notably `link-opener.ts`, where ours is better. |
+| `memory/FIX_NOTES_ios_port_v0.1.48.md` | **NEW 2026-10-02 — THE iOS PORT BUILDS, INSTALLS AND LAUNCHES.** Sign-in screen verified rendering on the simulator. Rust compiles for `aarch64-apple-ios` (`apple-native-keyring-store` + `security-framework` confirmed, closing an old UNVERIFIED). Two product defects fixed: `CFBundleVersion` was `"0.1.48"` (Apple rejects it — **the app could never have installed**), and no `NS*UsageDescription` keys existed. `scripts/build-ios.sh` builds a reproducible 5.8 MB unsigned `.ipa` for **AltStore/SideStore, needing no Apple account at all**. Signed device install is blocked ONLY on a rejected Apple ID session. **Keyring has still never worked on iOS** — read the OPEN section before assuming login functions. |
 | `memory/FIX_NOTES_media_features.md` | FIX_NOTES for the post-v0.1.9 media-compat + 3-feature + grid-windowing commits (`eaf60dc`, `1d09c10`, `03f88f2`), plus §4 — the audit fixes (rest.rs token-leak, album-share unlock, +3) now **committed in `17d47f3`**. |
 
-## ⚠ TWO STANDING CORRECTIONS — do not let these rot back in
+## ⚠ THREE STANDING CORRECTIONS — do not let these rot back in
 
-1. **THE "api.grindr.com TLS OUTAGE" IS FALSE. Retracted 2026-10-01.** It was never our host. Our
-   base URL is `https://grindr.mobi` (`src-tauri/src/api/client.rs:13`), which answers **HTTP 403
-   with TLS completing**. `api.grindr.com` appears once in the whole tree, in a comment. Upstream
-   open-grind uses the same host and works with 60k users. **"All 7 probes unprobeable" and
-   "WP-5/WP-6 blocked" are UNFOUNDED.** The probes are still unrun — but only for lack of a
-   signed-in session, not any network fault. Distinct still-open question: the 0.1.38
-   `cdns.grindr.com` 403 (private bucket / `AccessDenied`).
-2. **THE MISSING TEST RUNNER IS FIXED.** `vite.config.mjs` now has TWO vitest projects — `node`
-   (the original 668, unchanged) and `dom` (jsdom + `resolve.conditions: ["browser"]`, for
-   `*.dom.test.ts`). That `conditions` line is load-bearing or `mount()` throws
-   `lifecycle_function_unavailable`. This was the root cause of the v0.1.34/0.1.36/0.1.38 visual
-   regressions shipping through green gates. **Current: 698 tests / 56 files.**
+1. **THE "api.grindr.com TLS OUTAGE" IS FALSE.** It was never our host. Our base URL is
+   `https://grindr.mobi` (`src-tauri/src/api/client.rs:13`), which answers fine. `api.grindr.com`
+   appears once in the whole tree, in a comment. **"All 7 probes unprobeable" / "WP-5 and WP-6
+   blocked" are UNFOUNDED.** Probe #1 is now ANSWERED: `/v3/cascade` returns data.
+2. **PROFILES DID NOT FAIL BECAUSE OF THE NETWORK.** They failed with **HTTP 400
+   `urn:gr:err:geo_hash_decode`** — the app was sending an 8-character geohash and the cascade
+   endpoint requires 12. Introduced by `5cda11f` ("GrindrX Audit Agent", 2026-09-27), an ancestor
+   of `v0.1.40`, so 0.1.40 SHIPPED BROKEN and its device test never opened the grid. Fixed in
+   `0c223af`.
+3. **AN EXPIRED SESSION CAN BE REFRESHED.** `client.rs` was deleting the refresh token at startup
+   instead of using it — a self-inflicted lockout, made permanent by a WAF that intermittently
+   refuses the login endpoint. Fixed in `0c223af`.
+4. **AND THAT FIX INTRODUCED A SIGNED-OUT LOOP** (uncommitted, fixed 2026-10-02). Keeping the
+   session removed the only thing accidentally clearing stale ones, so a server-REJECTED session
+   kept a `profileId`, the `(protected)/+layout.ts` guard kept re-admitting the user, and every
+   request 401'd — stuck on the grid with no sign-in, **including on a cold start**. **A 401 must
+   clear the backend session (`invoke("logout")`) so `auth_state` returns null and the guard fires.
+   Navigating alone is never enough.** Still unfixed: the client trusts the JWT's own `expires_at`,
+   so a revoked-but-in-date token 401s forever instead of refreshing.
 
-**Also note:** your Svelte is **5.55.5**, upstream open-grind is **^5.57.0**. `createContext()`
-returns a 2-tuple here and its `get` throws when unset; upstream destructures a 3-tuple. Verbatim
-upstream runes code fails type-check *and* throws at runtime.
+**THE INSTRUMENTATION THAT ENDED THE MISDIRECTION:** `rest.rs` logs status + a 240-char body
+prefix on **every non-2xx in RELEASE builds**. Before this the only request logging was behind
+`#[cfg(debug_assertions)]`, and a week was lost to a fictional outage. **Do not remove it.**
+There is also a TEMPORARY `[DIAG]` block logging 2600-char prefixes of **2xx** bodies for
+profile/images/cascade paths — that is what finally showed a real `profileImageMediaHash`. **Delete
+it before committing.**
+
+**MEASURED OFF THE DEVICE — use these, don't re-derive them:**
+- `profileImageMediaHash` is **40 hex chars** (e.g. `d9180f7d…cfca6457`), a valid **public** hash.
+  The private/signed-hash theory for missing profile photos is **dead**.
+- `GET /v7/profiles/{id}` → **200**; profiles and profileIds load fine.
+- `POST /v5/views/{id}` → **400 `urn:gr:err:internal_error`** on every profile open.
+
+**TWO PROCESS LESSONS THAT COST REAL TIME:**
+- **WebView `console.log` does NOT reach logcat in a release build.** A JS-side diagnostic
+  produced a silently empty log and cost a build cycle. `eprintln!` → `RustStdoutStderr` is the
+  only channel proven to work on-device.
+- **Watch the test COUNT, not just "tests pass".** A `git checkout` used to undo a mutation
+  silently reverted 5 unrelated tests (732 → 729).
+
+**THE ERROR ENVELOPE THIS API RETURNS IS NOT WHAT `ApiHttpError` EXPECTED:**
+`{"type":"urn:gr:err:...","title":"...","status":N,"traceId":"..."}` — there is **no `code` and no
+`message` field**. Reading only those two silently discarded the server's explanation for *every*
+error in the app. Now reads `type`/`title` too. **Any new error handling must use this shape.**
+
+**ALSO: `cdns.grindr.com` returns S3 `AccessDenied` on every path including its own root.** Still
+open (0.1.38), and now the leading suspect for profile photos not populating — see
+`README_HANDOFF.md` §3 gap 1, which has a diagnostic armed on the device.
 
 **Also note:** `src-tauri/gen/android/.../MainActivity.kt` is a **generated** file that is heavily
 hand-modified. `tauri android init` can clobber it — diff before running one.
+
+**Also note:** `origin` is **`dominus/open-grind` — UPSTREAM open-grind, not this fork.** A bare
+`git push` publishes to the upstream project. This fork's remotes are `github`
+(`Tgbjr2025/grindrx`) and `grindrx-forgejo` (`dominus/grindrx`). `main` is 112 commits behind and
+diverged; it is never a push target.
+
+**Also note:** `google-services.json` is **NOT** in `.gitignore` (verified with
+`git check-ignore`). Decide that before any `git add -A`.
 
 ## Root handoff docs (outside memory/)
 
 | File | Purpose |
 |------|---------|
-| `README_HANDOFF.md` | TL;DR, inventory, critical traps, how to resume. **Does NOT replace `README.md`.** |
-| `HANDOFF_MESSAGE.md` | Verbatim bootstrap prompt for the next session. |
+| `README_HANDOFF.md` | **REWRITTEN 2026-10-02 — the primary gap document.** Current state, the three retracted false premises, committed-vs-uncommitted, the 7 remaining gaps in priority order, the M1 build recipe with its four traps, the two upstream-version traps, and the test-runner layout. **Does NOT replace `README.md`.** |
+| `HANDOFF_MESSAGE.md` | **REWRITTEN 2026-10-02** — verbatim bootstrap prompt for the next session. |
 
 ## Authoritative project docs (pre-existing, do not modify — R23)
 
@@ -54,13 +95,16 @@ hand-modified. `tauri android init` can clobber it — diff before running one.
 - `KEYS.md` / `KEYS.md.asc` — PGP + APK signing keys.
 
 ## One-line state
-**v0.1.41 LINE, UNCOMMITTED. `platform/` ported from upstream + the missing test runner built.**
-Last **shipped** is 0.1.40 / versionCode 1075 (tag `v0.1.40` = `482f9f6`); all three version files
-still read 0.1.40/1075, so `sh ci/check-release-version.sh` passes — bump all three together
-(→ 0.1.41 / 1076) only before an APK ships. **Nothing from 2026-10-01 is committed.** Gates:
-**vitest 698/56** (node 668/54 unchanged + dom 30/2), svelte-check 0 errors, eslint clean,
-`vite build` OK, **Kotlin uncompiled — no Android SDK on this host**. Full detail and the two
-retracted premises in `memory/SESSION_STATE.md` (top entry) + `memory/FIX_NOTES_platform_port.md`.
+**0.1.48/1083 — the app is FIXED AND VERIFIED WORKING ON THE DEVICE.** The grid bug (8-char geohash
+where the API requires 12 → HTTP 400 `urn:gr:err:geo_hash_decode`) is fixed in **`0c223af`, on both
+forks**; the signed-out loop it introduced is fixed in the tree. **Nothing committed or pushed since
+`0c223af`.** Last *shipped* release is still **0.1.40 / 1075**; **1076–1083 are each consumed by a
+real installed diagnostic build and must never be reused**. `main` untouched, 112 behind. Gates:
+**vitest 734/57, svelte-check 0 errors, eslint clean**. **Probe #1 answered.** Top open item:
+**profile photos do not populate** — a diagnostic is armed in 0.1.48 and needs the operator to open
+a profile; `profileImageMediaHash` is confirmed a valid 40-char public hash, so the remaining
+suspect is `medias[].mediaHash` failing validation at `profile.ts:354` (no `.catch()`, so one bad
+hash empties the whole carousel). Full gap list and the M1 build recipe in `README_HANDOFF.md`.
 
 <details><summary>Superseded 2026-06 → 2026-09 history</summary>
 

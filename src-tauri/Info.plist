@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>GrindrX uses your location to show nearby profiles and to attach your position to a chat message when you choose to share it.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>GrindrX uses the microphone only while you are recording a voice message, and only when you tap record.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>GrindrX needs access to your photo library so you can pick images to send in a chat and to set your profile and album photos.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>GrindrX needs the camera so you can take a photo to send in a chat or to set your profile and album photos.</string>
+</dict>
+</plist>

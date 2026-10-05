@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "GrindrX",
-  "version": "0.1.43",
-  "identifier": "org.opengrind",
+  "version": "0.1.48",
+  "identifier": "com.grindrx.app",
   "build": {
     "beforeDevCommand": "bun run dev:web",
     "devUrl": "http://localhost:1420",
@@ -47,7 +47,12 @@
     "android": {
       "autoIncrementVersionCode": false,
       "minSdkVersion": 28,
-      "versionCode": 1078
+      "versionCode": 1083
+    },
+    "iOS": {
+      "developmentTeam": "7CFMMM9HH6",
+      "bundleVersion": "1083",
+      "minimumSystemVersion": "14.0"
     }
   }
 }

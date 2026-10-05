@@ -157,11 +157,30 @@ export class ApiHttpError extends Error {
 			const parsed: unknown = JSON.parse(trimmed);
 			if (parsed && typeof parsed === "object") {
 				const obj = parsed as Record<string, unknown>;
+				// THIS API DOES NOT USE `code`/`message` (2026-10-02, measured).
+				// Its error envelope is:
+				//   {"type":"urn:gr:err:entitlement_limit",
+				//    "title":"User has reached their entitlement limits",
+				//    "status":402,"traceId":"..."}
+				// so reading only `code`/`message` left BOTH undefined, threw away
+				// the server's own explanation, and surfaced a bare
+				// "Request to /v2/albums failed (HTTP 402)" with no reason — for
+				// EVERY error this API returns. The same envelope shape produced
+				// the code-less "Couldn't load profiles" that hid a 400 geohash
+				// rejection for a week. Read the documented fields, keep the old
+				// names as a fallback so a future envelope change still works.
 				if (typeof obj.code === "string" || typeof obj.code === "number") {
 					code = obj.code;
+				} else if (typeof obj.type === "string" && obj.type !== "") {
+					// `urn:gr:err:entitlement_limit` -> `entitlement_limit`. The
+					// urn prefix is noise in a user-facing string but the suffix is
+					// the actual machine-readable reason.
+					code = obj.type.replace(/^urn:gr:err:/, "");
 				}
-				if (typeof obj.message === "string") {
+				if (typeof obj.message === "string" && obj.message !== "") {
 					serverMessage = obj.message;
+				} else if (typeof obj.title === "string" && obj.title !== "") {
+					serverMessage = obj.title;
 				}
 			}
 		} catch {
@@ -479,6 +498,39 @@ function handleSessionLost(error?: unknown): void {
 		// connected and it just fails to authenticate on the Rust side.
 		import("$lib/ws.svelte").then((m) => m.ws.disconnect()),
 	]);
+
+	/**
+	 * CLEAR THE SESSION ON THE BACKEND BEFORE NAVIGATING (2026-10-02).
+	 *
+	 * `goto("/auth/sign-in")` alone was NOT ENOUGH and produced an unbreakable
+	 * state, observed on a real device: the app sat on the grid forever showing
+	 * "Couldn't load profiles" + "Please log in to continue", with no sign-in
+	 * anywhere, and a COLD START did the same thing.
+	 *
+	 * Why: the `(protected)/+layout.ts` guard admits you by asking
+	 * `auth_state` for a profileId. A session the server has rejected still
+	 * carries one, so the guard kept letting the user into the app while every
+	 * request 401'd. Navigating to `/auth/sign-in` was not blocked per se — but
+	 * any subsequent protected navigation was re-admitted by that same guard, so
+	 * the user could never actually land on a form and re-authenticate.
+	 *
+	 * `logout` is what makes `auth_state` return null, which is what makes the
+	 * guard redirect. Without it the only escape was `pm clear`, which also
+	 * destroys unrelated local state.
+	 *
+	 * Deliberately NOT awaited: navigation must not be blocked on a keystore
+	 * write, and a failure here still leaves `goto` to do its job.
+	 */
+	void invoke("logout").catch((e: unknown) =>
+		console.warn("[GrindrX] could not clear the rejected session", e),
+	);
+
+	// The latch is deliberately LEFT SET. It is what stops N concurrent 401s
+	// each firing their own toast and navigation — a real bug this app had, and
+	// one an existing test pins. It does not need clearing here: `callMethod`
+	// clears it the moment a live session comes back, i.e. right after a
+	// successful sign-in. Resetting it here would re-open the N-toast bug.
+
 	goto("/auth/sign-in").catch((e: unknown) => console.error(e));
 }
 

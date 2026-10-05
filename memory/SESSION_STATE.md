@@ -1,4 +1,280 @@
-# SESSION_STATE — grindrx-work
+# SESSION_STATE - grindrx-work
+
+**2026-10-02 ~06:00 UTC - iOS PORT IS BUILDABLE AND LAUNCHES. Free distribution via
+AltStore/SideStore needs no credential. Signed device install is blocked ONLY on a rejected Apple
+ID session. Two real product defects found and fixed. Full detail in
+`memory/FIX_NOTES_ios_port_v0.1.48.md`. NOTHING COMMITTED SINCE `0c223af`.**
+
+Operator asked for an iOS front and a free store that avoids the 7-day expiry. Resolution: the
+7-day expiry IS Apple's rule for free personal teams and is not route-around; the free answer is
+**AltStore/SideStore**, which signs on-device with the user's own cert and auto-refreshes weekly.
+No website, no server, no credential leaving the phone.
+
+**VERIFIED:** Rust compiles for `aarch64-apple-ios` (2m24s) - `apple-native-keyring-store` and
+`security-framework` both build, closing the audit's UNVERIFIED flags. App builds arm64, installs and
+runs on the simulator, and **the sign-in screen renders** (screenshot kept at
+`/tmp/opencode/ios-sim2.png`). Reproducible unsigned `.ipa`: 5,837,841 bytes.
+
+**FOUND AND FIXED (both would have shipped broken):**
+1. `CFBundleVersion` was `"0.1.48"` - Apple requires 1-3 dot-separated integers, so the app could
+   NEVER have installed. Fixed via `bundle.iOS.bundleVersion = "1083"`. Note Tauri applies it during
+   *build*, not `ios init`, so it looks ignored if you only inspect the generated project.
+2. No `NS*UsageDescription` keys at all. Added `src-tauri/Info.plist` (Tauri MERGES it) with the
+   four strings the app actually requests.
+
+**BUILD-PATH BUGS, each found by running it:** `libapp.a` was shipped inside the .app (`.ipa` 146MB
+vs 5.8MB) because `project.yml` lists `Externals` as a source; xcodegen needs `**/*.a` not `*.a`;
+Tauri's arch dirs are `arm64`/`x86_64` and do NOT match the `aarch64-*` Rust triple, so the
+stale-`.a` cleanup silently no-ops; and `set -o pipefail` + `| head` / `| grep -q` makes the producer
+die on SIGPIPE and the script exit with **no message** (killed it twice). `tauri ios init` PRESERVES
+`project.yml` edits, so per-mode signing is patchable.
+
+**TOOLCHAIN ON THE M1:** all three iOS Rust targets were already installed. CocoaPods was missing
+-> installed 1.17.0 + Ruby 4.0.7 (system Ruby 2.6 is too old for `ffi`); turned out unnecessary,
+plugins arrive as static libs and the Podfile stays empty. `brew`/`bun`/`node`/`cargo` all exist but
+are OFF the non-interactive SSH PATH - that is why a first probe looks like an empty machine.
+
+**OPERATOR-ONLY, EXACT ERRORS:**
+- `Unable to log in with account 'tbateman21@icloud.com'` -> `No profiles for 'org.opengrind'`.
+  Xcode > Settings > Accounts > sign in again. The certificate is valid; the SESSION is not.
+- Rotate the GitHub PAT. It is in `.git/config`, an 8-char prefix is committed at
+  `memory/SESSION_STATE.md:2061`, **and a subagent command printed the full token into this
+  session's transcript - treat as burned.**
+- `firebase login:ci` once, then `FIREBASE_TOKEN`. Do NOT paste it into chat; write it to a 0600
+  file.
+
+**STILL OPEN - do not call any of this working:**
+- **Keyring has NEVER worked on iOS.** Simulator logs `KEYRING UNAVAILABLE ... A required entitlement
+  isn't present` (empty entitlements + unsigned build). I believe AltStore's signature fixes it -
+  that is a HYPOTHESIS, not a measurement. It is the #1 thing to check on device. If it does not
+  resolve, login is impossible and `keychain-access-groups` must be added.
+- Horizontal clipping seen on the simulator render is NOT reproducible in source (input left border
+  measured at exactly 56pt, correct, yet the field overflows; production bundle measures
+  `overflowX=0` at 393px across 9 widths and 14 routes). **No CSS was changed** - no defect could be
+  demonstrated. Most likely a Vite dep-optimization reload mid-capture.
+- Bundle id is still `org.opengrind` (upstream's identity). Changing top-level `identifier` may
+  disturb the working Android `applicationId`; the M1 has the Android SDK to test it rather than guess.
+- `src-tauri/gen/apple/` is untracked and holds my patches; decide commit vs regenerate.
+
+**iOS GAPS UNCHANGED:** no screenshot blocking (no `FLAG_SECURE` equivalent - privacy regression for
+this app), no background notifications (needs APNs; that is where Firebase lands), edge-swipe-back
+collides with three ungated swipe handlers (`profile/[profileId]/+page.svelte:164`,
+`Grid.svelte:212`, `Conversation.svelte:123`), audio MIME prefers webm/opus but Safari does mp4.
+
+**ANDROID TOUCHED:** only `.gitignore` (added `google-services.json`, `*.p12`, `*.mobileprovision`,
+`*.cer`, `*.p8`, `*.ipa`). Also `chmod 600 /home/ubuntu/open-grind-key.jks`, which was 0644
+world-readable. No Android behaviour changed.
+
+
+**2026-10-02 ~01:0x UTC — SIGNED-OUT LOOP FOUND AND FIXED. 0.1.48/1083 VERIFIED WORKING ON THE
+DEVICE. THREE THEORIES KILLED BY MEASUREMENT ON THE IMAGE BUG. DOCS UPDATED. NOTHING COMMITTED
+SINCE `0c223af`.**
+
+Operator: "still broken" → "update the handoff documentation". Both answered.
+
+## THE SIGNED-OUT LOOP — introduced by my own previous fix, now fixed and verified
+
+**Observed on the device:** stuck on the grid showing `Couldn't load profiles` + `Please log in to
+continue`, **no sign-in anywhere**, and **a cold start behaved identically** (verified twice, via
+`uiautomator` dumps).
+
+**Chain:** the `client.rs` fix (stop deleting an expired session so it can be refreshed) removed the
+only thing that was *accidentally* clearing stale sessions at startup. A session the server has
+**rejected** still carries a `profileId`, so `(protected)/+layout.ts` — which admits you by asking
+`auth_state` for a profileId — kept re-admitting the user while every request 401'd.
+`goto("/auth/sign-in")` did fire, but any protected navigation was re-admitted by the same guard, so
+**the user could never land on a form**.
+
+**THE FIX: on a 401, clear the session on the backend.** `invoke("logout")` in `handleSessionLost`
+(`src/lib/api/index.ts`) makes `auth_state` return null, which is what makes the guard redirect.
+**Navigating alone was never enough.** Two tests pin it; the important one is **mutation-verified**
+(deleting the `logout` call fails it). A second covers clearing-session-*fails*, so the cleanup
+cannot strand the user by itself.
+
+**The `authRedirectLatched` reset I first added was WRONG and reverted.** It defeated the
+N-concurrent-401s-one-toast guarantee that an existing test pins (and that the doubled toast in the
+UI dump was evidence of). The latch does not need clearing: `callMethod` clears it when a live
+session returns, i.e. right after sign-in.
+
+**⚠ STILL UNFIXED: the client trusts the JWT's own `expires_at`.** A token revoked server-side but
+still in-date never triggers a refresh — it 401s forever. The redirect fix makes that recoverable
+rather than a trap; the proper fix is one refresh-and-retry on 401.
+
+## IMAGE BUG — three theories killed by measurement, one unknown left
+
+**CONFIRMED off the device** (`GET /v7/profiles/921536610 -> 200`, 2600-char capture):
+- **`profileImageMediaHash` = `d9180f7d26b457ab20470e3f34f3bfa7cfca6457` — 40 hex chars, a valid
+  PUBLIC hash.** Grid thumbnails render, so `publicCdnUrl` works.
+- Profiles load; profileIds are real (four distinct ones).
+
+**DEAD THEORIES — do not rebuild on them:** private/signed 64-char hashes; missing upstream
+`signed-url.ts`. The lightbox-auth theory is *unproven*, not dead.
+
+**THE REMAINING UNKNOWN: the `medias` array.** The capture truncates just before it. Most likely
+cause: `src/lib/model/profile.ts:354` validates `medias[].mediaHash` with `mediaHashPublicSchema`
+and **no `.catch()`**, so one bad hash fails the WHOLE array and the carousel renders empty —
+consistent with "doesn't populate". The vendored docs are ambiguous
+(`docs/content/grindr-api/users/profiles.md:357` says `medias[]` is Signed CDN, `:389` says
+`profileImageMediaHash` is Public CDN) and upstream uses the same public schema, so neither proves
+anything. **A diagnostic is armed in 0.1.48; it needs the operator to open a profile.**
+
+## TWO PROCESS LESSONS THAT COST REAL TIME
+
+- **WebView `console.log` DOES NOT REACH LOGCAT IN A RELEASE BUILD.** The first diagnostic was a
+  JS-side `console.log` and produced a silently empty log, costing a build cycle.
+  `eprintln!` → `RustStdoutStderr` is the only channel proven to work on-device.
+- **Watch the test COUNT, not just "tests pass".** A `git checkout` used to undo a mutation
+  silently reverted **5 unrelated `ApiHttpError` tests** (732 → 729). Caught on the count and
+  restored. This is the same failure mode as the geohash regression: a suite that passes while
+  asserting the wrong thing.
+
+## STATE
+
+Gates: vitest **734/57** · svelte-check **0 errors** · eslint clean · version gate **0.1.48**.
+**0.1.48/1083 built, signed (cert `22d6889e…4c01`), installed, and VERIFIED — the screen dump shows
+live profiles with names, ages, recency and about-me text.** Pushed: `0c223af` on both forks,
+branch only. Uncommitted: the session-lost fix, the `ApiHttpError` type/title fix, the viewers
+history, both `[DIAG]` blocks (**delete before commit**), the 0.1.48 bump, and the Firebase gradle
+work. `main` untouched everywhere.
+
+**⚠ VERSION CODES 1076–1083 are ALL CONSUMED by real installed diagnostic builds.** Android rejects
+a downgrade. Pick the release number deliberately.
+
+## DOCS UPDATED
+
+`README_HANDOFF.md` (367 lines) · `HANDOFF_MESSAGE.md` (149) · `memory/MEMORY.md` (188) · this entry.
+Backups `*.bak.pre_handoff2.*`. The bootstrap prompt now carries the signed-out loop, the measured
+image findings, the consumed version codes, and both process lessons.
+
+**2026-10-02 ~04:0x UTC — COMPLETE HANDOFF DOCS REWRITTEN. Nothing committed or pushed since
+`0c223af`. A DIAGNOSTIC IS ARMED ON THE PHONE AND WAITING FOR THE OPERATOR.**
+
+Operator asked for complete handoff docs covering the remaining gaps and the current state. All
+three rewritten, backups `*.bak.pre_fullhandoff.*` and `*.bak.pre_handoff.*`.
+
+| File | Lines | What changed |
+|---|---:|---|
+| `README_HANDOFF.md` | 300 | **Rewritten** — now the primary gap document |
+| `HANDOFF_MESSAGE.md` | 127 | **Rewritten** — bootstrap prompt |
+| `memory/MEMORY.md` | 164 | "TWO STANDING CORRECTIONS" → **THREE**, plus the API error-envelope shape, the `origin`-is-upstream warning, the gitignore gap, and a fresh one-line state |
+| `memory/SESSION_STATE.md` | 2026 | This entry |
+
+**`README_HANDOFF.md` now contains:** the one-line state · what was wrong and the three retracted
+false premises, with the measured 400/402 evidence · committed-vs-uncommitted tables · **the 7
+remaining gaps in priority order** · the full M1 build recipe with all four traps · the two
+upstream-version traps (Svelte 5.55.5 vs ^5.57, and the vitest browser condition) · the two-project
+test-runner layout · and a "if you do nothing else" list.
+
+## THE ONE ACTION WAITING ON THE OPERATOR
+
+**Open any profile on the phone.** `0.1.45` is installed with a one-line `[DIAG]` log in
+`ImageCarousel.svelte` that reports the length and head of every `mediaHash` the moment a profile
+renders. **It has not fired yet** because no profile has been opened since the install — the log
+came back empty. That single number closes the top open gap (profile photos do not populate) and
+distinguishes four causes that three failed theories could not:
+
+- `medias=[]` → no photos in the response at all
+- `len: 40` → hashes fine, so it is the URL/auth path
+- `len: 64` → **private/signed hashes**; `publicCdnUrl` returns `null` for every one and no request
+  is ever made. The vendored docs support this: `medias[].mediaHash` is documented as coming from
+  **Signed CDN files** while `profileImageMediaHash` comes from **Public CDN files**
+  (`docs/content/grindr-api/users/profiles.md:357` vs `:389`), yet `src/lib/model/profile.ts:354`
+  validates it with the **public** 40-char schema. Upstream uses the same public schema, so this is
+  not proven.
+- `len: 0` → the field is not arriving
+
+**⚠ THE `[DIAG]` LOG IS TEMPORARY AND MUST BE DELETED BEFORE COMMITTING.** It exists only to read
+one number off the device.
+
+**DO NOT PREFETCH full-resolution images when fixing this.** Authed-first is exactly what turned the
+grid into a wall of placeholders in v0.1.38 — `CdnImage`'s own header documents it and the blob
+cache is `MAX_ENTRIES = 32`. Resolve lazily, on tap.
+
+## THE SEVEN GAPS, IN ORDER (detail in `README_HANDOFF.md` §3)
+
+1. 🔴 Profile photos do not populate — diagnostic armed, needs one operator action
+2. 🟠 `POST /v5/views/{id}` → 400 `internal_error`; we cannot record that the user viewed someone
+3. 🟠 Viewers cannot be fully clickable on a free-tier account — server-side masking, no client fix.
+   Options A/B/C offered, **operator has not chosen**
+4. 🟡 Six probe questions open (#1 answered). Highest value: `GET /v1/hides` envelope key
+5. 🟡 Firebase — `firebase-tools` installed, stops at `firebase login`, which is interactive and
+   only the operator can run it. Full command sequence in the handoff
+6. 🟡 Upstream gaps left: `blur/` (best next task), `ShowDistanceSetting`, rest of `platform/`
+7. 🟡 Housekeeping: `main` 112 behind, `v0.1.24` tag missing, README claims v0.1.38, F-Droid index
+   stale, CI runs no gates, credentials in remote URLs (and in `~/.claude/projects/` logs), and
+   **`origin` is upstream open-grind — never a bare `git push`**
+
+## STATE
+
+Gates: vitest **732/57** · svelte-check **0 errors** · eslint clean · `ci/check-release-version.sh`
+→ `building release version 0.1.45`. Pushed: `0c223af` on both forks, branch only. Uncommitted:
+viewers history, the `ApiHttpError` type/title fix, the `[DIAG]` log, the 0.1.45 bump, and the
+Firebase gradle work (deliberately held for the operator). `main` untouched everywhere.
+
+**2026-10-02 ~03:4x UTC — OPERATOR CONFIRMS THE APP WORKS. 0.1.44/1079 INSTALLED AND VERIFIED.
+VIEWER HISTORY + ERROR-MESSAGE FIXES IN THE TREE, UNCOMMITTED. NOTHING PUSHED SINCE `0c223af`.**
+
+**Operator: "it works now."** Grid loads, so the 12-char geohash fix is confirmed on the device —
+**probe question #1 ("does /v3/cascade still return data?") is now ANSWERED: yes.** That closes the
+longest-standing open question in `FIX_NOTES_v0.1.41.md §7` and de-risks WP-6.
+
+## SHIPPED THIS SESSION (uncommitted, 0.1.44/1079 on the device)
+
+1. **Viewer history — `src/lib/app-data/viewers.svelte.ts` (new) + test, wired into
+   `(navbar)/views/+page.svelte`.** Keeps the last 50 viewers in `localStorage`
+   (`grindrx-stored-viewers`), merged by identity so repeat views do not duplicate, newest first,
+   capped with the oldest dropped. Falls back to stored history when the server's rolling window
+   returns nothing. A masked viewer UPGRADES itself to clickable if Grindr later reveals the id.
+   **23 tests, 3 mutations verified** (cap removal → 2 fail; `seen` leaking into the dedup key → 1
+   fail; view count allowed to decrease → 1 fail). One test of mine was initially WRONG: the
+   `viewer()` helper defaults to `profileId: 1`, so the "one clickable + one masked" case built two
+   identical rows. Caught by the suite.
+
+   **THE LIMIT IS SERVER-SIDE AND NOT FIXABLE IN THE CLIENT — do not re-attempt.** The album failure
+   below proves the account is FREE tier, and on a free tier Grindr masks all but ~1-2 viewers:
+   `previews` rows carry NO `profileId`, so there is no profile page to link to. The operator's
+   request ("save the live link to the last 50") is therefore not achievable on this account. Options
+   offered: (A) resolve masked viewers by matching `profileImageMediaHash` against ids already seen
+   in the grid — works, but only for photos already loaded, and must never overwrite a real id;
+   (B) informative rows only, as built; (C) XTRA. **Operator has not chosen.**
+
+2. **`ApiHttpError` now reads the error envelope THIS API actually returns.** Measured on the device:
+   the API sends `{"type":"urn:gr:err:...","title":"...","status":N,"traceId":"..."}` — there is NO
+   `code` and NO `message` field. The class read only those two, so **every error in the app lost the
+   server's explanation** and surfaced a bare `Request to … failed (HTTP N)`. This is the same missing-
+   `code` shape that made the geohash 400 unreadable for a week. Now reads `type`/`title` with the
+   old names as fallback, and strips the `urn:gr:err:` prefix for display. **+5 tests using the two
+   real bodies captured off the device.**
+
+3. **A third real bug found and NOT yet fixed: `POST /v5/views/{profileId}` → 400
+   `urn:gr:err:internal_error`.** The app cannot record that the user opened someone's profile
+   (`src/lib/api/view.ts:92`, fire-and-forget by contract). This is the OPPOSITE direction — it feeds
+   the OTHER person's viewer list, not ours — but it is broken. **Open.**
+
+## STILL OPEN
+
+- **`POST /v5/views` 400** (above) — unfixed.
+- **Profile full-screen image viewer shows no image.** Thumbnails go through `CdnImage`, which
+  retries via the authed Rust `fetch_authed_bytes` on error; the lightbox uses a bare CDN `href`
+  (`profile/[profileId]/ImageCarouselItem.svelte:49`) with no auth and no fallback, and the 0.1.38
+  audit established bare `cdns.grindr.com` URLs return S3 `AccessDenied`. **NOT YET CONFIRMED** —
+  asked the operator to check whether thumbnails render while full-screen is blank, and did not
+  build a fix on an unverified hypothesis. If confirmed, fix must resolve lazily on tap, NOT
+  prefetch: authed-first is what wrecked the grid in v0.1.38.
+- **`GET /v7/views/list` response shape still unprobed** (question #3) — it is a 2xx so the new
+  release-build logger does not print it. Would need a temporary log or a deliberate failure.
+- Firebase gradle work still uncommitted, still the operator's call.
+- No `v0.1.44` tag, no release, F-Droid untouched, `main` still 112 behind.
+
+## GATES
+
+vitest **732/57** · svelte-check **0 errors** · eslint clean · `ci/check-release-version.sh` →
+`building release version 0.1.44`. `cargo check --lib` clean on the M1 for the previous batch; the
+last build (0.1.44) succeeded on the M1 and is installed.
+
+**NOTHING COMMITTED OR PUSHED SINCE `0c223af`** (which is on both forks and contains the geohash
+root-cause fix). The viewers work, the error-message fix and the version bump to 0.1.44 are all
+uncommitted. Awaiting the operator's go-ahead, as always.
 
 **2026-10-02 ~03:2x UTC — ROOT CAUSE FOUND: `PERSISTED_PRECISION` WAS 8, THE SERVER REQUIRES 12.
 THE OPERATOR WAS RIGHT AND I WAS WRONG TO DISMISS THE SUB-AGENT THEORY. 0.1.43/1078 INSTALLED,

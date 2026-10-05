@@ -69,6 +69,66 @@ describe("ApiHttpError", () => {
 		expect(err.code).toBeNull();
 		expect(err.message).toContain("500");
 	});
+
+	// REGRESSION (2026-10-02), bodies captured verbatim off the device.
+	it("reads the urn:gr:err type/title envelope the API actually returns", () => {
+		const err = new ApiHttpError(
+			402,
+			JSON.stringify({
+				type: "urn:gr:err:entitlement_limit",
+				title: "User has reached their entitlement limits",
+				status: 402,
+				traceId: "6abf24ec0000000035bd9493dcc89ccc",
+			}),
+			"/v2/albums",
+		);
+		expect(err.code).toBe("entitlement_limit");
+		expect(err.message).toContain("User has reached their entitlement limits");
+	});
+
+	it("reads the geo_hash_decode envelope that hid a 400 for a week", () => {
+		const err = new ApiHttpError(
+			400,
+			JSON.stringify({
+				type: "urn:gr:err:geo_hash_decode",
+				title: "Invalid location format",
+				status: 400,
+				traceId: "6abf1fef000000000961d160b6af176e",
+			}),
+			"/v3/cascade",
+		);
+		expect(err.code).toBe("geo_hash_decode");
+		expect(err.message).toContain("Invalid location format");
+	});
+
+	it("never reports a null code for a typed API error envelope", () => {
+		const err = new ApiHttpError(
+			403,
+			'{"type":"urn:gr:err:forbidden","title":"No","status":403}',
+			"/v3/cascade",
+		);
+		expect(err.code).not.toBeNull();
+	});
+
+	it("prefers an explicit code/message over type/title when both are present", () => {
+		const err = new ApiHttpError(
+			400,
+			JSON.stringify({
+				code: "X",
+				message: "explicit",
+				type: "urn:gr:err:t",
+				title: "t",
+			}),
+			"/v3/cascade",
+		);
+		expect(err.code).toBe("X");
+		expect(err.message).toContain("explicit");
+	});
+
+	it("ignores an empty type/title rather than reporting a blank reason", () => {
+		const err = new ApiHttpError(500, '{"type":"","title":"","status":500}', "/v3/cascade");
+		expect(err.code).toBeNull();
+	});
 });
 
 describe("asAppError", () => {
@@ -393,6 +453,35 @@ describe("fetchRest session-lost handling", () => {
 		expect(res.status).toBe(401);
 		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
 		expect(mockedToast).toHaveBeenCalledTimes(1);
+	});
+
+	it("clears the rejected session on the backend so the route guard can fire", async () => {
+		const packed = encode({
+			status: 401,
+			body: new TextEncoder().encode(JSON.stringify({ type: "urn:gr:err:x" })),
+		});
+		mockedInvoke.mockResolvedValue(toBase64(packed));
+
+		await fetchRest("/v3/cascade").catch(() => undefined);
+
+		expect(mockedInvoke).toHaveBeenCalledWith("logout");
+		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
+	});
+
+	it("still navigates even if clearing the session fails", async () => {
+		const packed = encode({
+			status: 401,
+			body: new TextEncoder().encode(JSON.stringify({ type: "urn:gr:err:x" })),
+		});
+		mockedInvoke.mockImplementation((cmd: string) =>
+			cmd === "logout"
+				? Promise.reject(new Error("keystore unavailable"))
+				: Promise.resolve(toBase64(packed)),
+		);
+
+		await fetchRest("/v3/cascade").catch(() => undefined);
+
+		expect(mockedGoto).toHaveBeenCalledWith("/auth/sign-in");
 	});
 
 	it("does NOT redirect for a `public: true` pre-session call", async () => {
