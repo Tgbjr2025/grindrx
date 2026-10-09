@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, Notify};
 
@@ -27,6 +28,9 @@ pub struct AppState {
     /// loop compares it as the FIRST statement of every iteration and again
     /// after each inbound frame is handled. See `api::ws::run_message_loop`.
     pub ws_epoch: Arc<AtomicU64>,
+    /// Last successful rotate_api_params call timestamp (UNIX millis).
+    /// Used for rate limiting: max 1 call per ROTATE_COOLDOWN_MS.
+    pub rotate_last_called: Arc<AtomicU64>,
     /// Wakeup hint only — the epoch above is the source of truth.
     ///
     /// `Notify::notify_waiters()` wakes only the waiters registered at that
@@ -105,6 +109,32 @@ impl AppState {
         self.ws_epoch
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.ws_reset_notify.notify_waiters();
+    }
+
+    // Rate limiting for rotate_api_params
+    const ROTATE_COOLDOWN_MS: u64 = 60_000; // 60 seconds
+    const ROTATE_MAX_RETRIES: u32 = 5;
+
+    /// Try to acquire rotation permit. Returns Ok(()) if allowed, Err if rate limited.
+    pub fn try_acquire_rotate_permit(&self) -> Result<(), AppError> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+        let last = self.rotate_last_called.load(std::sync::atomic::Ordering::SeqCst);
+        if last != 0 && now.saturating_sub(last) < Self::ROTATE_COOLDOWN_MS {
+            return Err(AppError::Auth("rotate_api_params rate limited: 60s cooldown".into()));
+        }
+        // Use compare-and-swap to avoid race between check and set
+        loop {
+            let current = self.rotate_last_called.load(std::sync::atomic::Ordering::SeqCst);
+            if current != 0 && now.saturating_sub(current) < Self::ROTATE_COOLDOWN_MS {
+                return Err(AppError::Auth("rotate_api_params rate limited: 60s cooldown".into()));
+            }
+            if self.rotate_last_called.compare_exchange_weak(
+                current, now, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst
+            ).is_ok() {
+                return Ok(());
+            }
+            // Lost race, retry
+        }
     }
 
     /// Whether the in-app lock is engaged. Read by the notification path

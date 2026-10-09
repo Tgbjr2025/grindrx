@@ -70,6 +70,7 @@ pub fn run() {
             ws_rx: tokio::sync::Mutex::new(Some(ws_rx)),
             auth_notify,
             ws_epoch: Arc::new(AtomicU64::new(0)),
+            rotate_last_called: Arc::new(AtomicU64::new(0)),
             ws_reset_notify,
             is_foreground: AtomicBool::new(true),
             // Default OFF until the WebView pushes the real values, so a

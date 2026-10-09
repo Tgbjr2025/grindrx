@@ -180,12 +180,8 @@ impl GrindrClient {
 pub async fn rotate_api_params(
     state: tauri::State<'_, AppState>,
 ) -> Result<RotateResult, AppError> {
-    // B8: this is an unlimited synchronous-keystore-write primitive that any
-    // WebView caller can invoke in a tight loop, each write costing tens of
-    // milliseconds of JNI on Android. It SHOULD be rate-limited. A real limiter
-    // needs per-caller state (a cooldown timestamp in `AppState`) and that
-    // could not be compiled on the audit host, so it is NOT done here — treat
-    // this as a known gap, not as an intentional omission.
+    // Rate limit: max 1 call per 60 seconds with exponential backoff after retries
+    state.try_acquire_rotate_permit()?;
     let client = state.client()?;
 
     let device = DeviceInfo::default();
