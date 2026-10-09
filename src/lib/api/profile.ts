@@ -496,12 +496,101 @@ function stripGifMetadata(bytes: Uint8Array): Uint8Array | null {
  * the worst case is the pre-existing behaviour (upload the file as picked)
  * rather than a corrupted image.
  */
+/**
+ * Strip eXIf and iTXt metadata chunks from PNG bytes.
+ * PNG chunks: length(4) + type(4) + data + crc(4). We remove eXIf and iTXt chunks.
+ * Returns null on parse error (caller should fall back to original bytes).
+ */
+function stripPngMetadata(bytes: Uint8Array): Uint8Array | null {
+	// PNG signature: 89 50 4E 47 0D 0A 1A 0A
+	if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47 || bytes[4] !== 0x0d || bytes[5] !== 0x0a || bytes[6] !== 0x1a || bytes[7] !== 0x0a) {
+		return null;
+	}
+	let out = new Uint8Array(bytes.slice(0, 8)); // keep signature
+	let i = 8;
+	while (i + 8 <= bytes.length) {
+		const length = (bytes[i] << 24) | (bytes[i+1] << 16) | (bytes[i+2] << 8) | bytes[i+3];
+		if (i + 12 + length > bytes.length) return null;
+		const chunkType = String.fromCharCode(bytes[i+4], bytes[i+5], bytes[i+6], bytes[i+7]);
+		const chunkEnd = i + 12 + length;
+		// Skip eXIf (EXIF in PNG) and iTXt/zTXt/tEXt (text) chunks
+		if (chunkType === "eXIf" || chunkType === "iTXt" || chunkType === "zTXt" || chunkType === "tEXt") {
+			// Skip this chunk entirely (don't copy to output)
+		} else {
+			// Copy chunk: length + type + data + crc
+			const newOut = new Uint8Array(out.length + 12 + length);
+			newOut.set(out);
+			newOut.set(bytes.slice(i, chunkEnd), out.length);
+			out = newOut;
+		}
+		i = chunkEnd;
+		if (chunkType === "IEND") break;
+	}
+	return out;
+}
+
+/**
+ * Strip EXIF chunk from WebP bytes.
+ * WebP RIFF format: RIFF + size + WEBP + chunks (VP8/VP8L + optional EXIF/ICCP/XMP)
+ * Returns null on parse error.
+ */
+function stripWebPMetadata(bytes: Uint8Array): Uint8Array | null {
+	// RIFF header: "RIFF" + fileSize(4) + "WEBP"
+	if (bytes.length < 12) return null;
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== "RIFF" ||
+	    String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) !== "WEBP") {
+		return null;
+	}
+	// Simple approach: remove EXIF chunk if found
+	// Chunks: FourCC(4) + size(4) + data + padding(1 if odd)
+	let i = 12;
+	const outChunks: Uint8Array[] = [];
+	while (i + 8 <= bytes.length) {
+		const fourcc = String.fromCharCode(bytes[i], bytes[i+1], bytes[i+2], bytes[i+3]);
+		const size = view.getUint32(i+4, true); // little-endian
+		if (i + 8 + size > bytes.length) return null;
+		const paddedSize = size + (size & 1);
+		const chunkEnd = i + 8 + paddedSize;
+		// Skip EXIF chunk
+		if (fourcc !== "EXIF") {
+			outChunks.push(bytes.slice(i, chunkEnd));
+		}
+		i = chunkEnd;
+	}
+	// Reconstruct
+	const totalSize = outChunks.reduce((sum, c) => sum + c.length, 0);
+	const out = new Uint8Array(12 + totalSize);
+	out.set(bytes.slice(0, 12));
+	let offset = 12;
+	for (const chunk of outChunks) {
+		out.set(chunk, offset);
+		offset += chunk.length;
+	}
+	// Update RIFF size
+	const newRiffSize = totalSize + 4; // WEBP + chunks
+	view.setUint32(4, newRiffSize, true);
+	return out;
+}
+
+/**
+ * Remove metadata containers from image bytes WITHOUT re-encoding pixels.
+ *
+ * Returns the input unchanged for any container it cannot safely rewrite, so
+ * the worst case is the pre-existing behaviour (upload the file as picked)
+ * rather than a corrupted image.
+ */
 function stripImageMetadata(bytes: Uint8Array, mimeType: string): Uint8Array {
-	if (mimeType === "image/jpeg") return stripJpegMetadata(bytes) ?? bytes;
-	if (mimeType === "image/gif") return stripGifMetadata(bytes) ?? bytes;
-	// PNG (eXIf/iTXt chunks) and WebP/HEIF (EXIF chunk) are not rewritten here:
-	// they always take the canvas path, which is a full re-encode.
-	return bytes;
+	switch (mimeType) {
+		case "image/jpeg": return stripJpegMetadata(bytes) ?? bytes;
+		case "image/gif": return stripGifMetadata(bytes) ?? bytes;
+		case "image/png": return stripPngMetadata(bytes) ?? bytes;
+		case "image/webp": return stripWebPMetadata(bytes) ?? bytes;
+		default:
+			// HEIF/AVIF and other formats: canvas path handles re-encode
+			// If canvas fails, we return bytes as-is (pre-existing behavior)
+			return bytes;
+	}
 }
 
 /**
