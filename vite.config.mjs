@@ -81,6 +81,22 @@ export default defineConfig(async ({ mode }) => ({
 					name: "dom",
 					environment: "jsdom",
 					include: ["src/**/*.dom.test.ts"],
+					// MML-TEST-001. The `dom` project rebuilds its module graph
+					// per test on purpose (`vi.resetModules()`), because modules
+					// like android-native-bridge hold real module-level state
+					// (`appliedImeVisible`) that leaks if the graph is cached.
+					// Caching was measured and rejected: it fails 4 tests.
+					//
+					// That means each test pays a full module-graph rebuild,
+					// which is far slower than a node-env test and is what
+					// pushed `applyAndroidInsets` past vitest's 5000ms default
+					// when the host CPU is contended. Measured unloaded 2.28s of
+					// test time, 5.09-5.56s with 8 competing busy loops.
+					//
+					// 20s is headroom for that rebuild on a loaded CI runner
+					// while still failing a genuinely hung test. The `node`
+					// project is deliberately left at the default.
+					testTimeout: 20_000,
 				},
 			},
 		],
