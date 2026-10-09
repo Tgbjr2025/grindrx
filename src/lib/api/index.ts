@@ -489,15 +489,67 @@ function handleSessionLost(error?: unknown): void {
 	console.warn("[GrindrX] Session gone; redirecting to sign-in.", error ?? "");
 	// Drop everything derived from the dead session BEFORE navigating, so no
 	// stale frame renders behind the sign-in page. All dynamic: `$lib/api/*`
-	// imports `$lib/api` itself, so a static import here would be a cycle.
+	// imports `$lib/api` itself, so a static import here would be a cycle. The
+	// last two entries do not import `$lib/api` today, but they stay dynamic for
+	// the same reason the list is uniform: one failure must not be able to abort
+	// the rest, and `allSettled` is what buys that per entry.
 	void Promise.allSettled([
 		import("$lib/api/profile").then((m) => m.clearMediaIdCache()),
 		import("$lib/api/genders").then((m) => m.clearGendersCache()),
 		import("$lib/api/pronouns").then((m) => m.clearPronounsCache()),
+		// The dead account's FULL-RESOLUTION photos, held as `blob:` object URLs
+		// in module state by `$lib/utils/authed-image`. `clearMediaIdCache()`
+		// above cannot reach these: it drops a localStorage key of minted media
+		// ids, while this holds live blob BYTES, and `resolveAuthedImage` returns
+		// a cache hit WITHOUT re-checking the session — so up to
+		// `MAX_ENTRIES` (32) photos of a session the server has just rejected
+		// stayed resolvable, and therefore renderable, on the sign-in screen and
+		// to whoever signs in next on this WebView process. Same defect class as
+		// the voluntary-sign-out purge in `$lib/app-data/purge.ts`, different
+		// flow: that one ran only when the user chose to sign out.
+		//
+		// Purged HERE rather than by routing through `purgeAccountLocalData()`:
+		// that function is the SIGN-OUT sequence and also wipes the PIN lock, the
+		// preferences file, the install id and every per-account localStorage
+		// key. A rejected session is not a sign-out — the user is bounced to
+		// re-authenticate as themselves, and tearing down their app lock
+		// because a token expired is a security regression, not a privacy fix.
+		// Only the in-memory, session-derived residue goes, which is exactly
+		// what this list already did.
+		import("$lib/utils/authed-image").then((m) => {
+			const revoked = m.purgeAuthedImageCache();
+			// `console.warn`, not `console.log`: `console.log` is stripped from
+			// production bundles (see the `esbuild.pure` list in vite.config.mjs),
+			// so a `log` here would vanish in the one build where a reviewer
+			// most needs to see that a dead session actually freed its photos.
+			if (revoked > 0) {
+				console.warn(
+					`[GrindrX] Revoked ${revoked} cached media object URL(s) on session expiry`,
+				);
+			}
+		}),
+		// The last-50 viewer list: names, photo hashes, distances and view counts
+		// of who was watching the now-dead account. It lives in a `$state` rune
+		// store, so it outlives the redirect to `/auth` and would be handed to
+		// the next account to sign in on this process. `clearStoredViewers()`
+		// clears the store AND its own localStorage key, so unlike
+		// `grindrx-geohash-user-pinned` (below) this is a self-contained pair and
+		// half-purging it is not possible. Matches step 5 of the canonical
+		// sequence in `purgeAccountLocalData`.
+		import("$lib/app-data/viewers.svelte").then((m) => m.clearStoredViewers()),
 		// The socket is authenticated with the same dead session; leave it
 		// connected and it just fails to authenticate on the Rust side.
 		import("$lib/ws.svelte").then((m) => m.ws.disconnect()),
 	]);
+	// `grindrx-geohash-user-pinned` is deliberately NOT cleared here, and the
+	// reason is the one `$lib/app-data/purge.ts` already records for the sign-out
+	// sequence: the flag is only meaningful next to the account-scoped VALUE it
+	// describes, and that value (the geohash in `preferences.data` and in
+	// `grindrx-explore-location`) is NOT purged on this path. Clearing the flag
+	// alone would leave the geohash in place but tell the GPS updater it was a
+	// GPS fix — so the first real fix would silently overwrite a location the
+	// user picked by hand. Purging the geohash itself is part of the full
+	// localStorage/filesystem purge, which this path must not run.
 
 	/**
 	 * CLEAR THE SESSION ON THE BACKEND BEFORE NAVIGATING (2026-10-02).
