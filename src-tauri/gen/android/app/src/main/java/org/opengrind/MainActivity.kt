@@ -112,6 +112,7 @@ class MainActivity : TauriActivity() {
 				NotificationManager.IMPORTANCE_HIGH
 			).apply {
 				description = "GrindrX message notifications"
+				lockscreenVisibility = Notification.VISIBILITY_PRIVATE
 			}
 			val manager = getSystemService(NotificationManager::class.java)
 			manager.createNotificationChannel(channel)
