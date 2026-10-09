@@ -2,10 +2,34 @@
 	import { UserIcon } from "phosphor-svelte";
 
 	import { resolveAuthedImageRetained } from "$lib/utils/authed-image";
+	import {
+		type CdnImageLoadState,
+		nextStateOnError,
+		nextStateOnLoad,
+		nextStateOnRetryFailure,
+		nextStateOnRetryResult,
+		shouldRenderImage,
+	} from "$lib/utils/cdn-image-load";
 	import { publicCdnUrl } from "$lib/utils/cdn";
 
 	/**
 	 * A CDN image with a placeholder behind it and a real error fallback.
+	 *
+	 * ## Failure flow
+	 *
+	 * ```
+	 * load -> direct load errors -> authenticated retry -> terminal failure
+	 *      -> deterministic fallback (placeholder, no <img>, announced)
+	 * ```
+	 *
+	 * The transition table lives in `$lib/utils/cdn-image-load` as a pure state
+	 * machine (`loading` / `retrying` / `loaded` / `failed`). It used to be a
+	 * single boolean `retried`, which had no way to express "the retry handed
+	 * back the URL that had just failed": `resolveAuthedImageRetained` returns
+	 * its argument unchanged when the authed byte fetch fails, so the flow
+	 * dead-ended with the broken `<img>` still mounted and painting the
+	 * browser's broken-image glyph over the placeholder. `failed` is terminal
+	 * and UNMOUNTS the `<img>`, which no stylesheet rule or late event can undo.
 	 *
 	 * ## Why this exists
 	 *
@@ -113,16 +137,23 @@
 	 * retained `blob:` if the direct load FAILED and the authed retry succeeded.
 	 */
 	let displaySrc = $state<string | null>(null);
-	/** Set once the direct URL has errored, so we only pay for one retry. */
-	let retried = $state(false);
+	/**
+	 * The load lifecycle, owned by the pure machine in `$lib/utils/cdn-image-load`.
+	 * `failed` is terminal and gates the `<img>` out of the tree entirely.
+	 */
+	let loadState = $state<CdnImageLoadState>("loading");
 	/** A retained blob, when the authed fallback produced one. */
 	let releaseBlob: (() => void) | null = null;
 
-	// Reset whenever the requested URL changes.
+	// Reset whenever the requested URL changes. `loadState` MUST be reset too:
+	// grid tiles are recycled onto a new hash, and a sticky `failed` would pin
+	// every recycled tile to a placeholder forever.
 	$effect(() => {
 		void src;
 		displaySrc = src;
-		retried = false;
+		// No URL to load is the same outcome as a URL that will not load: the
+		// placeholder, with the failure announced rather than silent.
+		loadState = src === null ? "failed" : "loading";
 		releaseBlob?.();
 		releaseBlob = null;
 	});
@@ -130,14 +161,17 @@
 	/**
 	 * The direct load failed. Retry exactly once through the authed resolver —
 	 * that is what makes this correct whether or not the CDN needs the bearer.
-	 * A second failure is terminal, so the retry is guarded by `retried`.
+	 * A second failure is terminal, and the transition table is what enforces
+	 * that: only `loading` may move to `retrying`.
 	 */
-	function handleError(event: Event) {
-		if (src !== null && !retried) {
-			retried = true;
-			return;
-		}
-		hideBrokenImage(event);
+	function handleError() {
+		loadState = nextStateOnError(loadState);
+	}
+
+	/** Fires the caller's `onload`, then records that an image is on screen. */
+	function handleLoad(event: Event) {
+		loadState = nextStateOnLoad(loadState);
+		onload?.(event);
 	}
 
 	/**
@@ -148,22 +182,33 @@
 	 * that resolved after unmount retained a blob nothing would ever release.
 	 */
 	$effect(() => {
-		if (!retried) return;
+		if (loadState !== "retrying") return;
 		const requested = src;
 		if (requested === null) return;
 
 		let cancelled = false;
-		void resolveAuthedImageRetained(requested).then((result) => {
-			if (cancelled) {
-				result.release?.();
-				return;
-			}
-			// A passthrough of the same URL would re-error immediately; only a
-			// genuinely different (blob) URL is worth retrying.
-			if (result.url === requested) return;
-			releaseBlob = result.release;
-			displaySrc = result.url;
-		});
+		void resolveAuthedImageRetained(requested)
+			.then((result) => {
+				if (cancelled) {
+					result.release?.();
+					return;
+				}
+				// A passthrough of the URL we already know is bad carries no new
+				// information, and re-assigning the same `src` would not fire
+				// another `error` either — so it is terminal, not a retry.
+				const next = nextStateOnRetryResult(requested, result.url);
+				if (next === "failed") {
+					loadState = next;
+					return;
+				}
+				releaseBlob = result.release;
+				displaySrc = result.url;
+				loadState = next;
+			})
+			.catch(() => {
+				if (cancelled) return;
+				loadState = nextStateOnRetryFailure();
+			});
 
 		return () => {
 			cancelled = true;
@@ -171,24 +216,30 @@
 			releaseBlob = null;
 		};
 	});
-
-	function hideBrokenImage(event: Event) {
-		// `style.display` rather than the `hidden` attribute: an explicit inline
-		// style cannot be beaten by a stylesheet rule, and the classes on this
-		// element are exactly the kind a rule could target. Hiding the image
-		// reveals the placeholder behind it, which is the whole point.
-		const img = event.currentTarget as HTMLImageElement | null;
-		if (img) img.style.display = "none";
-	}
 </script>
 
-<div class="{wrapperClass} bg-muted {className}">
+<div
+	class="{wrapperClass} bg-muted {className}"
+	data-cdn-image-state={loadState}
+>
 	{#if children}{@render children()}{:else}<UserIcon
 			weight="fill"
 			color="var(--color-stone-400)"
 			class="size-1/2 top-1/2 left-1/2 -translate-1/2 absolute"
+			aria-hidden="true"
 		/>{/if}
-	{#if displaySrc !== null}
+	{#if loadState === "failed"}
+		<!--
+			Rendered ONLY in the terminal state, so its insertion is what a live
+			region announces. A broken image used to vanish with no announcement at
+			all: no `alt`, no error text, no way for a screen-reader user to know
+			the photo failed to load.
+		-->
+		<span class="sr-only" role="status">{alt
+				? `Image unavailable: ${alt}`
+				: "Image unavailable"}</span>
+	{/if}
+	{#if displaySrc !== null && shouldRenderImage(loadState)}
 		<img
 			src={displaySrc}
 			{alt}
@@ -197,7 +248,7 @@
 			draggable="false"
 			referrerpolicy="no-referrer"
 			onerror={handleError}
-			onload={onload}
+			onload={handleLoad}
 			class="relative w-full h-full object-cover {imgClass}"
 		/>
 	{/if}
