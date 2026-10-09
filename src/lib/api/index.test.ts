@@ -556,15 +556,26 @@ describe("fetchRest session-lost handling", () => {
 	});
 
 	it("leaves an ordinary non-auth failure alone", async () => {
-		const packed = encode({
-			status: 429,
-			body: new TextEncoder().encode(JSON.stringify({ code: 429 })),
-		});
-		mockedInvoke.mockResolvedValue(toBase64(packed));
+		// Fake timers: a 429 is retryable, and this mock answers 429 forever, so
+		// the call now backs off between attempts. Without these it would sleep
+		// for real (~0.4-1.5s of wall clock) inside the unit suite.
+		vi.useFakeTimers();
+		try {
+			const packed = encode({
+				status: 429,
+				body: new TextEncoder().encode(JSON.stringify({ code: 429 })),
+			});
+			mockedInvoke.mockResolvedValue(toBase64(packed));
 
-		const res = await fetchRest("/v3/cascade");
-		expect(() => res.json()).toThrow(ApiHttpError);
-		expect(mockedGoto).not.toHaveBeenCalled();
+			const pending = fetchRest("/v3/cascade");
+			await vi.advanceTimersByTimeAsync(60_000);
+
+			const res = await pending;
+			expect(() => res.json()).toThrow(ApiHttpError);
+			expect(mockedGoto).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

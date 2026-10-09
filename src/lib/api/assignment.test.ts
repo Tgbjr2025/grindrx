@@ -44,8 +44,16 @@ const DOCUMENTED_RESPONSE = {
 	],
 };
 
+/**
+ * Make the bridge answer `status` for EVERY call, not just the first.
+ *
+ * Persistent rather than once-only because `fetchRest` now retries transient
+ * failures (see `$lib/net/retry`): a one-shot mock would leave the SECOND
+ * attempt talking to an exhausted mock and failing with
+ * "Invalid response from backend" instead of the status under test.
+ */
 function respond(status: number, bodyText: string): void {
-	mockedInvoke.mockResolvedValueOnce(
+	mockedInvoke.mockResolvedValue(
 		toBase64(encode({ status, body: new TextEncoder().encode(bodyText) })),
 	);
 }
@@ -272,7 +280,18 @@ describe("getAssignments", () => {
 			const error = vi.spyOn(console, "error").mockImplementation(() => {});
 			respond(500, JSON.stringify({ code: "CAS-5000", message: "Server error" }));
 
-			await getAssignments({ geohash: STORED_GEOHASH }).catch(() => undefined);
+			// 500 is a retryable status, so this endpoint is asked several times
+			// and the backoff between attempts must not cost the suite real time.
+			vi.useFakeTimers();
+			try {
+				const pending = getAssignments({ geohash: STORED_GEOHASH }).catch(
+					() => undefined,
+				);
+				await vi.advanceTimersByTimeAsync(60_000);
+				await pending;
+			} finally {
+				vi.useRealTimers();
+			}
 
 			const logged = error.mock.calls.flat().join(" ");
 			expect(logged).toContain(`/v3/assignment?geohash=`);

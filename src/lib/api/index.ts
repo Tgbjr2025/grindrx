@@ -7,6 +7,17 @@ import z from "zod";
 import { requestBlockedAlertState } from "$lib/api/request-blocked/request-blocked-state.svelte";
 import { isLocked } from "$lib/app-data/app-lock.svelte";
 import { fromBase64, toBase64 } from "$lib/base64";
+import {
+	isRetryableError,
+	isRetryableStatus,
+	nextRetryDelay,
+	parseRetryAfter,
+	resolveRetryPolicy,
+	type RetryPolicy,
+	shouldRetryMethod,
+	sleepWithSignal,
+	throwIfAborted,
+} from "$lib/net/retry";
 
 export const methods = {
 	login: {
@@ -306,6 +317,27 @@ export function classifyResponseBody(
  * `.json()` / `.jsonParsed()` raises `ApiHttpError` (see `classifyResponseBody`).
  * Callers that never read the body must call `throwForStatus(res, path)` from
  * `$lib/api/http` instead of string-concatenating the response.
+ *
+ * RETRY: transient failures are re-sent under the bounded policy in
+ * `$lib/net/retry` — `429` (honouring `Retry-After`), `500/502/503/504`, and
+ * `AppError::Http` from the bridge (which is where reqwest's connection resets,
+ * DNS failures and the 30s timeout all land). Three things it will NOT do:
+ *
+ *   - Re-send a non-idempotent verb. GET/HEAD/OPTIONS only, unless the caller
+ *     passes `retry: { idempotent: true }`. A retried POST can double-charge or
+ *     double-send.
+ *   - Treat every 429 as a WAF block. A 429 whose body is a Cloudflare
+ *     interstitial is a refusal, not a rate limit, and is handed straight back
+ *     so the existing "request blocked" dialog still fires instead of being
+ *     preceded by pointless retries.
+ *   - Re-send a 4xx that is not 429, or an `Auth`/`Api` rejection. Those are
+ *     deterministic answers; a repeat reproduces them and delays the error.
+ *
+ * `Retry-After` is read from the decoded envelope's `headers` field if the
+ * bridge ever provides one. It does NOT today — `RawResponse` is `{ status,
+ * body }` in `src-tauri/src/api/rest.rs`, and headers are dropped before the
+ * msgpack encode — so the value is currently always absent and a 429 falls back
+ * to jittered backoff. See the module doc in `$lib/net/retry`.
  */
 export async function fetchRest(
 	path: string,
@@ -319,90 +351,204 @@ export async function fetchRest(
 		// redirect — wrong for a user who is deliberately signed out. Also
 		// excludes these calls from the session-lost redirect entirely.
 		public?: boolean;
+		/**
+		 * Retry policy. Omit for the bounded default (idempotent verbs only).
+		 * Pass `false` to turn retrying off entirely. See `$lib/net/retry`.
+		 */
+		retry?: RetryPolicy | false;
 	} = { method: "GET" },
 ) {
-	try {
-		const payload = encode({
-			method: options.method || "GET",
-			path,
-			body: options.body === undefined ? null : encode(options.body),
-		});
-		const packed = await invoke(options.public ? "request_public" : "request", {
-			// https://github.com/tauri-apps/tauri/issues/10573
-			payload: toBase64(payload),
-		}).then((res) => {
-			if (typeof res === "string") {
-				// https://github.com/tauri-apps/tauri/issues/10573
-				return fromBase64(res);
-			} else {
-				throw new Error("Invalid response from backend");
+	const method = options.method || "GET";
+	const policy = resolveRetryPolicy(options.retry);
+	const signal = options.retry === false ? undefined : options.retry?.signal;
+	const mayRetryMethod = shouldRetryMethod(method, options.retry);
+	const startedAt = Date.now();
+	let sleptMs = 0;
+
+	for (let attempt = 1; ; attempt += 1) {
+		// Checked BEFORE issuing, so a request cancelled while it was queued
+		// behind an earlier attempt's backoff never reaches the network.
+		throwIfAborted(signal);
+		let status: number;
+		let responseBody: Uint8Array;
+		let headers: Record<string, string> | undefined;
+		try {
+			({ status, body: responseBody, headers } = await invokeRest(
+				method,
+				path,
+				options,
+			));
+		} catch (error) {
+			// A pre-session call must never be answered with a sign-in redirect:
+			// the user is already on the sign-in page (that is where these are
+			// called from), and redirecting there is a no-op loop.
+			if (!options.public && isSessionGone(error)) {
+				handleSessionLost(error);
 			}
-		});
-		const decoded: unknown = decode(packed);
-		const { status, body: responseBody } = z
-			.object({ status: z.number(), body: z.instanceof(Uint8Array) })
-			.parse(decoded);
+			const delay =
+				mayRetryMethod && isRetryableError(error)
+					? nextRetryDelay({
+							attempt,
+							policy,
+							elapsedMs: Date.now() - startedAt,
+							sleptMs,
+							random: options.retry === false ? undefined : options.retry?.random,
+						})
+					: null;
+			if (delay === null) throw error;
+			sleptMs += delay;
+			await sleepWithSignal(delay, signal);
+			continue;
+		}
 		// A server-side 401 arrives as a RESOLVED response, so it can never
 		// reach the `catch` below — the old code only ever noticed a dead
 		// session on the token-refresh path, leaving a revoked/expired session
 		// rendering stale grids and a dead chat. Caught here, centrally, for
-		// every call site at once.
+		// every call site at once. 401 is never retryable, so this fires on the
+		// final response exactly as it did before retrying existed.
 		if (!options.public && status === 401) {
 			handleSessionLost();
 		}
-		return {
-			status,
-			bytes() {
-				return responseBody;
-			},
-			text() {
-				return new TextDecoder().decode(this.bytes());
-			},
-			json(): unknown {
-				const text = this.text();
-				const classification = classifyResponseBody(this.status, text);
-				if (classification === "cloudflare-block") {
-					if (!requestBlockedAlertState.disable) {
-						requestBlockedAlertState.open = true;
-					}
-					throw new Error("Request blocked");
-				}
-				if (classification === "error-code") {
-					// Structured error carrying the status + decoded code (Grindr's
-					// JSON envelope or a bare code like `CAS-4001`) instead of a
-					// useless "Unexpected token …" parse error.
-					throw new ApiHttpError(this.status, text, path);
-				}
-				if (classification === "parse-error") {
-					console.error("Failed to parse JSON response", {
-						path,
-						text,
-					});
-				}
-				// "json" parses cleanly; "parse-error" re-runs JSON.parse to surface
-				// the real SyntaxError (matching prior behavior) after the
-				// diagnostic log above.
-				return JSON.parse(text);
-			},
-			jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
-				const data: unknown = this.json();
-				return parseApiResponse({
-					schema,
-					data,
-					path,
-					method: options.method || "GET",
-				});
-			},
-		};
-	} catch (error) {
-		// A pre-session call must never be answered with a sign-in redirect:
-		// the user is already on the sign-in page (that is where these are
-		// called from), and redirecting there is a no-op loop.
-		if (!options.public && isSessionGone(error)) {
-			handleSessionLost(error);
+		const retryAfterMs = parseRetryAfter(headers?.["retry-after"]);
+		const delay =
+			mayRetryMethod &&
+			isRetryableStatus(status) &&
+			!isWafRefusal(status, responseBody)
+				? nextRetryDelay({
+						attempt,
+						policy,
+						retryAfterMs,
+						elapsedMs: Date.now() - startedAt,
+						sleptMs,
+						random: options.retry === false ? undefined : options.retry?.random,
+					})
+				: null;
+		if (delay !== null) {
+			sleptMs += delay;
+			await sleepWithSignal(delay, signal);
+			continue;
 		}
-		throw error;
+		return buildRestResponse(status, responseBody, path, method);
 	}
+}
+
+/**
+ * True when a response is a Cloudflare/WAF refusal rather than the server's own
+ * answer.
+ *
+ * Requirement: a 429 must not be assumed to be a rate limit, and equally must
+ * not be assumed to be a block. `classifyResponseBody` is the existing decision
+ * point for exactly this (it already special-cases a 403/429 non-JSON body), so
+ * it is reused rather than re-decided here — retrying a real interstitial would
+ * hammer Cloudflare AND delay the "request blocked" dialog the user needs.
+ */
+function isWafRefusal(status: number, body: Uint8Array): boolean {
+	if (status !== 429) return false;
+	return (
+		classifyResponseBody(status, new TextDecoder().decode(body)) ===
+		"cloudflare-block"
+	);
+}
+
+/**
+ * One trip through the bridge: msgpack envelope in, `{ status, body }` out.
+ *
+ * Split out of `fetchRest` purely so the retry loop can re-issue it. Every
+ * validation the bridge performs — host allowlist, `is_safe_api_path`, the verb
+ * allow-list, request/response byte caps, msgpack depth — lives one layer down
+ * in `src-tauri/src/api/rest.rs` and is re-applied identically on every attempt,
+ * because a retry is a whole new `invoke` and nothing about the attempt is
+ * cached or skipped.
+ */
+async function invokeRest(
+	method: string,
+	path: string,
+	options: { body?: unknown; public?: boolean },
+): Promise<{
+	status: number;
+	body: Uint8Array;
+	headers?: Record<string, string>;
+}> {
+	const payload = encode({
+		method,
+		path,
+		body: options.body === undefined ? null : encode(options.body),
+	});
+	const packed = await invoke(options.public ? "request_public" : "request", {
+		// https://github.com/tauri-apps/tauri/issues/10573
+		payload: toBase64(payload),
+	}).then((res) => {
+		if (typeof res === "string") {
+			// https://github.com/tauri-apps/tauri/issues/10573
+			return fromBase64(res);
+		} else {
+			throw new Error("Invalid response from backend");
+		}
+	});
+	const decoded: unknown = decode(packed);
+	return z
+		.object({
+			status: z.number(),
+			body: z.instanceof(Uint8Array),
+			// Absent from every response today (`RawResponse` carries only
+			// status + body). Declared so a future bridge that plumbs headers
+			// through starts honouring `Retry-After` with no change here.
+			headers: z.record(z.string(), z.string()).optional(),
+		})
+		.parse(decoded);
+}
+
+/** The `fetchRest` response object. Unchanged from the pre-retry shape. */
+function buildRestResponse(
+	status: number,
+	responseBody: Uint8Array,
+	path: string,
+	method: string,
+) {
+	return {
+		status,
+		bytes() {
+			return responseBody;
+		},
+		text() {
+			return new TextDecoder().decode(this.bytes());
+		},
+		json(): unknown {
+			const text = this.text();
+			const classification = classifyResponseBody(this.status, text);
+			if (classification === "cloudflare-block") {
+				if (!requestBlockedAlertState.disable) {
+					requestBlockedAlertState.open = true;
+				}
+				throw new Error("Request blocked");
+			}
+			if (classification === "error-code") {
+				// Structured error carrying the status + decoded code (Grindr's
+				// JSON envelope or a bare code like `CAS-4001`) instead of a
+				// useless "Unexpected token …" parse error.
+				throw new ApiHttpError(this.status, text, path);
+			}
+			if (classification === "parse-error") {
+				console.error("Failed to parse JSON response", {
+					path,
+					text,
+				});
+			}
+			// "json" parses cleanly; "parse-error" re-runs JSON.parse to surface
+			// the real SyntaxError (matching prior behavior) after the
+			// diagnostic log above.
+			return JSON.parse(text);
+		},
+		jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
+			const data: unknown = this.json();
+			return parseApiResponse({
+				schema,
+				data,
+				path,
+				method,
+			});
+		},
+	};
 }
 
 /**
