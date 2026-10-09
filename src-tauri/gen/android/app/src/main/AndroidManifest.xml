@@ -1,31 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Voice messages: record audio to send in chat. -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- Location: the grid, the distance/km-mi figures and the map picker all need
-         a position. These arrive by AAR manifest merging from
-         tauri-plugin-geolocation, but they are declared here too so the app's full
-         permission set is auditable in this one file and cannot change silently
-         when a plugin is bumped. -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Background message delivery: keep-alive foreground service that holds
-         the chat WebSocket open while the app is backgrounded or closed. -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-
-    <!-- NOT declared, deliberately (removed v0.1.33):
-         READ_MEDIA_IMAGES / READ_MEDIA_VIDEO / READ_EXTERNAL_STORAGE
-           There is no local photo library. Every photo the app touches comes from
-           the Grindr API, and any local selection goes through <input type="file">
-           -> the system document picker, which needs no storage permission. These
-           three were left over from a removed feature and only widened the store
-           listing's permission list. -->
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -34,9 +9,6 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.open_grind"
-        android:allowBackup="false"
-        android:fullBackupContent="false"
-        android:dataExtractionRules="@xml/data_extraction_rules"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
@@ -46,59 +18,12 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Keep-alive foreground service. dataSync type: maintains the persistent
-             WebSocket so message notifications still arrive when the UI is closed. -->
-        <service
-            android:name=".NotificationService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
-        <!-- Default launcher icon — enabled by default -->
-        <activity-alias
-            android:name=".MainAlias"
-            android:targetActivity=".MainActivity"
-            android:label="@string/main_activity_title"
-            android:icon="@mipmap/ic_launcher"
-            android:enabled="true"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
-        <!-- Discreet mode: weather alias — disabled by default, enabled via settings -->
-        <activity-alias
-            android:name=".WeatherAlias"
-            android:targetActivity=".MainActivity"
-            android:label="@string/weather_app_name"
-            android:icon="@mipmap/ic_launcher_weather"
-            android:enabled="false"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-
-        <!-- FileProvider for the WebView <input type="file"> chooser.
-             RustWebChromeClient.onShowFileChooser (generated/RustWebChromeClient.kt:274)
-             writes the pick into getExternalFilesDir(DIRECTORY_PICTURES) and hands the
-             WebView a content:// URI from this authority (:469-473). The app uses
-             <input type="file"> in the chat composer, the album manager and the
-             profile-photo manager, so this is load-bearing — do not remove it.
-
-             res/xml/file_paths.xml was narrowed to <external-files-path> in v0.1.33:
-             it previously declared <external-path path="."/>, which made the ENTIRE
-             shared-storage tree (/storage/emulated/0) servable by this provider,
-             including other apps' DCIM/Downloads. The chooser only ever writes inside
-             the app's own external files dir, so that is all that needs to be scoped. -->
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

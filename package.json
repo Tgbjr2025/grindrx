@@ -58,6 +58,7 @@
 		"@total-typescript/ts-reset": "^0.6.1",
 		"@types/leaflet": "^1.9.21",
 		"@types/lodash-es": "^4.17.12",
+		"@vitest/coverage-v8": "4.1.5",
 		"bits-ui": "^2.18.1",
 		"clsx": "^2.1.1",
 		"eslint": "^10.3.0",

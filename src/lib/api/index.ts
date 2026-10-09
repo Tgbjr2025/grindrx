@@ -7,17 +7,6 @@ import z from "zod";
 import { requestBlockedAlertState } from "$lib/api/request-blocked/request-blocked-state.svelte";
 import { isLocked } from "$lib/app-data/app-lock.svelte";
 import { fromBase64, toBase64 } from "$lib/base64";
-import {
-	isRetryableError,
-	isRetryableStatus,
-	nextRetryDelay,
-	parseRetryAfter,
-	resolveRetryPolicy,
-	type RetryPolicy,
-	shouldRetryMethod,
-	sleepWithSignal,
-	throwIfAborted,
-} from "$lib/net/retry";
 
 export const methods = {
 	login: {
@@ -57,15 +46,12 @@ export const methods = {
 		request: z.undefined(),
 		response: z.undefined(),
 	},
-	// NOTE: there is deliberately no `forgot_password` entry here.
-	//
-	// It used to be a dedicated Tauri command implementing
-	// `POST /v3/users/forgot-password`, and this typed bridge entry outlived its
-	// only caller — which made it look wired when nothing invoked it. The reset
-	// form now sends the same documented endpoint through `fetchRest(...,
-	// { public: true })`, the unauthenticated bridge account creation uses, so
-	// there is ONE password-reset path reached through ONE mechanism.
-	// `single-password-reset-path.test.ts` fails if a second transport reappears.
+	forgot_password: {
+		request: z.object({
+			email: z.email(),
+		}),
+		response: z.undefined(),
+	},
 } satisfies Record<string, { request: z.ZodType; response: z.ZodType }>;
 
 /**
@@ -171,30 +157,11 @@ export class ApiHttpError extends Error {
 			const parsed: unknown = JSON.parse(trimmed);
 			if (parsed && typeof parsed === "object") {
 				const obj = parsed as Record<string, unknown>;
-				// THIS API DOES NOT USE `code`/`message` (2026-10-02, measured).
-				// Its error envelope is:
-				//   {"type":"urn:gr:err:entitlement_limit",
-				//    "title":"User has reached their entitlement limits",
-				//    "status":402,"traceId":"..."}
-				// so reading only `code`/`message` left BOTH undefined, threw away
-				// the server's own explanation, and surfaced a bare
-				// "Request to /v2/albums failed (HTTP 402)" with no reason — for
-				// EVERY error this API returns. The same envelope shape produced
-				// the code-less "Couldn't load profiles" that hid a 400 geohash
-				// rejection for a week. Read the documented fields, keep the old
-				// names as a fallback so a future envelope change still works.
 				if (typeof obj.code === "string" || typeof obj.code === "number") {
 					code = obj.code;
-				} else if (typeof obj.type === "string" && obj.type !== "") {
-					// `urn:gr:err:entitlement_limit` -> `entitlement_limit`. The
-					// urn prefix is noise in a user-facing string but the suffix is
-					// the actual machine-readable reason.
-					code = obj.type.replace(/^urn:gr:err:/, "");
 				}
-				if (typeof obj.message === "string" && obj.message !== "") {
+				if (typeof obj.message === "string") {
 					serverMessage = obj.message;
-				} else if (typeof obj.title === "string" && obj.title !== "") {
-					serverMessage = obj.title;
 				}
 			}
 		} catch {
@@ -244,28 +211,11 @@ export function classifyResponseBody(
 	status: number,
 	text: string,
 ): ResponseBodyClassification {
-	// Cloudflare fronts the API and refuses requests with an HTML interstitial
-	// of one of SEVERAL templates. Matching two literals from a single template
-	// (the previous `=== 403 && includes("<title>Attention Required! | Cloudflare
-	// </title>") && includes("Sorry, you have been blocked")`) meant any other
-	// template — a managed JS challenge, a rate-limit interstitial, a different
-	// locale — fell through to "error-code", so the user saw "Couldn't load
-	// profiles" with no code and never got the "request blocked" dialog that
-	// exists for exactly this case. Observed live: two probes minutes apart hit
-	// two different templates.
-	//
-	// Deliberately template-agnostic: a 403/429 whose body is NOT JSON is a
-	// refusal by definition, and "cloudflare" appearing anywhere in it confirms
-	// the source. We do not try to tell a WAF block from a rate limit from a
-	// challenge — the app cannot act differently on each today, and guessing
-	// wrong is what produced the misleading message in the first place.
-	const looksLikeHtmlInterstitial =
-		(status === 403 || status === 429) &&
-		!/^\s*[[{]/.test(text) &&
-		/cloudflare|attention required|just a moment|enable javascript and cookies|checking your browser|ray id/i.test(
-			text,
-		);
-	if (looksLikeHtmlInterstitial) {
+	if (
+		status === 403 &&
+		text.includes("<title>Attention Required! | Cloudflare</title>") &&
+		text.includes("Sorry, you have been blocked")
+	) {
 		return "cloudflare-block";
 	}
 	// A non-2xx body is an ERROR payload, not the success schema. It may be
@@ -317,27 +267,6 @@ export function classifyResponseBody(
  * `.json()` / `.jsonParsed()` raises `ApiHttpError` (see `classifyResponseBody`).
  * Callers that never read the body must call `throwForStatus(res, path)` from
  * `$lib/api/http` instead of string-concatenating the response.
- *
- * RETRY: transient failures are re-sent under the bounded policy in
- * `$lib/net/retry` — `429` (honouring `Retry-After`), `500/502/503/504`, and
- * `AppError::Http` from the bridge (which is where reqwest's connection resets,
- * DNS failures and the 30s timeout all land). Three things it will NOT do:
- *
- *   - Re-send a non-idempotent verb. GET/HEAD/OPTIONS only, unless the caller
- *     passes `retry: { idempotent: true }`. A retried POST can double-charge or
- *     double-send.
- *   - Treat every 429 as a WAF block. A 429 whose body is a Cloudflare
- *     interstitial is a refusal, not a rate limit, and is handed straight back
- *     so the existing "request blocked" dialog still fires instead of being
- *     preceded by pointless retries.
- *   - Re-send a 4xx that is not 429, or an `Auth`/`Api` rejection. Those are
- *     deterministic answers; a repeat reproduces them and delays the error.
- *
- * `Retry-After` is read from the decoded envelope's `headers` field if the
- * bridge ever provides one. It does NOT today — `RawResponse` is `{ status,
- * body }` in `src-tauri/src/api/rest.rs`, and headers are dropped before the
- * msgpack encode — so the value is currently always absent and a 429 falls back
- * to jittered backoff. See the module doc in `$lib/net/retry`.
  */
 export async function fetchRest(
 	path: string,
@@ -351,204 +280,90 @@ export async function fetchRest(
 		// redirect — wrong for a user who is deliberately signed out. Also
 		// excludes these calls from the session-lost redirect entirely.
 		public?: boolean;
-		/**
-		 * Retry policy. Omit for the bounded default (idempotent verbs only).
-		 * Pass `false` to turn retrying off entirely. See `$lib/net/retry`.
-		 */
-		retry?: RetryPolicy | false;
 	} = { method: "GET" },
 ) {
-	const method = options.method || "GET";
-	const policy = resolveRetryPolicy(options.retry);
-	const signal = options.retry === false ? undefined : options.retry?.signal;
-	const mayRetryMethod = shouldRetryMethod(method, options.retry);
-	const startedAt = Date.now();
-	let sleptMs = 0;
-
-	for (let attempt = 1; ; attempt += 1) {
-		// Checked BEFORE issuing, so a request cancelled while it was queued
-		// behind an earlier attempt's backoff never reaches the network.
-		throwIfAborted(signal);
-		let status: number;
-		let responseBody: Uint8Array;
-		let headers: Record<string, string> | undefined;
-		try {
-			({ status, body: responseBody, headers } = await invokeRest(
-				method,
-				path,
-				options,
-			));
-		} catch (error) {
-			// A pre-session call must never be answered with a sign-in redirect:
-			// the user is already on the sign-in page (that is where these are
-			// called from), and redirecting there is a no-op loop.
-			if (!options.public && isSessionGone(error)) {
-				handleSessionLost(error);
+	try {
+		const payload = encode({
+			method: options.method || "GET",
+			path,
+			body: options.body === undefined ? null : encode(options.body),
+		});
+		const packed = await invoke(options.public ? "request_public" : "request", {
+			// https://github.com/tauri-apps/tauri/issues/10573
+			payload: toBase64(payload),
+		}).then((res) => {
+			if (typeof res === "string") {
+				// https://github.com/tauri-apps/tauri/issues/10573
+				return fromBase64(res);
+			} else {
+				throw new Error("Invalid response from backend");
 			}
-			const delay =
-				mayRetryMethod && isRetryableError(error)
-					? nextRetryDelay({
-							attempt,
-							policy,
-							elapsedMs: Date.now() - startedAt,
-							sleptMs,
-							random: options.retry === false ? undefined : options.retry?.random,
-						})
-					: null;
-			if (delay === null) throw error;
-			sleptMs += delay;
-			await sleepWithSignal(delay, signal);
-			continue;
-		}
+		});
+		const decoded: unknown = decode(packed);
+		const { status, body: responseBody } = z
+			.object({ status: z.number(), body: z.instanceof(Uint8Array) })
+			.parse(decoded);
 		// A server-side 401 arrives as a RESOLVED response, so it can never
 		// reach the `catch` below — the old code only ever noticed a dead
 		// session on the token-refresh path, leaving a revoked/expired session
 		// rendering stale grids and a dead chat. Caught here, centrally, for
-		// every call site at once. 401 is never retryable, so this fires on the
-		// final response exactly as it did before retrying existed.
+		// every call site at once.
 		if (!options.public && status === 401) {
 			handleSessionLost();
 		}
-		const retryAfterMs = parseRetryAfter(headers?.["retry-after"]);
-		const delay =
-			mayRetryMethod &&
-			isRetryableStatus(status) &&
-			!isWafRefusal(status, responseBody)
-				? nextRetryDelay({
-						attempt,
-						policy,
-						retryAfterMs,
-						elapsedMs: Date.now() - startedAt,
-						sleptMs,
-						random: options.retry === false ? undefined : options.retry?.random,
-					})
-				: null;
-		if (delay !== null) {
-			sleptMs += delay;
-			await sleepWithSignal(delay, signal);
-			continue;
-		}
-		return buildRestResponse(status, responseBody, path, method);
-	}
-}
-
-/**
- * True when a response is a Cloudflare/WAF refusal rather than the server's own
- * answer.
- *
- * Requirement: a 429 must not be assumed to be a rate limit, and equally must
- * not be assumed to be a block. `classifyResponseBody` is the existing decision
- * point for exactly this (it already special-cases a 403/429 non-JSON body), so
- * it is reused rather than re-decided here — retrying a real interstitial would
- * hammer Cloudflare AND delay the "request blocked" dialog the user needs.
- */
-function isWafRefusal(status: number, body: Uint8Array): boolean {
-	if (status !== 429) return false;
-	return (
-		classifyResponseBody(status, new TextDecoder().decode(body)) ===
-		"cloudflare-block"
-	);
-}
-
-/**
- * One trip through the bridge: msgpack envelope in, `{ status, body }` out.
- *
- * Split out of `fetchRest` purely so the retry loop can re-issue it. Every
- * validation the bridge performs — host allowlist, `is_safe_api_path`, the verb
- * allow-list, request/response byte caps, msgpack depth — lives one layer down
- * in `src-tauri/src/api/rest.rs` and is re-applied identically on every attempt,
- * because a retry is a whole new `invoke` and nothing about the attempt is
- * cached or skipped.
- */
-async function invokeRest(
-	method: string,
-	path: string,
-	options: { body?: unknown; public?: boolean },
-): Promise<{
-	status: number;
-	body: Uint8Array;
-	headers?: Record<string, string>;
-}> {
-	const payload = encode({
-		method,
-		path,
-		body: options.body === undefined ? null : encode(options.body),
-	});
-	const packed = await invoke(options.public ? "request_public" : "request", {
-		// https://github.com/tauri-apps/tauri/issues/10573
-		payload: toBase64(payload),
-	}).then((res) => {
-		if (typeof res === "string") {
-			// https://github.com/tauri-apps/tauri/issues/10573
-			return fromBase64(res);
-		} else {
-			throw new Error("Invalid response from backend");
-		}
-	});
-	const decoded: unknown = decode(packed);
-	return z
-		.object({
-			status: z.number(),
-			body: z.instanceof(Uint8Array),
-			// Absent from every response today (`RawResponse` carries only
-			// status + body). Declared so a future bridge that plumbs headers
-			// through starts honouring `Retry-After` with no change here.
-			headers: z.record(z.string(), z.string()).optional(),
-		})
-		.parse(decoded);
-}
-
-/** The `fetchRest` response object. Unchanged from the pre-retry shape. */
-function buildRestResponse(
-	status: number,
-	responseBody: Uint8Array,
-	path: string,
-	method: string,
-) {
-	return {
-		status,
-		bytes() {
-			return responseBody;
-		},
-		text() {
-			return new TextDecoder().decode(this.bytes());
-		},
-		json(): unknown {
-			const text = this.text();
-			const classification = classifyResponseBody(this.status, text);
-			if (classification === "cloudflare-block") {
-				if (!requestBlockedAlertState.disable) {
-					requestBlockedAlertState.open = true;
+		return {
+			status,
+			bytes() {
+				return responseBody;
+			},
+			text() {
+				return new TextDecoder().decode(this.bytes());
+			},
+			json(): unknown {
+				const text = this.text();
+				const classification = classifyResponseBody(this.status, text);
+				if (classification === "cloudflare-block") {
+					if (!requestBlockedAlertState.disable) {
+						requestBlockedAlertState.open = true;
+					}
+					throw new Error("Request blocked");
 				}
-				throw new Error("Request blocked");
-			}
-			if (classification === "error-code") {
-				// Structured error carrying the status + decoded code (Grindr's
-				// JSON envelope or a bare code like `CAS-4001`) instead of a
-				// useless "Unexpected token …" parse error.
-				throw new ApiHttpError(this.status, text, path);
-			}
-			if (classification === "parse-error") {
-				console.error("Failed to parse JSON response", {
+				if (classification === "error-code") {
+					// Structured error carrying the status + decoded code (Grindr's
+					// JSON envelope or a bare code like `CAS-4001`) instead of a
+					// useless "Unexpected token …" parse error.
+					throw new ApiHttpError(this.status, text, path);
+				}
+				if (classification === "parse-error") {
+					console.error("Failed to parse JSON response", {
+						path,
+						text,
+					});
+				}
+				// "json" parses cleanly; "parse-error" re-runs JSON.parse to surface
+				// the real SyntaxError (matching prior behavior) after the
+				// diagnostic log above.
+				return JSON.parse(text);
+			},
+			jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
+				const data: unknown = this.json();
+				return parseApiResponse({
+					schema,
+					data,
 					path,
-					text,
+					method: options.method || "GET",
 				});
-			}
-			// "json" parses cleanly; "parse-error" re-runs JSON.parse to surface
-			// the real SyntaxError (matching prior behavior) after the
-			// diagnostic log above.
-			return JSON.parse(text);
-		},
-		jsonParsed<TSchema extends z.ZodType>(schema: TSchema) {
-			const data: unknown = this.json();
-			return parseApiResponse({
-				schema,
-				data,
-				path,
-				method,
-			});
-		},
-	};
+			},
+		};
+	} catch (error) {
+		// A pre-session call must never be answered with a sign-in redirect:
+		// the user is already on the sign-in page (that is where these are
+		// called from), and redirecting there is a no-op loop.
+		if (!options.public && isSessionGone(error)) {
+			handleSessionLost(error);
+		}
+		throw error;
+	}
 }
 
 /**
@@ -638,100 +453,15 @@ function handleSessionLost(error?: unknown): void {
 	console.warn("[GrindrX] Session gone; redirecting to sign-in.", error ?? "");
 	// Drop everything derived from the dead session BEFORE navigating, so no
 	// stale frame renders behind the sign-in page. All dynamic: `$lib/api/*`
-	// imports `$lib/api` itself, so a static import here would be a cycle. The
-	// last two entries do not import `$lib/api` today, but they stay dynamic for
-	// the same reason the list is uniform: one failure must not be able to abort
-	// the rest, and `allSettled` is what buys that per entry.
+	// imports `$lib/api` itself, so a static import here would be a cycle.
 	void Promise.allSettled([
 		import("$lib/api/profile").then((m) => m.clearMediaIdCache()),
 		import("$lib/api/genders").then((m) => m.clearGendersCache()),
 		import("$lib/api/pronouns").then((m) => m.clearPronounsCache()),
-		// The dead account's FULL-RESOLUTION photos, held as `blob:` object URLs
-		// in module state by `$lib/utils/authed-image`. `clearMediaIdCache()`
-		// above cannot reach these: it drops a localStorage key of minted media
-		// ids, while this holds live blob BYTES, and `resolveAuthedImage` returns
-		// a cache hit WITHOUT re-checking the session — so up to
-		// `MAX_ENTRIES` (32) photos of a session the server has just rejected
-		// stayed resolvable, and therefore renderable, on the sign-in screen and
-		// to whoever signs in next on this WebView process. Same defect class as
-		// the voluntary-sign-out purge in `$lib/app-data/purge.ts`, different
-		// flow: that one ran only when the user chose to sign out.
-		//
-		// Purged HERE rather than by routing through `purgeAccountLocalData()`:
-		// that function is the SIGN-OUT sequence and also wipes the PIN lock, the
-		// preferences file, the install id and every per-account localStorage
-		// key. A rejected session is not a sign-out — the user is bounced to
-		// re-authenticate as themselves, and tearing down their app lock
-		// because a token expired is a security regression, not a privacy fix.
-		// Only the in-memory, session-derived residue goes, which is exactly
-		// what this list already did.
-		import("$lib/utils/authed-image").then((m) => {
-			const revoked = m.purgeAuthedImageCache();
-			// `console.warn`, not `console.log`: `console.log` is stripped from
-			// production bundles (see the `esbuild.pure` list in vite.config.mjs),
-			// so a `log` here would vanish in the one build where a reviewer
-			// most needs to see that a dead session actually freed its photos.
-			if (revoked > 0) {
-				console.warn(
-					`[GrindrX] Revoked ${revoked} cached media object URL(s) on session expiry`,
-				);
-			}
-		}),
-		// The last-50 viewer list: names, photo hashes, distances and view counts
-		// of who was watching the now-dead account. It lives in a `$state` rune
-		// store, so it outlives the redirect to `/auth` and would be handed to
-		// the next account to sign in on this process. `clearStoredViewers()`
-		// clears the store AND its own localStorage key, so unlike
-		// `grindrx-geohash-user-pinned` (below) this is a self-contained pair and
-		// half-purging it is not possible. Matches step 5 of the canonical
-		// sequence in `purgeAccountLocalData`.
-		import("$lib/app-data/viewers.svelte").then((m) => m.clearStoredViewers()),
 		// The socket is authenticated with the same dead session; leave it
 		// connected and it just fails to authenticate on the Rust side.
 		import("$lib/ws.svelte").then((m) => m.ws.disconnect()),
 	]);
-	// `grindrx-geohash-user-pinned` is deliberately NOT cleared here, and the
-	// reason is the one `$lib/app-data/purge.ts` already records for the sign-out
-	// sequence: the flag is only meaningful next to the account-scoped VALUE it
-	// describes, and that value (the geohash in `preferences.data` and in
-	// `grindrx-explore-location`) is NOT purged on this path. Clearing the flag
-	// alone would leave the geohash in place but tell the GPS updater it was a
-	// GPS fix — so the first real fix would silently overwrite a location the
-	// user picked by hand. Purging the geohash itself is part of the full
-	// localStorage/filesystem purge, which this path must not run.
-
-	/**
-	 * CLEAR THE SESSION ON THE BACKEND BEFORE NAVIGATING (2026-10-02).
-	 *
-	 * `goto("/auth/sign-in")` alone was NOT ENOUGH and produced an unbreakable
-	 * state, observed on a real device: the app sat on the grid forever showing
-	 * "Couldn't load profiles" + "Please log in to continue", with no sign-in
-	 * anywhere, and a COLD START did the same thing.
-	 *
-	 * Why: the `(protected)/+layout.ts` guard admits you by asking
-	 * `auth_state` for a profileId. A session the server has rejected still
-	 * carries one, so the guard kept letting the user into the app while every
-	 * request 401'd. Navigating to `/auth/sign-in` was not blocked per se — but
-	 * any subsequent protected navigation was re-admitted by that same guard, so
-	 * the user could never actually land on a form and re-authenticate.
-	 *
-	 * `logout` is what makes `auth_state` return null, which is what makes the
-	 * guard redirect. Without it the only escape was `pm clear`, which also
-	 * destroys unrelated local state.
-	 *
-	 * Deliberately NOT awaited: navigation must not be blocked on a keystore
-	 * write, and a failure here still leaves `goto` to do its job.
-	 */
-	void invoke("logout").catch((e: unknown) =>
-		console.warn("[GrindrX] could not clear the rejected session", e),
-	);
-
-	// The latch is deliberately LEFT SET. It is what stops N concurrent 401s
-	// each firing their own toast and navigation — a real bug this app had, and
-	// one an existing test pins. It does not need clearing here: `callMethod`
-	// clears it the moment a live session comes back, i.e. right after a
-	// successful sign-in. Resetting it here would re-open the N-toast bug.
-
 	goto("/auth/sign-in").catch((e: unknown) => console.error(e));
 }
 

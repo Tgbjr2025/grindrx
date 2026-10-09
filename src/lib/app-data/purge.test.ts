@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeAppDataFile } from "$lib/app-data";
 import {
-	DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT,
 	PER_ACCOUNT_LOCALSTORAGE_KEYS,
 	PER_ACCOUNT_LOCALSTORAGE_PREFIXES,
 	perAccountLocalStorageKeys,
@@ -32,16 +31,6 @@ vi.mock("$lib/app-data/app-lock.svelte", () => ({
 	setBiometricUnlock: vi.fn(),
 }));
 
-// The authenticated media cache and the viewers store are deliberately NOT
-// mocked here. They are the two in-memory leaks this purge exists to close, and
-// a mock would only prove the purge calls a function — not that the previous
-// account's photo bytes are actually unrecoverable. Both are exercised for real.
-const invoke = vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>();
-vi.mock("@tauri-apps/api/core", () => ({
-	invoke: (cmd: string, args?: unknown): Promise<unknown> =>
-		invoke(cmd, args),
-}));
-
 vi.mock("@tauri-apps/plugin-fs", () => ({
 	BaseDirectory: { AppData: 7 },
 	remove: vi.fn(),
@@ -53,16 +42,6 @@ vi.mock("$lib/app-data", () => ({
 
 import { clearAllProfileCaches, clearMediaIdCache } from "$lib/api/profile";
 import { disablePin, setBiometricUnlock } from "$lib/app-data/app-lock.svelte";
-import {
-	clearStoredViewers,
-	getStoredViewers,
-	recordViewers,
-} from "$lib/app-data/viewers.svelte";
-import {
-	__cachedAuthedImageCount,
-	__resetAuthedImageCacheForTests,
-	resolveAuthedImage,
-} from "$lib/utils/authed-image";
 
 const mockedRemove = vi.mocked(remove);
 const mockedWrite = vi.mocked(writeAppDataFile);
@@ -90,30 +69,12 @@ function createMemoryStorage(): Storage {
 	};
 }
 
-/** Blobs handed to `URL.createObjectURL`, and whether their object URL is live. */
-let urlLive: Map<string, boolean> = null as unknown as Map<string, boolean>;
-
-/** Serve these bytes for any authenticated fetch, as the Rust bridge does. */
-function serveJpeg(): void {
-	const b = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
-	invoke.mockResolvedValue(
-		b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength),
-	);
-}
-
-function liveUrlCount(): number {
-	return [...urlLive.values()].filter(Boolean).length;
-}
-
 // Every key the audit found surviving a sign-out, seeded with recognisable PII.
 const SEEDED_PII: Record<string, string> = {
 	"grindrx-saved-phrases": '["meet me at the pier"]',
 	"grindrx-explore-location": '{"geohash":"9q8yyk8ytpxr"}',
 	"grindrx-mediaid-cache":
 		'{"abc":{"mediaId":42,"signedUrl":"https://x.cloudfront.net/a?sig=secret"}}',
-	"grindrx-stored-viewers":
-		'[{"key":"p1","displayName":"Alex","profileImageMediaHash":"hash1","distance":120}]',
-	"grindrx-geohash-user-pinned": "1",
 	"grindrx-install-id": "install-abc",
 	"grindrx-tour-done": "1",
 	"pref:distanceUnit": '"mi"',
@@ -128,9 +89,7 @@ const SEEDED_PII: Record<string, string> = {
 	"chat:read:12345": '{"ts":1}',
 	"chat:read:98765": '{"ts":2}',
 	"grindrx-update-dismissed-0.1.33": "1",
-	// Device-scoped, NOT per-account. Kept on purpose — see the decision comment
-	// on `DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT` in `purge.ts` and the dedicated test
-	// at the bottom of this file, which is where that call is argued.
+	// Must SURVIVE: not per-account data.
 	"grindrx-last-seen-version": "0.1.33",
 	"some-unrelated-key": "keep me",
 };
@@ -143,28 +102,6 @@ beforeEach(() => {
 	for (const [key, value] of Object.entries(SEEDED_PII)) {
 		localStorage.setItem(key, value);
 	}
-
-	// Module-level state shared across tests in this file: the media blob cache
-	// and the viewers rune store. Both must start empty or a leak assertion is
-	// satisfied by bookkeeping a previous test left behind.
-	__resetAuthedImageCacheForTests();
-	clearStoredViewers();
-	invoke.mockReset();
-	invoke.mockRejectedValue(new Error("no bridge in this test"));
-	urlLive = new Map();
-	let n = 0;
-	// Subclass rather than replace, so `new URL(...)` still parses.
-	class StubUrl extends URL {
-		static override createObjectURL(): string {
-			const u = `blob:mock/${n++}`;
-			urlLive.set(u, true);
-			return u;
-		}
-		static override revokeObjectURL(u: string): void {
-			urlLive.set(u, false);
-		}
-	}
-	vi.stubGlobal("URL", StubUrl);
 });
 
 afterEach(() => {
@@ -176,12 +113,7 @@ describe("purgeAccountLocalData", () => {
 		await purgeAccountLocalData();
 
 		for (const key of Object.keys(SEEDED_PII)) {
-			// `grindrx-last-seen-version` is kept ON PURPOSE (device-scoped; the
-			// argument is on `DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT` in `purge.ts`
-			// and in its own test below). `some-unrelated-key` is not ours.
-			if (key === "some-unrelated-key") continue;
-			if ([...DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT].includes(key as never)) {
-				expect(localStorage.getItem(key), `${key} must survive`).not.toBeNull();
+			if (key === "grindrx-last-seen-version" || key === "some-unrelated-key") {
 				continue;
 			}
 			expect(
@@ -210,9 +142,10 @@ describe("purgeAccountLocalData", () => {
 		expect(localStorage.getItem("grindrx-update-dismissed-0.1.33")).toBeNull();
 	});
 
-	it("leaves unrelated storage alone", async () => {
+	it("leaves non-account storage alone", async () => {
 		await purgeAccountLocalData();
 
+		expect(localStorage.getItem("grindrx-last-seen-version")).toBe("0.1.33");
 		expect(localStorage.getItem("some-unrelated-key")).toBe("keep me");
 	});
 
@@ -228,88 +161,6 @@ describe("purgeAccountLocalData", () => {
 
 		expect(mockedDisablePin).toHaveBeenCalledTimes(1);
 		expect(mockedSetBiometric).toHaveBeenCalledWith(false);
-	});
-
-	/**
-	 * THE P0 DEFECT. `objectUrlCache` is module state holding `blob:` object URLs
-	 * for up to 32 FULL-RESOLUTION photos, and `resolveAuthedImage` returns a
-	 * cache hit WITHOUT re-checking the session. `clearMediaIdCache()` — the only
-	 * media-adjacent call the purge used to make — clears a localStorage key of
-	 * minted media ids and cannot reach a single one of those bytes.
-	 */
-	it("empties the authenticated media cache and revokes every object URL", async () => {
-		serveJpeg();
-		for (let i = 0; i < 3; i++) {
-			await resolveAuthedImage(
-				`https://cdns.grindr.com/images/full/previous-${i}.jpg`,
-			);
-		}
-		expect(__cachedAuthedImageCount()).toBe(3);
-		expect(liveUrlCount()).toBe(3);
-
-		await purgeAccountLocalData();
-
-		expect(__cachedAuthedImageCount()).toBe(0);
-		expect(liveUrlCount()).toBe(0);
-	});
-
-	it("does not let a second account resolve the first account's cached media", async () => {
-		serveJpeg();
-		const photo = "https://cdns.grindr.com/images/full/shared-album-photo.jpg";
-
-		// Account A opens a full-resolution photo. It is served from the cache
-		// with no further IPC, which is precisely why the leak was not visible as
-		// a network request.
-		const accountA = (await resolveAuthedImage(photo)) as string;
-		expect(await resolveAuthedImage(photo)).toBe(accountA);
-		expect(invoke).toHaveBeenCalledTimes(1);
-
-		// Sign out. Account A's bytes must be unrecoverable from here on.
-		await purgeAccountLocalData();
-		expect(urlLive.get(accountA)).toBe(false);
-
-		// Account B signs in and opens the same photo. The purge forces a real
-		// fetch under B's session and mints a fresh object URL; there is no code
-		// path that returns A's blob to B.
-		const accountB = (await resolveAuthedImage(photo)) as string;
-		expect(accountB).not.toBe(accountA);
-		expect(invoke).toHaveBeenCalledTimes(2);
-		expect(urlLive.get(accountB)).toBe(true);
-	});
-
-	// `clearStoredViewers()` existed with zero callers, and the key was not in
-	// the purge list, so the previous account's last-50 viewer list survived both
-	// in localStorage AND in the rune store that rehydrates from it.
-	it("clears the stored viewer list in memory and in storage", async () => {
-		recordViewers(
-			[
-				{
-					profileId: 1,
-					displayName: "Alex",
-					profileImageMediaHash: "hash1",
-					seen: 1_700_000_000_000,
-					distance: 120,
-					viewCount: 3,
-				},
-			],
-			1_700_000_000_000,
-		);
-		expect(getStoredViewers()).toHaveLength(1);
-
-		await purgeAccountLocalData();
-
-		expect(getStoredViewers()).toHaveLength(0);
-		expect(localStorage.getItem("grindrx-stored-viewers")).toBeNull();
-	});
-
-	it("drops the geohash-pinned flag along with the geohash it describes", async () => {
-		// Both are purged. Leaving the flag behind would be a dangling reference:
-		// `isGeohashPinned()` would keep reporting "chosen by hand" for a geohash
-		// that no longer exists, suppressing the next account's first GPS write.
-		await purgeAccountLocalData();
-
-		expect(localStorage.getItem("grindrx-geohash-user-pinned")).toBeNull();
-		expect(localStorage.getItem("grindrx-explore-location")).toBeNull();
 	});
 
 	it("deletes preferences.data when the fs plugin allows it", async () => {
@@ -380,10 +231,6 @@ describe("the purge list", () => {
 				"grindrx-saved-phrases",
 				"grindrx-explore-location",
 				"grindrx-mediaid-cache",
-				// Added: the previous account's last-50 viewer history.
-				"grindrx-stored-viewers",
-				// Added: the flag describing the geohash purged above.
-				"grindrx-geohash-user-pinned",
 				"grindrx-install-id",
 				"grindrx-tour-done",
 				"pref:distanceUnit",
@@ -401,50 +248,5 @@ describe("the purge list", () => {
 			"chat:read:",
 			"grindrx-update-dismissed-",
 		]);
-	});
-
-	/**
-	 * DECISION (2026-10-09): `grindrx-last-seen-version` is NOT purged, and this
-	 * assertion is deliberate rather than inherited.
-	 *
-	 * The review that prompted this fix flagged the pre-existing
-	 * `expect(...).toBe("0.1.33")` as "encoding the bug". It does not:
-	 *
-	 *  - It is DEVICE-SCOPED and self-contained. The value is the running app
-	 *    VERSION string. No profile id, no location, no conversation, no media,
-	 *    no user-activity timestamp — nothing that ties it to an account or lets
-	 *    one account be told apart from another. The leak class here is "the
-	 *    previous account's data reaches the next account"; a version string is
-	 *    not the previous account's data.
-	 *  - It references nothing account-specific that is being purged. By
-	 *    contrast `grindrx-geohash-user-pinned` DOES, which is exactly why it
-	 *    was added to the purge list: leaving a flag that describes a deleted
-	 *    geohash suppresses the next account's first GPS write and can leave the
-	 *    grid showing the previous account's location.
-	 *  - PURGING IT WOULD REGRESS SIGN-OUT. `isFirstRun()` is
-	 *    `SEEN_VERSION_KEY === null && TOUR_DONE_KEY === null`, and
-	 *    `grindrx-tour-done` IS purged. Deleting the version marker makes both
-	 *    null, so `(protected)/+layout.svelte` auto-opens the feature-tour drawer
-	 *    for whoever signs in next. The surviving marker is the only thing vetoing
-	 *    that today.
-	 *
-	 * Net: a UX regression bought with zero privacy gain. Kept. (The mirror
-	 * inconsistency — `grindrx-tour-done` being device-scoped yet purged — is
-	 * documented in `purge.ts` and deliberately left out of scope.)
-	 */
-	it("keeps the device-scoped last-seen-version marker, and says so on purpose", async () => {
-		expect([...DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT]).toEqual([
-			"grindrx-last-seen-version",
-		]);
-		expect([...PER_ACCOUNT_LOCALSTORAGE_KEYS]).not.toContain(
-			"grindrx-last-seen-version",
-		);
-
-		await purgeAccountLocalData();
-
-		expect(localStorage.getItem("grindrx-last-seen-version")).toBe("0.1.33");
-		// Its own onboarding sibling is purged, so this surviving key is the only
-		// thing keeping `isFirstRun()` false for the next account.
-		expect(localStorage.getItem("grindrx-tour-done")).toBeNull();
 	});
 });

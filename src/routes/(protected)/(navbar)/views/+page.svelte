@@ -5,7 +5,6 @@
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
-	import { getStoredViewers, recordViewers } from "$lib/app-data/viewers.svelte";
 	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
@@ -147,50 +146,8 @@
 				.filter((p) => p.profileId == null || !r.profiles.some((q) => q.profileId === p.profileId))
 				.map((p, i) => toRow(p, i, "w")),
 		];
-
-		// Fold this response into the on-device history (last 50). `/v7/views/list`
-		// is a rolling window with no cursor, so a viewer who leaves it is simply
-		// gone — without this, closing the screen erased the record. Masked rows
-		// are stored too: they keep the photo/distance/count and become clickable
-		// by themselves if Grindr later reveals the id.
-		recordViewers(
-			rows.map((row) => ({
-				profileId: row.profileId ?? null,
-				displayName: row.displayName,
-				profileImageMediaHash: row.profileImageMediaHash,
-				seen: row.seen,
-				distance: row.distance,
-				viewCount: row.viewCount,
-				isSecretAdmirer: row.isSecretAdmirer,
-				masked: !row.clickable,
-			})),
-		);
-
 		return { totalViewers: r.totalViewers, rows };
 	});
-
-	/**
-	 * The stored history, mapped to the same `Row` shape the server path
-	 * produces, so one template renders both.
-	 *
-	 * Used as a FALLBACK: `/v7/views/list` is a rolling window, so on a quiet
-	 * day it can legitimately return nothing even though 40 people have viewed
-	 * you this month. Showing an empty state there would throw away a record we
-	 * are already holding. The server's own rows always win when it has any.
-	 */
-	function storedRows(): Row[] {
-		return getStoredViewers().map((v) => ({
-			key: v.key,
-			clickable: v.profileId != null,
-			profileId: v.profileId ?? undefined,
-			displayName: v.displayName,
-			profileImageMediaHash: v.profileImageMediaHash,
-			seen: v.seen,
-			distance: v.distance,
-			viewCount: v.viewCount,
-			isSecretAdmirer: v.isSecretAdmirer,
-		}));
-	}
 </script>
 
 <div class="px-4 flex-1 flex flex-col">
@@ -204,8 +161,7 @@
 			<Spinner class="size-6" />
 		</div>
 	{:then { rows, totalViewers }}
-		{@const shown = rows.length > 0 ? rows : storedRows()}
-		{#if shown.length === 0}
+		{#if rows.length === 0}
 			<Empty.Root>
 				<Empty.Header>
 					<Empty.Media variant="icon">
@@ -218,14 +174,9 @@
 				</Empty.Header>
 			</Empty.Root>
 		{:else}
-			<p class="text-xs text-muted-foreground px-3 pt-3 pb-1">
-				{rows.length > 0 ? totalViewers : shown.length} viewers
-				{#if rows.length === 0}
-					<span class="opacity-70">· saved history</span>
-				{/if}
-			</p>
+			<p class="text-xs text-muted-foreground px-3 pt-3 pb-1">{totalViewers} viewers</p>
 			<ul class="flex flex-col py-2">
-				{#each shown as view (view.key)}
+				{#each rows as view (view.key)}
 					<li>
 						{#snippet rowInner()}
 							<div

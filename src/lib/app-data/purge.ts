@@ -11,24 +11,6 @@
 //
 // This module is the single place that enumerates it, so the list is reviewable
 // and testable rather than scattered across call sites.
-//
-// WHAT STILL SURVIVED AS OF THIS FIX, and why the sequence below is ordered the
-// way it is (see `SignOutButton.svelte` for the outer steps):
-//
-//	1. revoke the session            — `callMethod("logout")`
-//	2. purge account state           — profile/gender/pronoun caches
-//	3. purge the authenticated media cache — `purgeAuthedImageCache()` here
-//	4. purge account-specific local storage
-//	5. invalidate remaining in-memory state
-//
-// Step 3 belongs BEFORE the hard navigation and is not a localStorage concern at
-// all: `authed-image.ts` holds up to `MAX_ENTRIES` (32) FULL-RESOLUTION blobs as
-// `blob:` object URLs in MODULE state. `resolveAuthedImage` returns a cache hit
-// without re-checking the session, so the previous account's photos were not
-// merely resident in memory — they were RENDERABLE by the next account signing in
-// on the same WebView process, until the process restarted. Nothing revoked
-// them; `clearMediaIdCache()` only drops the localStorage key of minted media
-// ids, which is why that call was never a substitute.
 
 import { encode } from "@msgpack/msgpack";
 import { BaseDirectory, remove } from "@tauri-apps/plugin-fs";
@@ -36,8 +18,6 @@ import z from "zod";
 
 import { clearAllProfileCaches, clearMediaIdCache } from "$lib/api/profile";
 import { disablePin, setBiometricUnlock } from "$lib/app-data/app-lock.svelte";
-import { clearStoredViewers } from "$lib/app-data/viewers.svelte";
-import { purgeAuthedImageCache } from "$lib/utils/authed-image";
 import { writeAppDataFile } from ".";
 
 /**
@@ -55,18 +35,6 @@ export const PER_ACCOUNT_LOCALSTORAGE_KEYS = [
 	// Minted mediaId -> signed CDN URL + the user's photo mediaHashes. Also
 	// dropped (with its in-memory twin) by `clearMediaIdCache`.
 	"grindrx-mediaid-cache",
-	// The previous user's last-50 profile viewers: names, photo hashes, distance
-	// and view counts, i.e. a social graph of who was watching them. Held in
-	// memory as a rune store as well, which is why `clearStoredViewers()` (until
-	// this fix a zero-caller export) is invoked alongside the key removal.
-	"grindrx-stored-viewers",
-	// "The browsing geohash was chosen by hand, not read from GPS". The geohash
-	// itself is already purged above and in `preferences.data`, so leaving this
-	// flag behind is a DANGLING reference to a value that no longer exists: the
-	// GPS updater consults it and would suppress the first real-location write,
-	// leaving the next account's grid showing the previous account's location
-	// until they manually pick one. Purge the flag with the thing it describes.
-	"grindrx-geohash-user-pinned",
 	// Install-wide pseudonymous id; not PII, but it is a cross-account link.
 	"grindrx-install-id",
 	"grindrx-tour-done",
@@ -79,52 +47,6 @@ export const PER_ACCOUNT_LOCALSTORAGE_KEYS = [
 	"grindrx-pinlock-failures",
 	"grindrx-pinlock-lockout-until",
 	"grindrx-pinlock-last-clock",
-	// NOT here, deliberately: `grindrx-last-seen-version`. See the decision
-	// comment on `DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT` below.
-] as const;
-
-/**
- * `grindrx-last-seen-version` — REVIEWED AND DELIBERATELY KEPT (2026-10-09).
- *
- * The task that prompted this fix listed it as "asserted to survive, which
- * encodes the bug". It does not, and flipping the assertion would trade a real
- * UX regression for zero privacy gain. The reasoning, so the decision is not
- * re-litigated from the test file alone:
- *
- * 1. IT IS DEVICE-SCOPED AND SELF-CONTAINED. The value is the running app
- *    VERSION string (`"0.1.33"`). It carries no profile id, no location, no
- *    conversation, no media, no timestamp of user activity — nothing that ties it
- *    to an account, let alone lets one account be distinguished from another.
- *    The defect class here is "the previous account's data is handed to the
- *    next account"; a version string is not the previous account's data.
- *
- * 2. ITS MODULE SAYS SO. `stores/onboarding.svelte.ts` documents itself as
- *    "Backed by localStorage (per-install, per-device)" and this key only feeds
- *    `isNewVersion()`/`markVersionSeen()` for the "What's new" card.
- *
- * 3. PURGING IT ACTIVELY BREAKS SIGN-OUT. `isFirstRun()` is
- *    `SEEN_VERSION_KEY === null && TOUR_DONE_KEY === null`, and `grindrx-tour-done`
- *    IS purged above. Deleting the version marker therefore makes BOTH keys null,
- *    `isFirstRun()` returns true, and `(protected)/+layout.svelte` auto-opens the
- *    feature-tour drawer for whoever signs in next. Today the surviving version
- *    marker is the very thing that vetoes that.
- *
- * 4. THE PRINCIPLE, SO IT GENERALISES: purge a device-scoped flag when the
- *    account-scoped VALUE it describes is also being purged (a dangling
- *    reference to a deleted geohash is a cross-account leak — see
- *    `grindrx-geohash-user-pinned`). KEEP a device-scoped marker that stands
- *    alone and references nothing account-specific. `last-seen-version` is the
- *    second kind.
- *
- * KNOWN INCONSISTENCY, NOT FIXED HERE (out of scope for this defect):
- * `grindrx-tour-done` is the same class of self-contained device-scoped marker
- * and is purged, which is harmless only because `last-seen-version` survives to
- * veto `isFirstRun()`. The two onboarding keys should be treated as one
- * device-scoped pair and either both kept or both purged. Left alone so this
- * change stays reviewable.
- */
-export const DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT = [
-	"grindrx-last-seen-version",
 ] as const;
 
 /**
@@ -253,25 +175,6 @@ export async function purgeAccountLocalData(): Promise<void> {
 	step("profile caches", () => {
 		clearAllProfileCaches();
 		clearMediaIdCache();
-	});
-	// The previous account's FULL-RESOLUTION photos, as `blob:` object URLs held
-	// in module state. This is the leak `clearMediaIdCache()` could never reach:
-	// that one drops a localStorage key of minted media ids, this one drops live
-	// blob bytes. Ordered after account state and before the localStorage pass so
-	// the documented sequence holds and the bytes go while the WebView is still
-	// alive to revoke them in.
-	step("authenticated media cache", () => {
-		const revoked = purgeAuthedImageCache();
-		if (revoked > 0) {
-			console.log(`[GrindrX] Revoked ${revoked} cached media object URL(s) on sign-out`);
-		}
-	});
-	// The previous user's last-50 viewer list, in the rune store as well as in
-	// localStorage. `clearStoredViewers()` had no callers at all, so the key was
-	// also missing from `PER_ACCOUNT_LOCALSTORAGE_KEYS` and a rehydrating module
-	// would have loaded the previous account's viewers straight back in.
-	step("stored viewers", () => {
-		clearStoredViewers();
 	});
 	// In-memory app-lock state, so the previous user's gate cannot outlive the
 	// sign-out even if the hard navigation below is slow or blocked.

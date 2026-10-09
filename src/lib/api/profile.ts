@@ -318,300 +318,12 @@ async function uploadImageBytes(
  */
 const MAX_UPLOAD_EDGE = 1920;
 
-/** JPEG quality for every re-encode. Unchanged from the original downscale. */
-const REENCODE_QUALITY = 0.85;
-
-// --- Byte-level metadata stripping -------------------------------------------
-//
-// The canvas re-encode in `downscaleImage` is the PRIMARY sanitizer: a canvas
-// writes a brand-new file, so no EXIF/IPTC/XMP survives it. That is the whole
-// point of routing an image through canvas.toBlob(), and it costs nothing while
-// we are already resampling.
-//
-// It cannot be used in two situations, and neither is allowed to mean "upload
-// the raw camera bytes":
-//
-//  1. Animated GIFs. A canvas captures a single frame, so re-encoding would
-//     silently flatten an animation into a still. Stripping the metadata blocks
-//     in place preserves every frame, the frame delays and the loop count.
-//  2. The defensive failure paths (no 2d context, toBlob returned null, decode
-//     threw). These are exactly the moments where falling back to raw bytes
-//     would quietly put a GPS tag on Grindr's servers.
-//
-// So both fall through to the byte-level stripper below, which deletes the
-// metadata containers and copies pixel data through verbatim.
-
-/**
- * Index just past a GIF sub-block chain (a run of `len`-prefixed blocks ended
- * by a zero-length one). Returns -1 if the chain is truncated.
- */
-function skipGifSubBlocks(bytes: Uint8Array, start: number): number {
-	let i = start;
-	while (i < bytes.length) {
-		const size = bytes[i];
-		i += size + 1;
-		if (size === 0) return i;
-	}
-	return -1;
-}
-
-/** The NUL-padded application identifier of a GIF Application extension. */
-function gifAppIdentifier(bytes: Uint8Array, start: number): string {
-	let id = "";
-	for (let i = 0; i < 11; i++) {
-		const byte = bytes[start + i];
-		if (byte === undefined || byte === 0) break;
-		id += String.fromCharCode(byte);
-	}
-	return id;
-}
-
-/**
- * Drop the JPEG segments that carry metadata: EXIF/XMP (APP1), JUMBF (APP11),
- * IPTC/Photoshop (APP13) and comments (COM). Those are where GPS coordinates,
- * camera model and capture timestamps live.
- *
- * APP0 (JFIF), APP2 (ICC colour profile) and APP14 (Adobe colour transform)
- * are deliberately KEPT — they hold no personal data, and some decoders need
- * them to render the correct colours. Everything from SOS onward is entropy
- * coded and is copied through untouched.
- *
- * Returns null (never a partial rewrite) if the segment walk hits anything it
- * does not recognise, so a malformed file falls back to the caller's default.
- */
-function stripJpegMetadata(bytes: Uint8Array): Uint8Array | null {
-	if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
-	const out = [0xff, 0xd8]; // SOI
-	let i = 2;
-	while (i < bytes.length) {
-		if (bytes[i] !== 0xff) return null;
-		const marker = bytes[i + 1];
-		if (marker === undefined) return null;
-		// EOI — copy whatever is left and stop.
-		if (marker === 0xd9) {
-			for (let k = i; k < bytes.length; k++) out.push(bytes[k]);
-			return Uint8Array.from(out);
-		}
-		// Standalone markers (TEM, RSTn) carry no length field.
-		if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-			out.push(0xff, marker);
-			i += 2;
-			continue;
-		}
-		const len = (bytes[i + 2] << 8) | bytes[i + 3];
-		if (len < 2 || i + 2 + len > bytes.length) return null;
-		const end = i + 2 + len;
-		const isMetadata =
-			marker === 0xfe || // COM
-			(marker >= 0xe1 && marker <= 0xef && marker !== 0xe2 && marker !== 0xee);
-		if (!isMetadata) {
-			for (let k = i; k < end; k++) out.push(bytes[k]);
-		}
-		i = end;
-		// SOS: the entropy-coded scan follows the segment and runs to the next
-		// real marker. Copy the remainder verbatim rather than trying to parse
-		// it — there is nothing left to strip past this point.
-		if (marker === 0xda) {
-			for (let k = i; k < bytes.length; k++) out.push(bytes[k]);
-			return Uint8Array.from(out);
-		}
-	}
-	return null;
-}
-
-/**
- * Drop the GIF blocks that carry metadata: the Comment extension, and any
- * Application extension that is not a looping directive. XMP lives in an
- * Application extension, so that is where a GIF's EXIF-equivalent hides.
- *
- * NETSCAPE2.0 and ANIMEXTS1.0 are KEPT — they carry the loop count, so
- * dropping them would change playback from looping to single-shot. Frame
- * descriptors, local colour tables, the Graphic Control extension (frame delay
- * + transparency) and the trailer are all copied through byte for byte, so the
- * animation is untouched.
- *
- * Returns null on any unrecognised block rather than risking a corrupted GIF.
- */
-function stripGifMetadata(bytes: Uint8Array): Uint8Array | null {
-	if (bytes.length < 14) return null;
-	const header = String.fromCharCode(...bytes.subarray(0, 6));
-	if (header !== "GIF87a" && header !== "GIF89a") return null;
-	const out = Array.from(bytes.subarray(0, 13)); // header + screen descriptor
-	let i = 13;
-	while (i < bytes.length) {
-		const block = bytes[i];
-		if (block === 0x3b) {
-			out.push(0x3b); // trailer
-			return Uint8Array.from(out);
-		}
-		if (block === 0x00) {
-			i++; // stray block terminator
-			continue;
-		}
-		if (block === 0x21) {
-			const label = bytes[i + 1];
-			if (label === undefined) return null;
-			// An Application extension carries an 11-byte identifier plus a 3-byte
-			// auth code BEFORE its sub-block chain; every other extension type
-			// goes straight into sub-blocks.
-			const isApp = label === 0xff;
-			const appId = isApp ? gifAppIdentifier(bytes, i + 2) : "";
-			const keep =
-				label !== 0xfe && // Comment extension
-				(!isApp || appId === "NETSCAPE2.0" || appId === "ANIMEXTS1.0");
-			const end = skipGifSubBlocks(bytes, i + (isApp ? 16 : 2));
-			if (end < 0) return null;
-			if (keep) {
-				for (let k = i; k < end; k++) out.push(bytes[k]);
-			}
-			i = end;
-			continue;
-		}
-		if (block === 0x2c) {
-			const packed = bytes[i + 9];
-			if (packed === undefined) return null;
-			const lctSize = packed & 0x80 ? 3 * (1 << ((packed & 0x07) + 1)) : 0;
-			if (i + 10 + lctSize > bytes.length) return null;
-			out.push(0x2c);
-			for (let k = i + 1; k < i + 10 + lctSize; k++) out.push(bytes[k]);
-			// `i` now sits on the LZW minimum code size byte, which is itself
-			// part of the frame and MUST be copied — the sub-block chain starts
-			// one byte later.
-			i += 10 + lctSize;
-			const end = skipGifSubBlocks(bytes, i + 1);
-			if (end < 0) return null;
-			for (let k = i; k < end; k++) out.push(bytes[k]);
-			i = end;
-			continue;
-		}
-		return null; // unrecognised block — refuse to rewrite
-	}
-	return null; // ran off the end without a trailer
-}
-
-/**
- * Remove metadata containers from image bytes WITHOUT re-encoding pixels.
- *
- * Returns the input unchanged for any container it cannot safely rewrite, so
- * the worst case is the pre-existing behaviour (upload the file as picked)
- * rather than a corrupted image.
- */
-/**
- * Strip eXIf and iTXt metadata chunks from PNG bytes.
- * PNG chunks: length(4) + type(4) + data + crc(4). We remove eXIf and iTXt chunks.
- * Returns null on parse error (caller should fall back to original bytes).
- */
-function stripPngMetadata(bytes: Uint8Array): Uint8Array | null {
-	// PNG signature: 89 50 4E 47 0D 0A 1A 0A
-	if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47 || bytes[4] !== 0x0d || bytes[5] !== 0x0a || bytes[6] !== 0x1a || bytes[7] !== 0x0a) {
-		return null;
-	}
-	let out = new Uint8Array(bytes.slice(0, 8)); // keep signature
-	let i = 8;
-	while (i + 8 <= bytes.length) {
-		const length = (bytes[i] << 24) | (bytes[i+1] << 16) | (bytes[i+2] << 8) | bytes[i+3];
-		if (i + 12 + length > bytes.length) return null;
-		const chunkType = String.fromCharCode(bytes[i+4], bytes[i+5], bytes[i+6], bytes[i+7]);
-		const chunkEnd = i + 12 + length;
-		// Skip eXIf (EXIF in PNG) and iTXt/zTXt/tEXt (text) chunks
-		if (chunkType === "eXIf" || chunkType === "iTXt" || chunkType === "zTXt" || chunkType === "tEXt") {
-			// Skip this chunk entirely (don't copy to output)
-		} else {
-			// Copy chunk: length + type + data + crc
-			const newOut = new Uint8Array(out.length + 12 + length);
-			newOut.set(out);
-			newOut.set(bytes.slice(i, chunkEnd), out.length);
-			out = newOut;
-		}
-		i = chunkEnd;
-		if (chunkType === "IEND") break;
-	}
-	return out;
-}
-
-/**
- * Strip EXIF chunk from WebP bytes.
- * WebP RIFF format: RIFF + size + WEBP + chunks (VP8/VP8L + optional EXIF/ICCP/XMP)
- * Returns null on parse error.
- */
-function stripWebPMetadata(bytes: Uint8Array): Uint8Array | null {
-	// RIFF header: "RIFF" + fileSize(4) + "WEBP"
-	if (bytes.length < 12) return null;
-	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-	if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== "RIFF" ||
-	    String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) !== "WEBP") {
-		return null;
-	}
-	// Simple approach: remove EXIF chunk if found
-	// Chunks: FourCC(4) + size(4) + data + padding(1 if odd)
-	let i = 12;
-	const outChunks: Uint8Array[] = [];
-	while (i + 8 <= bytes.length) {
-		const fourcc = String.fromCharCode(bytes[i], bytes[i+1], bytes[i+2], bytes[i+3]);
-		const size = view.getUint32(i+4, true); // little-endian
-		if (i + 8 + size > bytes.length) return null;
-		const paddedSize = size + (size & 1);
-		const chunkEnd = i + 8 + paddedSize;
-		// Skip EXIF chunk
-		if (fourcc !== "EXIF") {
-			outChunks.push(bytes.slice(i, chunkEnd));
-		}
-		i = chunkEnd;
-	}
-	// Reconstruct
-	const totalSize = outChunks.reduce((sum, c) => sum + c.length, 0);
-	const out = new Uint8Array(12 + totalSize);
-	out.set(bytes.slice(0, 12));
-	let offset = 12;
-	for (const chunk of outChunks) {
-		out.set(chunk, offset);
-		offset += chunk.length;
-	}
-	// Update RIFF size
-	const newRiffSize = totalSize + 4; // WEBP + chunks
-	view.setUint32(4, newRiffSize, true);
-	return out;
-}
-
-/**
- * Remove metadata containers from image bytes WITHOUT re-encoding pixels.
- *
- * Returns the input unchanged for any container it cannot safely rewrite, so
- * the worst case is the pre-existing behaviour (upload the file as picked)
- * rather than a corrupted image.
- */
-function stripImageMetadata(bytes: Uint8Array, mimeType: string): Uint8Array {
-	switch (mimeType) {
-		case "image/jpeg": return stripJpegMetadata(bytes) ?? bytes;
-		case "image/gif": return stripGifMetadata(bytes) ?? bytes;
-		case "image/png": return stripPngMetadata(bytes) ?? bytes;
-		case "image/webp": return stripWebPMetadata(bytes) ?? bytes;
-		default:
-			// HEIF/AVIF and other formats: canvas path handles re-encode
-			// If canvas fails, we return bytes as-is (pre-existing behavior)
-			return bytes;
-	}
-}
-
 /**
  * Downscale a picked/captured image before upload so we never store (and then
  * decode/render) a full ~12MP camera photo. Decoding a multi-megapixel image on
  * the WebView main thread froze the app; capping the longest edge keeps inline
- * bubbles, the lightbox, and the recipient cheap.
- *
- * Every non-GIF image is re-encoded through a canvas — INCLUDING ones already
- * at or below MAX_UPLOAD_EDGE — because that re-encode is what strips EXIF,
- * IPTC and XMP. Previously only oversized images were redrawn, so every
- * photo at 1920px or under was uploaded with its GPS coordinates, camera model
- * and capture timestamp intact.
- *
- * Animated GIFs are not re-encoded (a canvas captures one frame, which would
- * flatten the animation) but ARE metadata-stripped in place, so they keep their
- * frames, frame delays and loop count while losing any XMP/comment payload.
- * If the canvas path is unavailable for any reason the byte-level stripper is
- * used rather than falling back to the raw file, so a metadata failure can
- * never turn into a GPS leak. Only a container the stripper cannot safely
- * rewrite is passed through as-is.
+ * bubbles, the lightbox, and the recipient cheap. Falls back to the original
+ * bytes if anything goes wrong, and leaves animated GIFs untouched.
  *
  * Always reports the true pixel `width`/`height` of whatever bytes are being
  * returned: the profile-photos upload has to declare a square `thumbCoords`
@@ -632,29 +344,20 @@ async function downscaleImage(
 			return { width: 0, height: 0 };
 		}
 	};
-	/**
-	 * Upload payload for the paths that cannot safely re-encode: the file's own
-	 * bytes with the metadata containers removed in place. `stripImageMetadata`
-	 * returns the input untouched for a container it cannot safely rewrite, so
-	 * the absolute worst case is the pre-existing behaviour (upload the file as
-	 * picked) — never a corrupted image.
-	 */
-	const stripped = async () => {
-		const bytes = new Uint8Array(await file.arrayBuffer());
-		return {
-			base64: bytesToBase64(stripImageMetadata(bytes, file.type || "image/jpeg")),
-			mimeType: file.type || "image/jpeg",
-			...(await dimensionsOf()),
-		};
-	};
-	// GIF: exempt from re-encoding, NOT from sanitization.
-	if (file.type === "image/gif") return stripped();
+	const original = async () => ({
+		base64: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
+		mimeType: file.type || "image/jpeg",
+		...(await dimensionsOf()),
+	});
+	if (file.type === "image/gif") return original();
 	try {
 		const bitmap = await createImageBitmap(file);
 		const longest = Math.max(bitmap.width, bitmap.height);
-		// scale of 1 for anything already within budget: it still goes through
-		// the canvas below, it just is not resampled.
-		const scale = longest <= MAX_UPLOAD_EDGE ? 1 : MAX_UPLOAD_EDGE / longest;
+		if (longest <= MAX_UPLOAD_EDGE) {
+			bitmap.close();
+			return original();
+		}
+		const scale = MAX_UPLOAD_EDGE / longest;
 		const w = Math.round(bitmap.width * scale);
 		const h = Math.round(bitmap.height * scale);
 		const canvas = document.createElement("canvas");
@@ -663,21 +366,18 @@ async function downscaleImage(
 		const ctx = canvas.getContext("2d");
 		if (!ctx) {
 			bitmap.close();
-			return stripped();
+			return original();
 		}
 		ctx.drawImage(bitmap, 0, 0, w, h);
 		bitmap.close();
-		// PNG keeps its format so transparency survives; everything else becomes
-		// JPEG, exactly as the oversize downscale path always has.
-		const mimeType = file.type === "image/png" ? "image/png" : "image/jpeg";
 		const blob = await new Promise<Blob | null>((res) =>
-			canvas.toBlob((b) => res(b), mimeType, REENCODE_QUALITY),
+			canvas.toBlob((b) => res(b), "image/jpeg", 0.85),
 		);
-		if (!blob) return stripped();
+		if (!blob) return original();
 		const base64 = bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
-		return { base64, mimeType: blob.type || mimeType, width: w, height: h };
+		return { base64, mimeType: "image/jpeg", width: w, height: h };
 	} catch {
-		return stripped();
+		return original();
 	}
 }
 

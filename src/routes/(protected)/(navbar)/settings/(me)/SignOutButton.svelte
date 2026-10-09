@@ -27,12 +27,8 @@
 		clearPronounsCache();
 		// The previous account's data does not leave with the session: saved
 		// message text, geohash, read cursors, signed CDN URLs, the app-lock
-		// verifier, their last-50 profile viewers, and the preferences file —
-		// plus the in-memory `blob:` object URLs of every full-resolution photo
-		// they opened, which nothing else can reach because they live in module
-		// state rather than in storage. `purgeAccountLocalData` owns that whole
-		// sequence and logs per-step failures; it runs BEFORE the hard navigation,
-		// which is what actually unmounts the app and destroys the WebView.
+		// verifier, and the preferences file. Purge BEFORE the hard navigation,
+		// which is what actually unmounts the app.
 		await purgeAccountLocalData();
 		window.location.href = "/auth/sign-in";
 	}
