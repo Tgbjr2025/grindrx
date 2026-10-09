@@ -1,0 +1,74 @@
+name: Version Consistency Check
+
+on:
+  push:
+    branches: [main, migration/*]
+  pull_request:
+    branches: [main, migration/*]
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract version from tauri.conf.json
+        id: tauri-conf
+        run: |
+          VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          IDENTIFIER=$(jq -r '.identifier' src-tauri/tauri.conf.json)
+          ANDROID_VERSION_CODE=$(jq -r '.bundle.android.versionCode' src-tauri/tauri.conf.json)
+          IOS_BUNDLE_VERSION=$(jq -r '.bundle.iOS.bundleVersion' src-tauri/tauri.conf.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "identifier=$IDENTIFIER" >> $GITHUB_OUTPUT
+          echo "android_version_code=$ANDROID_VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "ios_bundle_version=$IOS_BUNDLE_VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Verify tauri.properties matches (if exists)
+        run: |
+          if [ -f src-tauri/gen/android/app/tauri.properties ]; then
+            PROPS_VERSION=$(grep '^versionName=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+            PROPS_CODE=$(grep '^versionCode=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+            PROPS_ID=$(grep '^identifier=' src-tauri/gen/android/app/tauri.properties | cut -d'=' -f2)
+            
+            if [ "$PROPS_VERSION" != "${{ steps.tauri-conf.outputs.version }}" ]; then
+              echo "::error::tauri.properties versionName ($PROPS_VERSION) != tauri.conf.json version (${{ steps.tauri-conf.outputs.version }})"
+              exit 1
+            fi
+            if [ "$PROPS_CODE" != "${{ steps.tauri-conf.outputs.android_version_code }}" ]; then
+              echo "::error::tauri.properties versionCode ($PROPS_CODE) != tauri.conf.json versionCode (${{ steps.tauri-conf.outputs.android_version_code }})"
+              exit 1
+            fi
+            if [ "$PROPS_ID" != "${{ steps.tauri-conf.outputs.identifier }}" ]; then
+              echo "::error::tauri.properties identifier ($PROPS_ID) != tauri.conf.json identifier (${{ steps.tauri-conf.outputs.identifier }})"
+              exit 1
+            fi
+            echo "tauri.properties matches tauri.conf.json"
+          else
+            echo "tauri.properties not present (generated at build time) - skipping"
+          fi
+      
+      - name: Check userAgent version in tauri.conf.json
+        run: |
+          UA=$(jq -r '.app.windows[0].userAgent' src-tauri/tauri.conf.json)
+          if [[ "$UA" != *"${{ steps.tauri-conf.outputs.version }}"* ]]; then
+            echo "::error::userAgent ($UA) does not contain version ${{ steps.tauri-conf.outputs.version }}"
+            exit 1
+          fi
+          echo "userAgent version matches: $UA"
+      
+      - name: Check whats-new.ts versions
+        run: |
+          # Check if whats-new has entries for current version
+          if ! grep -q "${{ steps.tauri-conf.outputs.version }}" src/lib/data/whats-new.ts; then
+            echo "::warning::whats-new.ts may not have entry for version ${{ steps.tauri-conf.outputs.version }}"
+          fi
+          echo "whats-new.ts check complete"
+
+      - name: Verify versionCode not burned
+        run: |
+          # versionCode 1076-1083 are burned by diagnostic builds
+          CODE="${{ steps.tauri-conf.outputs.android_version_code }}"
+          if [ "$CODE" -le 1083 ] && [ "$CODE" -ge 1076 ]; then
+            echo "::warning::versionCode $CODE is in burned range (1076-1083)"
+          fi
