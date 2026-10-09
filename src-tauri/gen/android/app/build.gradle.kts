@@ -54,7 +54,7 @@ android {
     compileSdk = prop("opengrind.android.compileSdk").toInt()
     buildToolsVersion = prop("opengrind.android.buildTools")
     ndkVersion = prop("opengrind.android.ndk")
-    namespace = "org.opengrind"
+    namespace = "com.grindrx.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.grindrx.app"
