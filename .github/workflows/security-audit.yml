@@ -1,0 +1,60 @@
+name: Security Audit
+
+on:
+  push:
+    branches: [main, migration/*]
+  pull_request:
+    branches: [main, migration/*]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      
+      - name: Run cargo audit
+        run: cargo audit --deny warnings
+        working-directory: src-tauri
+      
+      - name: Upload audit results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-audit-results
+          path: src-tauri/target/audit/
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      
+      - name: Run npm audit
+        run: |
+          # Convert bun lockfile to npm for audit
+          bun pm ls --format=json > package-list.json 2>/dev/null || true
+          # Note: Full npm audit requires package-lock.json
+          # This is a placeholder until lockfile migration
+          echo "npm audit placeholder - requires package-lock.json migration"
+        continue-on-error: true
+
+  version-gate:
+    uses: ./.github/workflows/version-check.yml
+    secrets: inherit
