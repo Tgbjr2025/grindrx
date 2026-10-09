@@ -46,12 +46,15 @@ export const methods = {
 		request: z.undefined(),
 		response: z.undefined(),
 	},
-	forgot_password: {
-		request: z.object({
-			email: z.email(),
-		}),
-		response: z.undefined(),
-	},
+	// NOTE: there is deliberately no `forgot_password` entry here.
+	//
+	// It used to be a dedicated Tauri command implementing
+	// `POST /v3/users/forgot-password`, and this typed bridge entry outlived its
+	// only caller — which made it look wired when nothing invoked it. The reset
+	// form now sends the same documented endpoint through `fetchRest(...,
+	// { public: true })`, the unauthenticated bridge account creation uses, so
+	// there is ONE password-reset path reached through ONE mechanism.
+	// `single-password-reset-path.test.ts` fails if a second transport reappears.
 } satisfies Record<string, { request: z.ZodType; response: z.ZodType }>;
 
 /**

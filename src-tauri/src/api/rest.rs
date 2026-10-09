@@ -583,11 +583,11 @@ const MAX_FETCH_BYTES: usize = 10 * 1024 * 1024;
 const MAX_API_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 /// B3: cap for the JSON bodies read on the AUTH path (`request_json`, which
-/// backs `login` and `refresh_token`, and the `forgot_password` error body).
-/// These are small, fixed-shape JSON documents; 1 MiB is orders of magnitude
-/// more than any real one. `request_json` is `pub(super)`, so this cap is too
-/// (used by `api::auth`).
-pub(super) const MAX_AUTH_RESPONSE_BYTES: usize = 1024 * 1024;
+/// backs `login` and `refresh_token`). These are small, fixed-shape JSON
+/// documents; 1 MiB is orders of magnitude more than any real one. Module-local
+/// since the removal of the `forgot_password` command, which was the last
+/// caller outside `request_json`.
+const MAX_AUTH_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// B3: cap for an upload command's response body. The requests are capped at
 /// ~22 MB of image bytes but the RESPONSE is a small JSON receipt
@@ -986,6 +986,10 @@ pub async fn request(
 /// Unauthenticated sibling of `request` for pre-session endpoints (account
 /// creation, forgot-password). Same path-safety guard and msgpack envelope, but
 /// no Authorization header — a logged-out caller must be able to reach these.
+///
+/// This is now also the ONLY transport for password reset: the dedicated
+/// `forgot_password` command was removed because it duplicated this path with a
+/// second, divergent endpoint contract (see `lib/api/auth-contract.ts`).
 #[tauri::command]
 pub async fn request_public(
     state: tauri::State<'_, AppState>,

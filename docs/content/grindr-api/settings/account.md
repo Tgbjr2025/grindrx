@@ -1,5 +1,44 @@
 # Account
 
+## GrindrX client support status
+
+Which of the endpoints above GrindrX actually calls, and why the others are
+not wired. Kept here because this page is the project's only vendored reference
+for these endpoints, and a reader who finds `POST /v3/users/email` listed above
+has no way to tell whether the app uses it.
+
+- **Password reset — `POST /v3/users/forgot-password` — IN USE.** This is the
+  single supported reset path. It previously existed twice in the codebase with
+  two different endpoints: a Rust command implemented this one, while the reset
+  form posted `/v1/accounts/password/reset`, which appears nowhere in this
+  reference and which the commit that added the Rust command described as "a
+  non-existent path". The Rust command was removed and the form now sends this
+  endpoint through the unauthenticated `request_public` bridge.
+  `src/lib/api/auth-contract.ts` owns the path; `auth-contract.guard.test.ts`
+  fails if a second reset path reappears.
+- **Account creation — UNVERIFIED.** Called as `POST /v1/accounts`, which is
+  also not listed above; the reference records creation only as `POST (dynamic,
+  WIP)`, and the fields of `CreateAccountEmailRequest` are not documented here.
+  The request body is left exactly `{ email, password, displayName }`. No
+  date-of-birth, terms-of-service or email-verification field was added, because
+  there is no evidence the server accepts one and a client-side check the server
+  ignores is not a control. The declared gaps live in
+  `REGISTRATION_GAPS` (`src/lib/api/auth-contract.ts`).
+- **Change email — `POST /v3/users/email` — DOCUMENTED, NOT USED.** The endpoint
+  is listed above, but the fields of `UpdateEmailRequest` are not documented in
+  this repository, nor is whether the call re-authenticates the password or
+  requires a confirmation round-trip to the new address. GrindrX therefore does
+  not offer in-app email changes and routes the user to support instead. See
+  `settings/(subpage)/account/email/+page.svelte`.
+- **Age assurance — NOT IMPLEMENTED.** What exists is the FaceTec
+  document/liveness flow under [age verification](/grindr-api/browse/age-verification),
+  which is a separate, unimplemented feature — not a date-of-birth field on
+  account creation.
+
+None of the above has been exercised against a live Grindr server from within
+this repository; these are the conclusions the code and this reference support,
+not observed API responses.
+
 ## Account settings, WIP
 
 - POST /v3/users/password-validation ValidatePasswordComplexityRequest

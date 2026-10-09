@@ -3,6 +3,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { ApiHttpError, asAppError, fetchRest } from "$lib/api";
+	import { REGISTER_PATH } from "$lib/api/auth-contract";
 	import { Button } from "$lib/components/ui/button";
 	import * as Card from "$lib/components/ui/card";
 	import { Input } from "$lib/components/ui/input";
@@ -18,6 +19,32 @@
 	let passwordMismatch = $derived(
 		password.length > 0 && confirmPassword.length > 0 && password !== confirmPassword,
 	);
+
+	// This screen collects THREE fields and sends three fields. It does not
+	// collect a date of birth, does not ask the user to accept terms, and does
+	// not verify the email address — and that is a decision with a stated
+	// reason, not an oversight. `REGISTRATION_GAPS` is the record; each entry
+	// says why it is not implemented.
+	//
+	// The short version: the server contract is not knowable from this
+	// repository. The vendored API reference lists account creation as
+	// `POST (dynamic, WIP) CreateAccountEmailRequest FirstPartyCreateAccountResponse`
+	// — the path is "dynamic" and the request type's fields are documented
+	// nowhere in the repo. So there is no evidence a DOB or TOS field is
+	// accepted, and adding one would mean inventing an API contract.
+	//
+	// What was specifically rejected: a client-side age gate that checks the
+	// entered date and refuses to submit. It would have looked like compliance
+	// and been worth nothing — it gates the FORM, not the account, the value is
+	// never verified, and the server is the only place enforcement can happen.
+	// The same applies to a TOS checkbox: with no terms document bundled and no
+	// server-side field to record acceptance against, the app cannot honestly
+	// hold a consent record, and the checkbox would be a control the user
+	// believes is enforced and is not.
+	//
+	// If the contract ever becomes known, implement it against the server and
+	// record it in `REGISTRATION_GAPS` (`$lib/api/auth-contract`) — not the
+	// other way round.
 </script>
 
 <form
@@ -35,7 +62,7 @@
 			// before any request is sent, which fetchRest turns into a sign-in
 			// redirect + toast. Use the public bridge so the request actually reaches
 			// the server and we can report its real response.
-			const response = await fetchRest("/v1/accounts", {
+			const response = await fetchRest(REGISTER_PATH, {
 				method: "POST",
 				body: { email, password, displayName },
 				public: true,
