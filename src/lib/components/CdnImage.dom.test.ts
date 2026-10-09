@@ -30,6 +30,7 @@
  *   load -> authenticated retry -> terminal failure -> fallback state
  */
 import { flushSync, mount, unmount } from "svelte";
+import type { ComponentProps } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveAuthedImageRetained } from "$lib/utils/authed-image";
@@ -49,7 +50,7 @@ const BLOB_URL = "blob:http://localhost/retry-blob";
 
 let cleanup: (() => void) | undefined;
 
-function mountCdnImage(props?: Record<string, unknown>) {
+function mountCdnImage(props?: ComponentProps<typeof CdnImage>) {
 	const target = document.createElement("div");
 	document.body.append(target);
 	const instance = mount(CdnImage, {
