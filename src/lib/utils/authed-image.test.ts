@@ -17,9 +17,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
+	__cachedAuthedImageCount,
 	__resetAuthedImageCacheForTests,
 	__retiredAuthedImageCount,
 	isAuthedHost,
+	purgeAuthedImageCache,
 	resolveAuthedImage,
 	resolveAuthedImageRetained,
 } from "$lib/utils/authed-image";
@@ -278,5 +280,127 @@ describe("retained object URLs survive cache eviction", () => {
 		// Each newly resolved URL evicts the oldest, which is retained, so it parks.
 		expect(__retiredAuthedImageCount()).toBeLessThanOrEqual(32);
 		for (const r of releases) r();
+	});
+});
+
+/**
+ * THE PRIVACY DEFECT: `objectUrlCache` is MODULE state, so its `MAX_ENTRIES`
+ * bound capped memory but never the photos' LIFETIME. Signing out did not touch
+ * it, and `resolveAuthedImage` returns a cache hit WITHOUT re-checking the
+ * session — so account A's full-resolution photos stayed resolvable, and
+ * renderable, by account B on the same WebView process until restart. Reducing
+ * 96 -> 32 shrank the window; it never closed it.
+ */
+describe("purgeAuthedImageCache", () => {
+	function authedUrl(i: number): string {
+		return `https://cdns.grindr.com/images/full/purge-${i}.jpg`;
+	}
+
+	it("empties the cache and revokes every object URL", async () => {
+		serveBytes(jpeg());
+		const urls: string[] = [];
+		for (let i = 0; i < 5; i++) {
+			urls.push((await resolveAuthedImage(authedUrl(i))) as string);
+		}
+		expect(__cachedAuthedImageCount()).toBe(5);
+		for (const u of urls) expect(urlLive.get(u)).toBe(true);
+
+		expect(purgeAuthedImageCache()).toBe(5);
+
+		// The MAP is empty, not merely de-referenced, and every blob is freed.
+		expect(__cachedAuthedImageCount()).toBe(0);
+		expect(liveUrlCount()).toBe(0);
+	});
+
+	it("is idempotent and reports nothing to free on a second call", () => {
+		expect(purgeAuthedImageCache()).toBe(0);
+		expect(purgeAuthedImageCache()).toBe(0);
+		expect(__cachedAuthedImageCount()).toBe(0);
+	});
+
+	it("revokes PARKED (evicted but still retained) blobs, not just live ones", async () => {
+		serveBytes(jpeg());
+
+		// Retain the first image, then overflow the 32-entry cache so it is evicted
+		// into `retired` — blob memory that is still live and still the previous
+		// account's bytes.
+		const first = await resolveAuthedImageRetained(authedUrl(0));
+		expect(__retiredAuthedImageCount()).toBe(0);
+		for (let i = 1; i <= 40; i++) await resolveAuthedImage(authedUrl(i));
+		expect(__retiredAuthedImageCount()).toBeGreaterThan(0);
+
+		const revoked = purgeAuthedImageCache();
+
+		// 32 cached + the parked set, counted once each even where they overlap.
+		expect(revoked).toBeGreaterThan(32);
+		expect(__retiredAuthedImageCount()).toBe(0);
+		expect(liveUrlCount()).toBe(0);
+
+		// A release closure captured before the purge must now be a no-op, not a
+		// double revoke and not a throw.
+		expect(() => first.release?.()).not.toThrow();
+	});
+
+	it("stops the next account resolving the previous account's cached photo", async () => {
+		serveBytes(jpeg());
+		const url = authedUrl(0);
+
+		const accountA = (await resolveAuthedImage(url)) as string;
+		expect(invoke).toHaveBeenCalledTimes(1);
+		// A cache hit costs no IPC and returns the same handle — this is exactly
+		// what made the old state a cross-account leak rather than dead bytes.
+		expect(await resolveAuthedImage(url)).toBe(accountA);
+		expect(invoke).toHaveBeenCalledTimes(1);
+
+		purgeAuthedImageCache();
+
+		// Account B asks for the same photo. The bytes are gone, so the fetch is
+		// re-issued with B's bearer token and a fresh object URL is minted. There
+		// is no path by which A's bytes are served to B.
+		const accountB = (await resolveAuthedImage(url)) as string;
+		expect(accountB).not.toBe(accountA);
+		expect(urlLive.get(accountA)).toBe(false);
+		expect(urlLive.get(accountB)).toBe(true);
+		expect(invoke).toHaveBeenCalledTimes(2);
+	});
+
+	// The race the purge has to close: `fetch_authed_bytes` takes up to 12s, and a
+	// user can sign out inside that window. Without an epoch check the late
+	// response would call `remember()` on the freshly-emptied cache and hand the
+	// previous account's photo to whoever signs in next.
+	it("does not re-cache a fetch that was in flight when the purge ran", async () => {
+		let releaseBridge: (buffer: ArrayBuffer) => void = () => {};
+		invoke.mockImplementation(
+			() =>
+				new Promise<ArrayBuffer>((resolve) => {
+					releaseBridge = resolve;
+				}),
+		);
+		const url = authedUrl(0);
+
+		const pending = resolveAuthedImage(url);
+		expect(__cachedAuthedImageCount()).toBe(0);
+
+		purgeAuthedImageCache();
+
+		// The bridge answers only now — after the sign-out.
+		releaseBridge(bufferOf(jpeg()));
+		expect(await pending).toBeNull();
+		// Not cached, and the stale blob was freed rather than pinned.
+		expect(__cachedAuthedImageCount()).toBe(0);
+		expect(liveUrlCount()).toBe(0);
+	});
+
+	it("still serves a fetch started AFTER the purge", async () => {
+		serveBytes(jpeg());
+		const url = authedUrl(0);
+		purgeAuthedImageCache();
+
+		// Epoch is only bumped by the purge, so the next account's own fetch is
+		// unaffected and caches normally.
+		const fresh = (await resolveAuthedImage(url)) as string;
+		expect(fresh).not.toBeNull();
+		expect(__cachedAuthedImageCount()).toBe(1);
+		expect(urlLive.get(fresh)).toBe(true);
 	});
 });

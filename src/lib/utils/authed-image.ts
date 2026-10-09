@@ -71,6 +71,13 @@ const retired = new Map<string, string>();
 // (its <img> may briefly blank and re-fetch) rather than leak. A correct caller
 // releases promptly and never reaches this.
 const MAX_RETIRED = MAX_ENTRIES;
+// Bumped by {@link purgeAuthedImageCache}. A `fetch_authed_bytes` that is still
+// in flight when the purge lands must NOT re-insert the signed-out account's
+// photo into the freshly-emptied cache, so every fetch records the epoch it
+// started under and drops its bytes if the epoch moved. Without this the purge
+// has a race window equal to the slowest media fetch (up to the 12s timeout),
+// which is exactly the window a user double-signs-out/in through.
+let cacheEpoch = 0;
 
 /**
  * Retain a resolved object URL for as long as the caller needs it, and get a
@@ -143,10 +150,56 @@ function remember(srcUrl: string, objectUrl: string): void {
 }
 
 /**
+ * Forget every retained authenticated blob and REVOKE its object URL.
+ *
+ * WHY THIS EXISTS: `objectUrlCache` is module state with a process lifetime, so
+ * its bound (32 full-resolution photos) capped MEMORY but never the photos'
+ * LIFETIME. Signing out did not touch it, so account A's photos stayed
+ * resolvable — and, because `resolveAuthedImage` returns the cached object URL
+ * without re-checking the session, actually DISPLAYABLE — to account B on the
+ * same process, until the WebView was restarted. That is a cross-account privacy
+ * leak, not a memory issue, and lowering `MAX_ENTRIES` never addressed it.
+ *
+ * This is the real purge that the sign-out flow needs; `__resetAuthedImageCacheForTests`
+ * is not a substitute (it drops the bookkeeping without freeing a single byte).
+ * Wired into `purgeAccountLocalData`.
+ *
+ * Revokes EVERY object URL we are holding, including the `retired` parked set —
+ * a parked blob is still live blob memory and still points at the previous
+ * account's bytes — then clears the map, the in-flight de-dup table and the
+ * ref-counts, so a stale `release()` closure from an unmounted `<img>` is a
+ * harmless no-op instead of a double revoke.
+ *
+ * Returns how many object URLs were revoked, so the caller can log a purge that
+ * actually had something to free (a silent `0` is how a broken wiring hides).
+ * Idempotent, and safe to call when the cache was never populated.
+ */
+export function purgeAuthedImageCache(): number {
+	// A Set, because the same object URL can be in `objectUrlCache` (still
+	// displayable) and in `retired` (evicted but pinned by a retain) — revoking
+	// twice is harmless but would report a wrong count.
+	const held = new Set<string>([...objectUrlCache.values(), ...retired.values()]);
+	// Bump FIRST: any fetch already awaiting the bridge is now provably stale and
+	// will free its own bytes instead of remembering them.
+	cacheEpoch++;
+	objectUrlCache.clear();
+	inflight.clear();
+	refCounts.clear();
+	retired.clear();
+	for (const objectUrl of held) revokeQuietly(objectUrl);
+	return held.size;
+}
+
+/**
  * Reset every module-level cache. Tests only: `objectUrlCache` is module
  * state, so without this a bound assertion in one test is satisfied by
  * bookkeeping the test never created (a freshly-reset counter reporting a
  * stale real cache as within budget).
+ *
+ * Deliberately does NOT revoke or bump `cacheEpoch`: it exists to isolate tests
+ * from each other, and revoking would make the revocation assertions in the
+ * purge tests order-dependent. {@link purgeAuthedImageCache} is the function
+ * that frees bytes.
  */
 export function __resetAuthedImageCacheForTests(): void {
 	objectUrlCache.clear();
@@ -158,6 +211,15 @@ export function __resetAuthedImageCacheForTests(): void {
 /** Test-only introspection: how many object URLs are currently parked. */
 export function __retiredAuthedImageCount(): number {
 	return retired.size;
+}
+
+/**
+ * Test-only introspection: how many source URLs currently have a retained
+ * object URL. Zero after a purge proves the map itself was emptied, not just
+ * that its entries were revoked.
+ */
+export function __cachedAuthedImageCount(): number {
+	return objectUrlCache.size;
 }
 
 /** ISO-BMFF major brands that are genuinely video containers. */
@@ -349,6 +411,8 @@ export async function resolveAuthedImage(url: string): Promise<string | null> {
 	const pending = inflight.get(url);
 	if (pending) return pending;
 
+	// Pinned for the lifetime of this fetch; see the `cacheEpoch` check below.
+	const epoch = cacheEpoch;
 	const task = (async () => {
 		try {
 			const result = await fetchAuthedBytes(url);
@@ -356,6 +420,15 @@ export async function resolveAuthedImage(url: string): Promise<string | null> {
 			const objectUrl = URL.createObjectURL(
 				new Blob([result.buffer], { type: result.mime }),
 			);
+			// A purge landed while these bytes were in flight. They were fetched
+			// with the SIGNED-OUT session's bearer token, so remembering them would
+			// hand the next account the previous account's photo — the exact leak
+			// `purgeAuthedImageCache` exists to close. Free them and report failure
+			// so the caller falls back as it does for any other fetch failure.
+			if (epoch !== cacheEpoch) {
+				revokeQuietly(objectUrl);
+				return null;
+			}
 			remember(url, objectUrl);
 			return objectUrl;
 		} finally {
