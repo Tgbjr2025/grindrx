@@ -57,6 +57,17 @@ pub fn run() {
         state.set_locked(locked);
     }
 
+// P1-001. Gates the anonymous usage ping. The authoritative check is in
+	// `send_usage_ping`, which fails closed; this command only records the grant.
+	// Mirrors `set_notification_prefs` deliberately: the WebView pushes on launch
+	// and on every consent change, and Rust is told either way.
+	#[tauri::command]
+    fn set_telemetry_consent(state: tauri::State<'_, AppState>, granted: bool) {
+        state
+            .telemetry_consent
+            .store(granted, std::sync::atomic::Ordering::Relaxed);
+    }
+
 	builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -79,6 +90,8 @@ pub fn run() {
             notify_messages: AtomicBool::new(false),
             notify_taps: AtomicBool::new(false),
             prefs_loaded: AtomicBool::new(false),
+            // P1-001: opt-in. See AppState::telemetry_consent.
+            telemetry_consent: AtomicBool::new(false),
             // Default UNLOCKED, matching `is_foreground`: the WebView pushes the
             // real value immediately on launch. Defaulting to `true` would be
             // fail-safe but would also suppress every notification until the
@@ -106,6 +119,7 @@ pub fn run() {
             api::openurl::open_external_url,
             set_foreground,
             set_notification_prefs,
+            set_telemetry_consent,
             set_app_locked,
             api::ws::ws_connect,
             api::ws::ws_send,

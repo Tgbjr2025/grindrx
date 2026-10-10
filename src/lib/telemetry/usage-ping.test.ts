@@ -29,11 +29,17 @@ async function importGate(granted: boolean) {
 	const usage = await import("$lib/api/usage");
 	const sendUsagePing = vi.mocked(usage.sendUsagePing);
 	sendUsagePing.mockResolvedValue(undefined);
+	// Both exports the gate actually consumes must be stubbed. `pushConsentToRust`
+	// is not optional here: the gate calls it before deciding, so a partial mock
+	// makes the module throw and the gate fail closed — which reads as "the ping
+	// never sends" rather than as "the mock is wrong".
+	const pushConsentToRust = vi.fn().mockResolvedValue(undefined);
 	vi.doMock("$lib/telemetry/consent.svelte", () => ({
 		isTelemetryConsentGranted: () => granted,
+		pushConsentToRust,
 	}));
 	const gate = await import("$lib/telemetry/usage-ping");
-	return { gate, sendUsagePing };
+	return { gate, sendUsagePing, pushConsentToRust };
 }
 
 beforeEach(() => {
@@ -104,10 +110,52 @@ describe("sendUsagePingIfConsented", () => {
 		vi.mocked(usage.sendUsagePing).mockRejectedValue(new Error("network down"));
 		vi.doMock("$lib/telemetry/consent.svelte", () => ({
 			isTelemetryConsentGranted: () => true,
+			pushConsentToRust: vi.fn().mockResolvedValue(undefined),
 		}));
 		const gate = await import("$lib/telemetry/usage-ping");
 
 		await expect(gate.sendUsagePingIfConsented()).resolves.toBe(true);
 		expect(console.warn).toHaveBeenCalled();
+	});
+});
+
+describe("Rust consent mirror", () => {
+	// Rust holds the authoritative gate and starts every process at
+	// "not consented", so the gate must re-assert the decision on each launch or
+	// a prior grant would silently stop working after the next cold start.
+	it("pushes `granted` into Rust before sending after an accept", async () => {
+		const { gate, sendUsagePing, pushConsentToRust } = await importGate(true);
+
+		await gate.sendUsagePingIfConsented();
+
+		expect(pushConsentToRust).toHaveBeenCalledWith("granted");
+		expect(sendUsagePing).toHaveBeenCalledTimes(1);
+	});
+
+	it("pushes `declined` into Rust when consent was refused", async () => {
+		const { gate, sendUsagePing, pushConsentToRust } = await importGate(false);
+
+		const sent = await gate.sendUsagePingIfConsented();
+
+		expect(pushConsentToRust).toHaveBeenCalledWith("declined");
+		expect(sendUsagePing).not.toHaveBeenCalled();
+		expect(sent).toBe(false);
+	});
+
+	it("fails closed and skips the ping if the Rust push throws", async () => {
+		// Rust defaults to not-consented, so a push that never lands means the
+		// ping cannot be sent even if the WebView believes consent was given.
+		vi.resetModules();
+		const usage = await import("$lib/api/usage");
+		const sendUsagePing = vi.mocked(usage.sendUsagePing);
+		sendUsagePing.mockResolvedValue(undefined);
+		vi.doMock("$lib/telemetry/consent.svelte", () => ({
+			isTelemetryConsentGranted: () => true,
+			pushConsentToRust: vi.fn().mockRejectedValue(new Error("no bridge")),
+		}));
+		const gate = await import("$lib/telemetry/usage-ping");
+
+		await expect(gate.sendUsagePingIfConsented()).resolves.toBe(false);
+		expect(sendUsagePing).not.toHaveBeenCalled();
 	});
 });

@@ -171,6 +171,7 @@ function commit(next: Exclude<TelemetryConsent, "undecided">): void {
 /** The user explicitly opted in. This is the only path that enables the ping. */
 export function grantTelemetryConsent(): void {
 	commit("granted");
+	void pushConsentToRust("granted");
 }
 
 /**
@@ -183,4 +184,24 @@ export function grantTelemetryConsent(): void {
  */
 export function declineTelemetryConsent(): void {
 	commit("declined");
+	void pushConsentToRust("declined");
+}
+
+/**
+ * Mirror the decision into Rust, which is where the authoritative gate lives:
+ * `send_usage_ping` returns early unless `telemetry_consent` is true, and it
+ * defaults to false. Without this the frontend gate would work while the Rust
+ * gate silently dropped every ping, which is the safe direction to fail — but
+ * then an accepted consent would never take effect. Best-effort: on failure
+ * Rust stays at "not consented", which is fail-closed by construction.
+ *
+ * Also called on launch so a persisted grant survives a WebView reload.
+ */
+export async function pushConsentToRust(value: TelemetryConsent): Promise<void> {
+	try {
+		const { invoke } = await import("@tauri-apps/api/core");
+		await invoke("set_telemetry_consent", { granted: value === "granted" });
+	} catch (err) {
+		console.error("[GrindrX] Failed to push telemetry consent to Rust:", err);
+	}
 }

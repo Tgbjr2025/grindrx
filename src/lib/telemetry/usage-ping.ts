@@ -21,7 +21,7 @@
  */
 
 import { sendUsagePing } from "$lib/api/usage";
-import { isTelemetryConsentGranted } from "./consent.svelte";
+import { isTelemetryConsentGranted, pushConsentToRust } from "./consent.svelte";
 
 /**
  * Send the anonymous usage ping ONLY if the user has explicitly consented.
@@ -52,6 +52,19 @@ export async function sendUsagePingIfConsented(): Promise<boolean> {
 		);
 		return false;
 	}
+
+	// Re-assert the decision into Rust on every launch. Rust is the authoritative
+	// gate and starts every process at "not consented", so without this a
+	// previously granted consent would be dropped on each cold start and the
+	// ping would never fire again after the first grant. Pushed in both
+	// directions so a decline also reaches Rust.
+	try {
+		await pushConsentToRust(granted ? "granted" : "declined");
+	} catch (err) {
+		console.error("[GrindrX] Could not push consent to Rust; skipping ping.", err);
+		return false;
+	}
+
 	if (!granted) return false;
 	try {
 		await sendUsagePing();

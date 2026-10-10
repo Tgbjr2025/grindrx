@@ -907,7 +907,22 @@ pub async fn fetch_active_users() -> Result<String, AppError> {
 /// URL is fixed. Inputs are sanitised to a safe charset before building the JSON
 /// so this can't inject into the body. Caller swallows failures.
 #[tauri::command]
-pub async fn send_usage_ping(id: String, version: String) -> Result<(), AppError> {
+pub async fn send_usage_ping(
+    state: tauri::State<'_, crate::state::AppState>,
+    id: String,
+    version: String,
+) -> Result<(), AppError> {
+    // P1-001. Fails closed: the default is `false`, so a ping can only leave the
+    // device after an explicit grant. Checked here rather than only in the
+    // WebView because a privacy gate that lives solely in the frontend is one
+    // broken caller away from being bypassed.
+    if !state
+        .telemetry_consent
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Ok(());
+    }
+
     const PING_BASE: &str = "https://cam.dominusaxis.com/grindrx/ping";
     // The aggregator reads `id` and `v` from the QUERY STRING (not the body).
     // Sanitise to a URL-safe charset so no encoding is needed and nothing can be

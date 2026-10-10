@@ -16,7 +16,7 @@
 		applyBackGestureHandler,
 	} from "$lib/android-native-bridge";
 	import { syncNotificationPrefs } from "$lib/api/notifications";
-	import { sendUsagePing } from "$lib/api/usage";
+	import { sendUsagePingIfConsented } from "$lib/telemetry/usage-ping";
 	import { isLockEnabled, lockNow } from "$lib/app-data/app-lock.svelte";
 
 	// Analytics is OFF by default: this is a privacy-focused client and the route
@@ -67,7 +67,9 @@
 	onMount(() => {
 		void trackPageview(window.location.pathname);
 		// Anonymous launch ping so active-user counts can be aggregated (best-effort).
-		void sendUsagePing();
+		// Gated on explicit consent (P1-001): `sendUsagePingIfConsented` is a no-op
+		// until the user accepts, and Rust fails closed independently.
+		void sendUsagePingIfConsented();
 		// Push the local notification toggles into the Rust notifier on launch.
 		void syncNotificationPrefs();
 		applyAndroidInsets();
@@ -135,6 +137,7 @@
 	});
 
 	import RequestBlockedAlert from "$lib/api/request-blocked/RequestBlockedAlert.svelte";
+	import TelemetryConsentDialog from "$lib/components/TelemetryConsentDialog.svelte";
 	import favicon from "$lib/assets/favicon.png";
 	import ForceUpdateGate from "$lib/components/ForceUpdateGate.svelte";
 
@@ -175,3 +178,4 @@
 </IconContext>
 <RequestBlockedAlert />
 <ForceUpdateGate />
+<TelemetryConsentDialog />

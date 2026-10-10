@@ -80,6 +80,21 @@ export type ChatV1Typing = z.infer<typeof typingPayloadSchema> & {
 export type WsStatus = "disconnected" | "connecting" | "connected" | "error";
 
 /**
+ * Payload of `ws:reconnect_exhausted`, emitted by the Rust reconnect budget in
+ * src-tauri/src/api/ws.rs once it has spent its attempt ceiling. Stable by
+ * contract: the Rust side documents this shape as the thing a UI should offer a
+ * retry against.
+ */
+export const reconnectExhaustedSchema = z.object({
+	attempts: z.number(),
+	maxAttempts: z.number(),
+	backoffSecs: z.number(),
+	lastError: z.string(),
+});
+
+export type ReconnectExhausted = z.infer<typeof reconnectExhaustedSchema>;
+
+/**
  * Monotonic counter for the synthetic-message-id disambiguator on the live
  * event path. A single integer, so it cannot grow without bound.
  */
@@ -87,6 +102,17 @@ let wsMessageSequence = 0;
 
 class WsState {
 	status = $state<WsStatus>("disconnected");
+
+	/**
+	 * Non-null once the Rust reconnect budget has parked itself.
+	 *
+	 * Before this existed the budget had no frontend listener at all, so
+	 * exhaustion left the socket dead with no signal: `connect()` is called once
+	 * at init and early-returns while status is not "disconnected", so the UI
+	 * believed it was merely reconnecting forever. This is the state a retry
+	 * affordance reads.
+	 */
+	reconnectExhausted = $state<ReconnectExhausted | null>(null);
 
 	// The three lifecycle listeners below were registered in the constructor
 	// with their `unlisten` functions discarded, so nothing could ever detach
@@ -127,6 +153,50 @@ class WsState {
 				console.error("[ws] server error", event.payload);
 			}),
 		);
+
+		track(
+			// The budget parked itself: no further automatic attempt will be made
+			// until something replenishes it. A payload that fails its schema is
+			// logged rather than half-applied, so a malformed emit degrades to
+			// "still dead" rather than to a wrong retry count on screen.
+			listen<ReconnectExhausted>("ws:reconnect_exhausted", (event) => {
+				const parsed = reconnectExhaustedSchema.safeParse(event.payload);
+				if (!parsed.success) {
+					console.error("[ws] malformed reconnect_exhausted", event.payload);
+					return;
+				}
+				this.reconnectExhausted = parsed.data;
+			}),
+		);
+
+		// A live socket clears the parked state. Rust replenishes the budget on
+		// real traffic, so without this the banner would outlive the outage it
+		// describes and keep offering a retry for a connection that is fine.
+		track(
+			listen<void>("ws:connected", () => {
+				this.reconnectExhausted = null;
+			}),
+		);
+	}
+
+	/**
+	 * Manually replenish the reconnect budget and try again.
+	 *
+	 * `ws_connect` is what pokes `auth_notify` on the Rust side, which is one of
+	 * the three things that reset a parked budget — the same path login uses.
+	 * Returns false when there is no session to connect with, so the caller can
+	 * avoid showing a retry that cannot work.
+	 */
+	async retryAfterExhaustion(): Promise<boolean> {
+		const { invoke } = await import("@tauri-apps/api/core");
+		try {
+			await invoke("ws_connect");
+			this.reconnectExhausted = null;
+			return true;
+		} catch (error) {
+			console.error("[ws] manual retry failed", error);
+			return false;
+		}
 	}
 
 	/**

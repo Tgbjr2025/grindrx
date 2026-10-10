@@ -83,6 +83,15 @@ pub struct AppState {
     /// Defaults to `false` (unlocked) to match `is_foreground`; the WebView
     /// pushes the real value on launch and on every lock/unlock.
     pub locked: AtomicBool,
+    /// Whether the user has explicitly consented to anonymous usage pings.
+    ///
+    /// Defaults to `false` and is only ever set `true` by the
+    /// `set_telemetry_consent` command. `send_usage_ping` checks this and
+    /// returns without sending, so the gate fails CLOSED: if the WebView never
+    /// pushes consent — a bug, a stripped frontend, an old WebView cache — no
+    /// ping is ever sent. Gating only in the frontend would be a single point
+    /// of failure for a privacy control, so the authoritative check lives here.
+    pub telemetry_consent: AtomicBool,
     /// Why secure storage is unusable, if `init_keyring` left no default store.
     ///
     /// Without this surfaced, the app starts normally and EVERY login then fails
