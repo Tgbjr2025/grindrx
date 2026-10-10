@@ -2,6 +2,7 @@
 	import { toast } from "svelte-sonner";
 
 	import { ApiHttpError, asAppError, fetchRest } from "$lib/api";
+	import { PASSWORD_RESET_PATH } from "$lib/api/auth-contract";
 	import { Button } from "$lib/components/ui/button";
 	import * as Card from "$lib/components/ui/card";
 	import { Input } from "$lib/components/ui/input";
@@ -23,7 +24,17 @@
 			// Password reset is a pre-session action — go through the public bridge,
 			// not the authed one (which would reject a signed-out user with "Not
 			// logged in" and bounce them to sign-in).
-			const response = await fetchRest("/v1/accounts/password/reset", {
+			//
+			// The path comes from `$lib/api/auth-contract`, and this is the ONLY
+			// place in the app that asks for a password-reset email. It previously
+			// POSTed to `/v1/accounts/password/reset` — an endpoint that appears
+			// nowhere in this project's vendored API reference and that the commit
+			// which added the Rust counterpart called "a non-existent path" — while
+			// a separate Rust command implemented the documented
+			// `/v3/users/forgot-password` with zero callers. Two contracts, one
+			// feature, and the only recovery path from a locked-out account
+			// depending on which one you read.
+			const response = await fetchRest(PASSWORD_RESET_PATH, {
 				method: "POST",
 				body: { email },
 				public: true,

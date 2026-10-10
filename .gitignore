@@ -34,3 +34,7 @@ google-services.json
 .local
 # Local pre-edit backups - these were being committed by accident since v0.1.24
 *.bak.*
+
+# build/test artifacts (added 2026-10-10 after 0c1e1fb committed 540 coverage HTML + 4 build logs)
+coverage/
+*.log

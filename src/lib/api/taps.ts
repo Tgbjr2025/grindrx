@@ -1,5 +1,10 @@
 import { fetchRest } from "$lib/api";
 import { assertOk } from "$lib/api/http";
+import {
+	engagementListSchema,
+	type EngagementProfile,
+	engagementProfileSchema,
+} from "$lib/model/engagement";
 
 /**
  * Documented Grindr tap IDs (grindr-api/interest/taps#tap-id). `3` ("NONE")
@@ -37,4 +42,47 @@ export async function sendTapWithType(profileId: number, tapType: TapType): Prom
 		body: { recipientId: profileId, tapType },
 	});
 	assertOk(response, "/v2/taps/add");
+}
+
+// ---------------------------------------------------------------------------
+// Received taps — "who tapped me" (WP-3).
+//
+//   GET /v2/taps/received
+//
+// ⚠️ **UNPROBED.** No signed-in session was available, so the path is
+// transcribed from the spec's endpoint table and the row shape is assumed to
+// match the "who viewed me" list (`$lib/model/engagement`), which documents
+// every assumption. If a probe shows the two lists differ, `engagement.ts` is
+// the one place to split them.
+//
+// The row deliberately does NOT carry a `tapType`: the server is not known to
+// send one, and a guessed required field would drop every row. Add it there as
+// `.optional().catch(null)` if a probe shows it present.
+// ---------------------------------------------------------------------------
+
+const TAPS_RECEIVED_PATH = "/v2/taps/received";
+
+/** One "who tapped me" row. See `$lib/model/engagement` for the unverified-shape
+ * warning that applies to this type. */
+export type ReceivedTap = EngagementProfile;
+
+const receivedTapsSchema = engagementListSchema(
+	engagementProfileSchema,
+	"received tap",
+);
+
+/**
+ * List the profiles that have tapped the user. `GET /v2/taps/received`.
+ *
+ * Same open pagination question as `$lib/api/view`'s `getViews`: this accepts a
+ * bare array, a wrapper object under any key, or `null`, reports which one it
+ * saw via the returned `shape`, and sends no pagination parameter — none has
+ * been observed to exist.
+ */
+export async function getReceivedTaps() {
+	// The parsed path is safe to hand to `jsonParsed`: no identifier in it, so
+	// the `ApiHttpError` raised on a non-2xx interpolates nothing private.
+	return await fetchRest(TAPS_RECEIVED_PATH).then((res) =>
+		res.jsonParsed(receivedTapsSchema),
+	);
 }

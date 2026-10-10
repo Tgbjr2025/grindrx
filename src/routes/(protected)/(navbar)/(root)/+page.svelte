@@ -75,7 +75,19 @@
 			} = await getCurrentPosition();
 			const newHash = encodeGeohash(latitude, longitude);
 			// Only update if position changed by more than ~1 km (6-char geohash cell)
-			if (newHash.slice(0, 6) !== prefs.geohash.slice(0, 6)) {
+			//
+			// The length check is load-bearing (2026-10-02). A hash stored by an
+			// earlier build can be SHORTER than the one we now produce while
+			// describing the same place, so `slice(0, 6)` is identical and the
+			// movement test alone would never rewrite it. That is exactly the
+			// stale 8-char value left on disk by `PERSISTED_PRECISION = 8`, which
+			// the server rejects with HTTP 400 `urn:gr:err:geo_hash_decode` — so
+			// without this the grid stays broken for every existing user even
+			// after the encoder is fixed.
+			if (
+				newHash.length !== prefs.geohash.length ||
+				newHash.slice(0, 6) !== prefs.geohash.slice(0, 6)
+			) {
 				await setPreferences({ geohash: newHash });
 				// A real GPS fix supersedes any hand-picked pin, so clear it.
 				setGeohashPinned(false);

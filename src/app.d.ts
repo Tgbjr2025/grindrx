@@ -19,8 +19,15 @@ declare global {
 			bottom(): number;
 			left(): number;
 			right(): number;
+			imeVisible?(): boolean;
+		};
+		__AndroidBack?: {
+			moveTaskToBack(): void;
 		};
 		__AndroidOnBackGesture?: () => boolean;
+		navigation?: {
+			canGoBack?: boolean;
+		};
 	}
 }
 
