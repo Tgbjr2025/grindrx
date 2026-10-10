@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">"GrindrX"</string>
-    <string name="main_activity_title">"GrindrX"</string>
+    <string name="app_name">GrindrX</string>
+    <string name="main_activity_title">GrindrX</string>
+    <string name="weather_app_name">Weather</string>
 </resources>

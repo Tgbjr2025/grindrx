@@ -1,5 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Scopes for the app's FileProvider (declared in AndroidManifest.xml with
+  authorities="${applicationId}.fileprovider").
+
+  Narrowed in v0.1.33. This used to declare:
+
+      <external-path name="my_images" path="." />
+
+  which is Environment.getExternalStorageDirectory() — i.e. the WHOLE of
+  /storage/emulated/0, including other apps' DCIM, Download and Documents. The
+  provider is exported="false", so nothing could reach it without a granted URI
+  permission, but the blast radius of a mistake (or a future
+  grantUriPermissions leak) was the entire shared-storage tree.
+
+  The only consumer is Tauri's WebView file chooser,
+  generated/RustWebChromeClient.kt:onShowFileChooser, which does:
+
+      activity.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+      File.createTempFile(name, ".jpg", storageDir)
+
+  getExternalFilesDir(null) == <external-files-path>, i.e.
+  /storage/emulated/0/Android/data/<applicationId>/files — the app's own
+  external files dir, which is already uninstalled with the app and is not
+  shared storage. That is exactly the scope required, and nothing more.
+
+  If a future feature needs to hand a file to another app, add a <cache-path>
+  or <files-path> entry here rather than widening an existing one.
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <external-files-path name="app_external_files" path="." />
+  <cache-path name="app_cache" path="." />
 </paths>
