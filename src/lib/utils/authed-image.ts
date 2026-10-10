@@ -618,7 +618,7 @@ export async function fetchAuthedBytes(
 		// happens: success, `invoke` rejection, the 12s timeout, a decode throw
 		// and an abort all land here. `release` is undefined only on the
 		// never-acquired abort path, where the optional call is a no-op.
-		// MUTATION-1: release removed
+		release?.();
 	}
 }
 
