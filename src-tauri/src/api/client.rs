@@ -1,6 +1,7 @@
 use reqwest::header::HeaderMap;
 use reqwest::Client;
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
@@ -38,6 +39,38 @@ pub struct GrindrClient {
     pub(super) session: RwLock<Option<Session>>,
     pub(super) refresh_lock: Mutex<()>,
     pub user_agent: RwLock<String>,
+    /// P1-008: single-flight gate for `rotate_api_params`. Held for the whole
+    /// rotation (device regeneration -> keystore write -> client rebuild ->
+    /// header swap -> epoch bump), so two callers can never interleave a swap
+    /// of the device identity. The loser of the race does not spin here
+    /// waiting for nothing: it gets the winner's `RotateResult` (see
+    /// `rotate_generation`).
+    ///
+    /// It lives on the client and not on `AppState` next to
+    /// `try_acquire_rotate_permit` because `AppState` is built with a struct
+    /// literal in `lib.rs::run`, so a new field there is a cross-module edit
+    /// for something that has nothing to do with `AppState`'s own state. The
+    /// rotation mutates *this* object's headers, so this is also where the
+    /// coherence check belongs: a `RotateResult` read out of `rotate_flight`
+    /// is by construction the identity currently installed on `http` /
+    /// `user_agent`.
+    rotate_flight: Mutex<RotateSlot>,
+    /// P1-008: the idempotency key. Monotonic counter of COMPLETED rotations.
+    ///
+    /// A caller snapshots this *before* it queues on `rotate_flight`; if, by
+    /// the time it holds the gate, `rotate_flight.last` carries a HIGHER
+    /// generation, then a rotation that began after this caller arrived has
+    /// already finished, and this caller returns that result instead of
+    /// starting a second one. That is the whole "idempotency key" mechanism:
+    /// "give me the result of rotation N, or produce N+1".
+    ///
+    /// It is an atomic rather than a field of `RotateSlot` precisely because
+    /// it must be readable WITHOUT the gate: reading it under the gate would
+    /// block until the in-flight rotation finished and then hand the reader
+    /// the winner's own generation, so every caller would conclude "no one
+    /// rotated while I waited" and rotate again. Snapshot-then-queue is what
+    /// makes the coalescing correct.
+    rotate_generation: AtomicU64,
     /// B5: `Some(reason)` when secure storage could not be reached at startup.
     ///
     /// `storage::init_keyring` only `eprintln!`s when `Store::new()` fails, so
@@ -49,7 +82,46 @@ pub struct GrindrClient {
     pub keyring_error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// P1-008: state shared by every `rotate_api_params` caller while one of them
+/// is rotating.
+#[derive(Default)]
+struct RotateSlot {
+    /// The most recent COMPLETED rotation: `(generation, what it produced)`.
+    ///
+    /// Only successes are published, and only under `rotate_flight`. A caller
+    /// that finds `generation > its own snapshot` therefore knows the rotation
+    /// genuinely finished and its result is the one currently installed on the
+    /// client — which is the value it is contractually required to return
+    /// (FIX 6 in `rotate_api_params`: return the NEW values, not the old
+    /// ones). A FAILED rotation publishes nothing, so a waiter falls through
+    /// to the cooldown guard and is rejected exactly as it is today; there is
+    /// no error to hand out, and inventing one would need `AppError: Clone`
+    /// just to relabel it.
+    last: Option<(u64, RotateResult)>,
+}
+
+impl RotateSlot {
+    /// The generation and result of a rotation that COMPLETED after a caller
+    /// which snapshotted the generation as `key` arrived — i.e. "coalesce onto
+    /// this instead of rotating again". `None` means this caller is the one
+    /// that has to do the work (or that whatever happened is older than its own
+    /// arrival).
+    fn completed_since(&self, key: u64) -> Option<(u64, &RotateResult)> {
+        self.last
+            .as_ref()
+            .filter(|(generation, _)| *generation > key)
+            .map(|(generation, result)| (*generation, result))
+    }
+
+    /// Publish a finished rotation. Must be called while holding `rotate_flight`
+    /// and AFTER the new headers are installed, so a waiter can never observe
+    /// a result that is not yet the identity the client is actually using.
+    fn publish(&mut self, generation: u64, result: RotateResult) {
+        self.last = Some((generation, result));
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct RotateResult {
     #[serde(rename = "user-agent")]
     pub user_agent: String,
@@ -154,6 +226,8 @@ impl GrindrClient {
             http: RwLock::new(http),
             session: RwLock::new(session),
             refresh_lock: Mutex::new(()),
+            rotate_flight: Mutex::new(RotateSlot::default()),
+            rotate_generation: AtomicU64::new(0),
             user_agent: RwLock::new(user_agent),
             keyring_error,
         })
@@ -180,9 +254,52 @@ impl GrindrClient {
 pub async fn rotate_api_params(
     state: tauri::State<'_, AppState>,
 ) -> Result<RotateResult, AppError> {
-    // Rate limit: max 1 call per 60 seconds with exponential backoff after retries
-    state.try_acquire_rotate_permit()?;
+    // NOTE: `state.client()` moved ABOVE the cooldown guard. It has to: the
+    // single-flight key lives on the client. Behaviour delta is an error-code
+    // swap in a doubly-broken state (client not yet constructed AND inside the
+    // cooldown) — `NotInitialized` is the more accurate of the two, and neither
+    // branch ever rotated anything.
+
+    // --- P1-008: single-flight + idempotency key -----------------------------
+    //
+    // Before this, two concurrent callers produced: winner = new device
+    // identity, loser = `Err("rotate_api_params rate limited: 60s cooldown")`,
+    // raised by `try_acquire_rotate_permit`. The rate-limit guard prevented a
+    // duplicate rotation but it could not tell the loser that a rotation
+    // carrying exactly the answer it asked for had just completed — so the
+    // user-visible result was a spurious failure toast next to a successful
+    // one. Realistic trigger: the "Grindr blocks your requests" dialog fires
+    // `rotate_api_params` while anything else in the app decides to rotate too,
+    // and both land inside the same few milliseconds.
+    //
+    // Order matters and is the reverse of the guard's: snapshot the key ->
+    // queue on the gate -> coalesce if someone beat us -> only then spend a
+    // permit. A coalesced caller consumes no cooldown, so it cannot starve a
+    // genuine rotation, and it never touches the keyring.
     let client = state.client()?;
+    let idempotency_key = client.rotate_generation.load(Ordering::SeqCst);
+    let mut slot = client.rotate_flight.lock().await;
+
+    if let Some((generation, result)) = slot.completed_since(idempotency_key) {
+        // A rotation that started after we arrived has already finished. Its
+        // result IS the identity installed on the client right now, so this is
+        // not a stale read — it is the correct answer, and the same one the
+        // winner is about to receive.
+        eprintln!(
+            "[client] rotate_api_params: coalesced onto rotation gen {generation} \
+             (my snapshot was {idempotency_key}); returning its result without \
+             rotating and without spending a cooldown permit"
+        );
+        return Ok(result.clone());
+    }
+
+    // Rate limit: max 1 rotation per 60 seconds. This is still the outer bound
+    // on how often a rotation may START; the single-flight above is what stops
+    // callers fighting over it. (The old comment here claimed "with exponential
+    // backoff after retries" — there is no retry loop and never was; a caller
+    // that fails is simply told so. See the P1-008 audit on
+    // `AppState::try_acquire_rotate_permit`.)
+    state.try_acquire_rotate_permit()?;
 
     let device = DeviceInfo::default();
     // B4: `DeviceStorage::save` is a synchronous keystore write. This is an
@@ -225,13 +342,29 @@ pub async fn rotate_api_params(
     // User-Agent into a permanently dead WebSocket. This is the same pair
     // `login` uses. Epoch first, then notify, so the waiter observes the new
     // value.
+    //
+    // It is also what wakes a WebSocket that P1-004 parked: an exhausted
+    // reconnect budget is replenished by the next `auth_notify` poke, so a
+    // rotation doubles as a "the network changed, try again" signal.
     state.bump_ws_epoch();
     state.auth_notify.notify_one();
 
-    Ok(RotateResult {
+    let result = RotateResult {
         user_agent: new_ua,
         l_device_info: new_device_info,
-    })
+    };
+
+    // Publish LAST, under the gate we still hold: a caller waiting on
+    // `rotate_flight` must not be able to observe a result for a rotation that
+    // has not finished swapping `http`/`user_agent` yet, nor one whose epoch
+    // bump has not happened. Bumping the generation here — after the work, not
+    // before it — is what makes "started after I arrived" mean "completed
+    // while I waited".
+    let generation = client.rotate_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    slot.publish(generation, result.clone());
+    eprintln!("[client] rotate_api_params: completed rotation gen {generation}");
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -278,5 +411,71 @@ mod tests {
         );
 
         server.join().expect("test server thread panicked");
+    }
+
+    fn sample(id: &str) -> RotateResult {
+        RotateResult {
+            user_agent: format!("ua-{id}"),
+            l_device_info: format!("di-{id}"),
+        }
+    }
+
+    /// P1-008 acceptance criterion "idempotency key": a caller that snapshotted
+    /// generation `k` and finds a rotation published at a HIGHER generation has
+    /// already been served — it must return that result rather than rotate
+    /// again. This is the exact decision `rotate_api_params` makes on the
+    /// coalescing path.
+    #[test]
+    fn concurrent_caller_coalesces_onto_the_in_flight_rotation() {
+        let mut slot = RotateSlot::default();
+
+        // Nobody has rotated yet: this caller must do the work itself.
+        assert!(slot.completed_since(0).is_none());
+
+        // The winner finishes and publishes generation 1.
+        slot.publish(1, sample("winner"));
+
+        // The loser snapshotted the generation BEFORE the winner published, so
+        // it coalesces onto the winner's result...
+        let loser_key = 0;
+        let coalesced = slot
+            .completed_since(loser_key)
+            .expect("a rotation that completed after the caller's arrival must satisfy it");
+
+        // ...and receives the SAME values the winner returns, which are the
+        // values now installed on the client (FIX 6: new values, not old).
+        // Compared field-wise rather than with `assert_eq!` on the struct so
+        // `RotateResult` does not need a `PartialEq` impl added to its public
+        // derive list for the sake of a test.
+        assert_eq!(coalesced.1.user_agent, "ua-winner");
+        assert_eq!(coalesced.1.l_device_info, "di-winner");
+        assert_eq!(coalesced.0, 1, "coalescing must report the generation it joined");
+    }
+
+    /// The complementary case: a caller that arrives AFTER the rotation
+    /// completed snapshotted the NEW generation, so it is not coalesced and
+    /// proceeds to the cooldown guard. Without the strict `>` this would return
+    /// a stale answer forever and the cooldown would never fire.
+    #[test]
+    fn caller_arriving_after_completion_is_not_coalesced() {
+        let mut slot = RotateSlot::default();
+        slot.publish(1, sample("first"));
+        assert!(
+            slot.completed_since(1).is_none(),
+            "arriving after the publish must not be treated as satisfied by it"
+        );
+        assert!(slot.completed_since(0).is_some(), "...but an earlier arrival must be");
+    }
+
+    /// A second, later rotation supersedes the first for callers that were
+    /// waiting across both, and the slot never accumulates more than one result.
+    #[test]
+    fn newest_rotation_supersedes_the_previous_one() {
+        let mut slot = RotateSlot::default();
+        slot.publish(1, sample("first"));
+        slot.publish(2, sample("second"));
+        assert_eq!(slot.completed_since(0).unwrap().1.user_agent, "ua-second");
+        assert_eq!(slot.completed_since(1).unwrap().1.user_agent, "ua-second");
+        assert!(slot.completed_since(2).is_none());
     }
 }

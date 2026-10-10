@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -20,6 +21,55 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(45);
 /// Cap the TCP+TLS+WS handshake. Without this, a half-open connection
 /// (common on Android Doze / captive portals) wedges the reconnect loop forever.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Base of the reconnect ladder: the delay before the first retry, and the
+/// value the ladder is reset to once a connection proves itself (see
+/// `note_liveness`). Named because `run_ws_loop` now reads the *current* value
+/// of the ladder to tell "no penalty accrued yet" from "we have been failing".
+const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+
+/// P1-004: ceiling on the base backoff ladder. The ladder doubles from
+/// `INITIAL_BACKOFF`; without a ceiling an outage that lasts long enough walks
+/// it into the hours and the socket never returns within the process lifetime.
+/// This is the cap the register asks for. Note the ladder is jittered *before*
+/// it is slept (see `jitter`), so an actual sleep at the ceiling lands in
+/// 0.8x..1.2x of this value, i.e. 48..72s — the ceiling bounds the ladder, the
+/// jitter is deliberately allowed to spill past it, because spreading a fleet
+/// that is recovering from one server blip is worth more than a hard wall-clock
+/// bound (that is the whole reason `jitter` exists).
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// P1-004: how many CONSECUTIVE failed connection cycles the loop will spend
+/// before it gives up and parks. Default 10, which at the ladder above is
+/// 1+2+4+8+16+32+60*4 = 303s of base backoff (~4..6 min with jitter) — long
+/// enough to ride out a tunnel, a captive portal or an Android Doze window,
+/// short enough that a genuinely dead endpoint stops burning radio + battery
+/// for the rest of the session. Override per-process with the env var below.
+const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// P1-004: operator override for `DEFAULT_MAX_RECONNECT_ATTEMPTS`. `0` means
+/// UNBOUNDED, which restores the pre-fix infinite-retry behaviour for anyone
+/// who needs it (field debug on a device that legitimately stays offline for
+/// hours) without a rebuild. Parsed once per process.
+const MAX_RECONNECT_ATTEMPTS_ENV: &str = "GRINDX_WS_MAX_RECONNECT_ATTEMPTS";
+
+/// Terminal event emitted when the reconnect budget is exhausted, so the
+/// frontend can surface "the socket gave up" instead of leaving the user with a
+/// permanently greyed-out connection status and no explanation.
+///
+/// Payload shape (stable — the WebView is the only consumer and it is not
+/// written yet):
+/// ```json
+/// { "attempts": 10, "maxAttempts": 10, "backoffSecs": 60,
+///   "lastError": "HTTP error: WS connection closed by server" }
+/// ```
+/// `maxAttempts` is always a number: the event cannot fire on the unbounded
+/// setting, because there is nothing to exhaust. `backoffSecs` is the ladder
+/// value at the moment of giving up, not the next sleep (there is no next
+/// sleep — the loop is parked). Recovery is external: a `login`, a
+/// `ws_connect` invoke, or a `rotate_api_params` (all three poke `auth_notify`)
+/// replenishes the budget and restarts the ladder.
+const RECONNECT_EXHAUSTED_EVENT: &str = "ws:reconnect_exhausted";
 
 /// B2: body used instead of the real content while the app lock is engaged.
 /// Must carry no user content — it is rendered on a locked screen.
@@ -65,14 +115,165 @@ fn jitter(d: Duration) -> Duration {
     d.mul_f64(factor)
 }
 
+/// P1-004: the reconnect budget, resolved once per process.
+/// `Some(n)` = stop after `n` consecutive failures, `None` = unbounded.
+/// An unparseable value falls back to the default rather than silently
+/// disabling the cap: a typo in a debug env var must not quietly reintroduce
+/// the infinite retry loop this was added to stop.
+fn max_reconnect_attempts() -> Option<u32> {
+    static BUDGET: OnceLock<Option<u32>> = OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        parse_max_reconnect_attempts(std::env::var(MAX_RECONNECT_ATTEMPTS_ENV).ok().as_deref())
+    })
+}
+
+/// Pure half of `max_reconnect_attempts`, split out so the "what does a bad
+/// value do" decision is testable without mutating the real process
+/// environment (which `OnceLock` would freeze for every later test).
+fn parse_max_reconnect_attempts(raw: Option<&str>) -> Option<u32> {
+    match raw {
+        None => Some(DEFAULT_MAX_RECONNECT_ATTEMPTS),
+        Some(raw) => match raw.trim().parse::<u32>() {
+            // Explicit opt-out back to the pre-fix infinite retry.
+            Ok(0) => None,
+            Ok(n) => Some(n),
+            // Empty string, a negative number, "ten", a trailing "s" — all of
+            // these mean the operator believes they configured something. Fall
+            // back to the default and say so, rather than treating the cap as
+            // disabled.
+            Err(_) => {
+                eprintln!(
+                    "[ws] ignoring {MAX_RECONNECT_ATTEMPTS_ENV}={raw:?} (not a non-negative \
+                     integer); using default {DEFAULT_MAX_RECONNECT_ATTEMPTS}"
+                );
+                Some(DEFAULT_MAX_RECONNECT_ATTEMPTS)
+            }
+        },
+    }
+}
+
+/// P1-004: how many consecutive failed connection cycles the loop may spend
+/// before it gives up, and whether it is currently parked.
+///
+/// Kept as a type rather than two loose locals in `run_ws_loop` because the
+/// acceptance criterion is "max attempts configured", and this is the thing
+/// that makes that claim checkable rather than asserted.
+struct ReconnectBudget {
+    /// `None` = unbounded (operator opt-out via the env var).
+    max: Option<u32>,
+    attempts: u32,
+    /// True between giving up and the next external wake. The loop parks on
+    /// `auth_notify.notified()` while set, WITHOUT the self-`notify_one()` the
+    /// retry path uses, so it cannot wake itself — the budget is only ever
+    /// replenished by something outside this task.
+    parked: bool,
+}
+
+impl ReconnectBudget {
+    fn new(max: Option<u32>) -> Self {
+        Self {
+            max,
+            attempts: 0,
+            parked: false,
+        }
+    }
+
+    /// The connection that just ended carried real traffic, so what we are
+    /// looking at is the FIRST failure of a new outage rather than the tail of
+    /// an old one. Without this, an app that reconnects successfully every few
+    /// hours (exactly what a backgrounded phone on a flaky network does) would
+    /// eventually park itself for good on a cumulative count.
+    fn note_live_connection(&mut self) {
+        self.attempts = 0;
+    }
+
+    /// `NotInitialized` / `Auth`: there is nothing to connect with *yet*. Not a
+    /// transport failure, so not charged — the loop parks on `auth_notify`
+    /// until a login arrives, and counting these would let one session's missing
+    /// credential exhaust a later session's budget.
+    fn note_auth_wait(&mut self) {
+        self.attempts = 0;
+    }
+
+    /// Something outside this task poked `auth_notify` while we were parked
+    /// (a `login`, a `ws_connect` invoke, or a `rotate_api_params`). All three
+    /// mean "try again", with a full budget and a reset ladder.
+    fn replenish(&mut self) {
+        self.attempts = 0;
+        self.parked = false;
+    }
+
+    /// Charge one failed connection cycle. Returns true when the budget is
+    /// spent and the loop must park. Saturating so a `u32::MAX` budget cannot
+    /// wrap into "attempts = 0" and hand itself a free retry.
+    fn charge_failure(&mut self) -> bool {
+        self.attempts = self.attempts.saturating_add(1);
+        let spent = matches!(self.max, Some(max) if self.attempts >= max);
+        if spent {
+            self.parked = true;
+        }
+        spent
+    }
+
+    fn attempts(&self) -> u32 {
+        self.attempts
+    }
+
+    fn is_parked(&self) -> bool {
+        self.parked
+    }
+}
+
+/// A live frame from the server is the only evidence that a connection is
+/// healthy, so it is the single place that both resets the ladder and marks
+/// the connection as having proven itself. `stable` is read back by
+/// `run_ws_loop` to decide whether a later disconnect starts a NEW outage
+/// (fresh budget) or continues the current one.
+fn note_liveness(backoff: &mut Duration, stable: &mut bool) {
+    *backoff = INITIAL_BACKOFF;
+    *stable = true;
+}
+
 async fn run_ws_loop(app: AppHandle) {
     let state = app.state::<AppState>();
-    let mut backoff = Duration::from_secs(1);
+    let mut backoff = INITIAL_BACKOFF;
+
+    // P1-004: this loop used to be `loop { connect; sleep(jitter(backoff)); backoff =
+    // min(backoff*2, 30s) }` with no counter anywhere, so a dead endpoint meant one
+    // wakeup every 30s for the entire life of the process — and `ws:disconnected`
+    // was re-emitted on every one of them, which is indistinguishable from a
+    // momentary blip to the frontend. The loop is now bounded and says so.
+    let max_attempts = max_reconnect_attempts();
+    match max_attempts {
+        Some(n) => eprintln!(
+            "[ws] reconnect budget: {n} consecutive attempts, backoff ceiling {}s \
+             (set {MAX_RECONNECT_ATTEMPTS_ENV}=0 for unbounded)",
+            MAX_BACKOFF.as_secs()
+        ),
+        None => eprintln!(
+            "[ws] {MAX_RECONNECT_ATTEMPTS_ENV}=0: reconnect attempts are UNBOUNDED \
+             (pre-P1-004 behaviour)"
+        ),
+    }
+
+    let mut budget = ReconnectBudget::new(max_attempts);
 
     loop {
         state.auth_notify.notified().await;
 
-        match connect_and_run(&app, &mut backoff).await {
+        if budget.is_parked() {
+            // Reaching here means `auth_notify` fired, and the parked loop never
+            // notifies itself — so this is a login, a `ws_connect` invoke, or a
+            // `rotate_api_params`.
+            budget.replenish();
+            backoff = INITIAL_BACKOFF;
+            eprintln!("[ws] reconnect budget replenished by an external wake — retrying");
+        }
+
+        // Did the connection that is ending right now carry real traffic?
+        let mut stable = false;
+
+        match connect_and_run(&app, &mut backoff, &mut stable).await {
             WsOutcome::ChannelClosed => {
                 // Command sender dropped — application is shutting down.
                 break;
@@ -80,24 +281,56 @@ async fn run_ws_loop(app: AppHandle) {
             WsOutcome::Disconnected(e @ (AppError::NotInitialized | AppError::Auth(_))) => {
                 eprintln!("[ws] auth error, waiting for login: {e}");
                 app.emit("ws:disconnected", ()).ok();
-                backoff = Duration::from_secs(1);
+                backoff = INITIAL_BACKOFF;
+                budget.note_auth_wait();
             }
             WsOutcome::Disconnected(e) => {
                 eprintln!("[ws] error: {e}");
                 app.emit("ws:disconnected", ()).ok();
+
+                if stable {
+                    budget.note_live_connection();
+                }
+
+                if budget.charge_failure() {
+                    let attempts = budget.attempts();
+                    eprintln!(
+                        "[ws] giving up after {attempts} consecutive reconnect attempts \
+                         (last error: {e}); parked until login / ws_connect / rotation"
+                    );
+                    app.emit(
+                        RECONNECT_EXHAUSTED_EVENT,
+                        serde_json::json!({
+                            "attempts": attempts,
+                            "maxAttempts": max_attempts,
+                            "backoffSecs": backoff.as_secs(),
+                            "lastError": e.to_string(),
+                        }),
+                    )
+                    .ok();
+                    // NO `auth_notify.notify_one()` here — that call is what
+                    // makes this loop retry itself, and calling it here would
+                    // resurrect the infinite loop this budget exists to stop.
+                    continue;
+                }
+
                 state.auth_notify.notify_one();
                 // Jitter the backoff. A deterministic 1->2->4 ladder means a fleet
                 // disconnected by one server blip retries in lockstep and hammers
                 // the server again the instant it recovers. +/-20% randomises it.
                 let jittered = jitter(backoff);
                 sleep(jittered).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
+                backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         }
     }
 }
 
-async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
+async fn connect_and_run(
+    app: &AppHandle,
+    backoff: &mut Duration,
+    stable: &mut bool,
+) -> WsOutcome {
     let state = app.state::<AppState>();
 
     // Snapshot the session epoch BEFORE we start using credentials. Everything
@@ -229,7 +462,7 @@ async fn connect_and_run(app: &AppHandle, backoff: &mut Duration) -> WsOutcome {
         Err(_) => String::new(),
     };
 
-    run_message_loop(&mut write, &mut read, cmd_rx, &our_profile_id, app, backoff).await
+    run_message_loop(&mut write, &mut read, cmd_rx, &our_profile_id, app, backoff, stable).await
     // `guard` (and thus the receiver) is dropped here, releasing the lock.
 }
 
@@ -240,6 +473,7 @@ async fn run_message_loop(
     our_profile_id: &str,
     app: &AppHandle,
     backoff: &mut Duration,
+    stable: &mut bool,
 ) -> WsOutcome {
     let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
     heartbeat.tick().await; // consume the immediate first tick
@@ -287,7 +521,8 @@ async fn run_message_loop(
                         // ws-backoff-reset-on-handshake: a real frame from the
                         // server (not just a completed handshake) is what proves
                         // the connection is stable — reset here, not on connect.
-                        *backoff = Duration::from_secs(1);
+                        // P1-004: same signal replenishes the reconnect budget.
+                        note_liveness(backoff, stable);
                         if let Ok(val) = serde_json::from_str::<Value>(&text) {
                             if let Some(event_type) = val["type"].as_str() {
                                 let safe_type = event_type.replace('.', "_");
@@ -323,7 +558,7 @@ async fn run_message_loop(
                     }
                     Some(Ok(Message::Ping(data))) => {
                         // The server pinging us is real bidirectional traffic too.
-                        *backoff = Duration::from_secs(1);
+                        note_liveness(backoff, stable);
                         if let Err(e) = write.send(Message::Pong(data)).await {
                             return WsOutcome::Disconnected(AppError::Http(e.to_string()));
                         }
@@ -331,7 +566,7 @@ async fn run_message_loop(
                     Some(Ok(Message::Pong(_))) => {
                         // A Pong answering our own heartbeat Ping is the "first
                         // successful heartbeat round-trip" stability signal.
-                        *backoff = Duration::from_secs(1);
+                        note_liveness(backoff, stable);
                         // FIX 1: clear the flag — pong arrived in the normal message loop.
                         waiting_for_pong = false;
                     }
@@ -349,7 +584,7 @@ async fn run_message_loop(
                     }
                     Some(Ok(_)) => {
                         // Any other frame kind (e.g. Binary) still proves liveness.
-                        *backoff = Duration::from_secs(1);
+                        note_liveness(backoff, stable);
                     }
                 }
 
@@ -580,11 +815,11 @@ pub async fn ws_send(
 
     // The channel is bounded (64) and its receiver lives for the process
     // lifetime, so `send` never returns Err and the old "WS not connected"
-    // error path was unreachable. With the socket down through a 30s backoff
-    // plus connect attempts, the 65th command would await forever and the
-    // Tauri IPC promise would never settle — a hung `await invoke("ws_send")`
-    // with no error and no timeout. Bound it, and surface the timeout instead
-    // of hanging.
+    // error path was unreachable. With the socket down through a backoff (P1-004
+    // raised the ceiling to `MAX_BACKOFF`, 60s) plus connect attempts, the 65th
+    // command would await forever and the Tauri IPC promise would never settle
+    // — a hung `await invoke("ws_send")` with no error and no timeout. Bound it,
+    // and surface the timeout instead of hanging.
     const WS_SEND_TIMEOUT: Duration = Duration::from_secs(5);
     match tokio::time::timeout(WS_SEND_TIMEOUT, state.ws_tx.send(command)).await {
         Ok(Ok(())) => Ok(()),
@@ -592,5 +827,156 @@ pub async fn ws_send(
         Err(_) => Err(AppError::Http(
             "WS send timed out — the socket is not accepting commands".to_owned(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P1-004 acceptance criterion "max attempts configured": the loop must
+    /// actually stop, and it must stop AT the configured number rather than
+    /// one short or one long.
+    #[test]
+    fn budget_parks_exactly_at_the_configured_attempt_count() {
+        let mut budget = ReconnectBudget::new(Some(3));
+        assert!(!budget.charge_failure(), "attempt 1 of 3 must retry");
+        assert!(!budget.charge_failure(), "attempt 2 of 3 must retry");
+        assert!(budget.charge_failure(), "attempt 3 of 3 must park");
+        assert_eq!(budget.attempts(), 3);
+        assert!(budget.is_parked());
+    }
+
+    /// The default must be a real bound, not a token value. This is the
+    /// regression guard for the actual defect: the pre-fix loop had NO counter
+    /// and re-emitted `ws:disconnected` forever.
+    #[test]
+    fn default_budget_is_bounded_and_generous() {
+        let mut budget = ReconnectBudget::new(Some(DEFAULT_MAX_RECONNECT_ATTEMPTS));
+        for i in 1..DEFAULT_MAX_RECONNECT_ATTEMPTS {
+            assert!(
+                !budget.charge_failure(),
+                "must not park before attempt {DEFAULT_MAX_RECONNECT_ATTEMPTS} (parked at {i})"
+            );
+        }
+        assert!(budget.charge_failure());
+    }
+
+    /// The opt-out really is opt-out, and it is the ONLY way to get unbounded
+    /// behaviour — a bad env value must not be able to produce it.
+    #[test]
+    fn env_var_controls_the_bound() {
+        assert_eq!(parse_max_reconnect_attempts(None), Some(DEFAULT_MAX_RECONNECT_ATTEMPTS));
+        assert_eq!(parse_max_reconnect_attempts(Some("0")), None, "0 = unbounded opt-out");
+        assert_eq!(parse_max_reconnect_attempts(Some("7")), Some(7));
+        assert_eq!(parse_max_reconnect_attempts(Some(" 7 ")), Some(7), "whitespace tolerated");
+        // Garbage in must not silently disable the cap.
+        for bad in ["", "  ", "-1", "ten", "10s", "1e3"] {
+            assert_eq!(
+                parse_max_reconnect_attempts(Some(bad)),
+                Some(DEFAULT_MAX_RECONNECT_ATTEMPTS),
+                "{bad:?} must fall back to the default bound, never to unbounded"
+            );
+        }
+
+        let mut unbounded = ReconnectBudget::new(parse_max_reconnect_attempts(Some("0")));
+        for _ in 0..10_000 {
+            assert!(!unbounded.charge_failure());
+        }
+        assert!(!unbounded.is_parked());
+    }
+
+    /// A connection that carried traffic means the NEXT failure starts a new
+    /// outage. Without this the count is cumulative over the whole process
+    /// lifetime and a phone that reconnects fine all day eventually parks.
+    #[test]
+    fn live_traffic_replenishes_the_budget() {
+        let mut budget = ReconnectBudget::new(Some(3));
+        budget.charge_failure();
+        budget.charge_failure();
+        budget.note_live_connection();
+        assert!(!budget.charge_failure(), "post-liveness failure is attempt 1 of 3");
+        assert_eq!(budget.attempts(), 1);
+    }
+
+    /// An auth wait is not a transport failure and must not be charged —
+    /// otherwise a signed-out hour burns the budget of the session that follows.
+    #[test]
+    fn auth_wait_is_not_charged() {
+        let mut budget = ReconnectBudget::new(Some(2));
+        budget.charge_failure();
+        budget.note_auth_wait();
+        assert_eq!(budget.attempts(), 0);
+        assert!(!budget.charge_failure());
+    }
+
+    /// After parking, the budget is replenished ONLY by an external wake. This
+    /// is the mechanism that makes the loop stop: while parked, `run_ws_loop`
+    /// skips its own `auth_notify.notify_one()`, so nothing inside the task can
+    /// wake it.
+    #[test]
+    fn parked_budget_needs_an_external_wake_to_restart() {
+        let mut budget = ReconnectBudget::new(Some(1));
+        assert!(budget.charge_failure());
+        assert!(budget.is_parked());
+        budget.replenish();
+        assert!(!budget.is_parked());
+        assert_eq!(budget.attempts(), 0);
+    }
+
+    /// A `u32::MAX` budget must not be able to wrap its own counter into a
+    /// free retry — `saturating_add` is what prevents that.
+    #[test]
+    fn attempt_counter_cannot_wrap() {
+        let mut budget = ReconnectBudget::new(Some(u32::MAX));
+        budget.attempts = u32::MAX - 1;
+        // Reaches the configured ceiling, so the budget IS spent here.
+        assert!(budget.charge_failure());
+        assert_eq!(budget.attempts(), u32::MAX);
+        assert!(budget.is_parked());
+
+        // The failure that must not happen: a further charge wrapping the
+        // counter back to 0, which would both un-park the loop and reset the
+        // count — an unbounded retry loop wearing a u32::MAX disguise.
+        budget.replenish();
+        budget.attempts = u32::MAX;
+        budget.charge_failure();
+        assert_eq!(
+            budget.attempts(),
+            u32::MAX,
+            "counter must saturate at u32::MAX, never wrap to 0"
+        );
+    }
+
+    /// Backoff ladder acceptance criterion: the base never exceeds the ceiling.
+    /// Replays the exact expression in `run_ws_loop` (it is not extracted to a
+    /// helper precisely to keep the loop readable — this test is what stops the
+    /// two from drifting apart silently).
+    #[test]
+    fn backoff_ladder_is_capped() {
+        let mut backoff = INITIAL_BACKOFF;
+        for _ in 0..64 {
+            assert!(
+                backoff <= MAX_BACKOFF,
+                "ladder base {backoff:?} escaped MAX_BACKOFF {MAX_BACKOFF:?}"
+            );
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+        }
+        assert_eq!(backoff, MAX_BACKOFF);
+    }
+
+    /// Jitter may spill past the ceiling by up to 20% (documented in
+    /// `MAX_BACKOFF`); it must never exceed that, and it must never invert the
+    /// ladder into a zero-length sleep.
+    #[test]
+    fn jitter_stays_within_its_documented_band() {
+        for _ in 0..1_000 {
+            let j = jitter(MAX_BACKOFF);
+            assert!(
+                j >= MAX_BACKOFF.mul_f64(0.8) && j <= MAX_BACKOFF.mul_f64(1.2),
+                "jitter(MAX_BACKOFF) = {j:?} outside the documented 0.8x..1.2x band"
+            );
+            assert!(jitter(INITIAL_BACKOFF) > Duration::ZERO);
+        }
     }
 }
