@@ -147,14 +147,6 @@ class WsState {
 		);
 
 		track(
-			// A server-side WS error string is a protocol-level diagnostic, not a
-			// chat payload — safe to log, and necessary to debug a dead socket.
-			listen<string>("ws:ws_error", (event) => {
-				console.error("[ws] server error", event.payload);
-			}),
-		);
-
-		track(
 			// The budget parked itself: no further automatic attempt will be made
 			// until something replenishes it. A payload that fails its schema is
 			// logged rather than half-applied, so a malformed emit degrades to
