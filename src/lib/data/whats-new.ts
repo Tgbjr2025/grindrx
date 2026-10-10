@@ -3,6 +3,12 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.50": [
+		"New: app updates are now checked against more than one place, so a hiccup at one server no longer means missing out on updates.",
+		"Fixed: signing out no longer gets you stuck.",
+		"Fixed: photos no longer stall when you scroll quickly.",
+		"Only signed-out devices send usage statistics, and only if you agree.",
+	],
 	"0.1.49": [
 		"Fixed: the app could get stuck showing the grid with no way to sign in. Signing out works again, including after a restart.",
 		"Fixed: photos stopped loading in the grid and in chats when you scrolled quickly.",
