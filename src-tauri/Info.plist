@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+		<string>fetch</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>GrindrX uses your location to show nearby profiles and to attach your position to a chat message when you choose to share it.</string>
 	<key>NSMicrophoneUsageDescription</key>
