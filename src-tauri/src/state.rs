@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::{mpsc, Notify};
 
@@ -28,8 +28,15 @@ pub struct AppState {
     /// loop compares it as the FIRST statement of every iteration and again
     /// after each inbound frame is handled. See `api::ws::run_message_loop`.
     pub ws_epoch: Arc<AtomicU64>,
-    /// Last successful rotate_api_params call timestamp (UNIX millis).
-    /// Used for rate limiting: max 1 call per ROTATE_COOLDOWN_MS.
+    /// Timestamp of the last `rotate_api_params` permit ACQUISITION (UNIX
+    /// millis). Used for rate limiting: max 1 acquisition per
+    /// `ROTATE_COOLDOWN_MS`.
+    ///
+    /// Written at *acquisition*, not on success — deliberately unchanged, and
+    /// the reason is spelled out on `try_acquire_rotate_permit`. Callers that
+    /// coalesce onto someone else's in-flight rotation must NOT stamp it: they
+    /// are not starting a rotation, and if they stamped it they would extend
+    /// the cooldown of a rotation they had nothing to do with.
     pub rotate_last_called: Arc<AtomicU64>,
     /// Wakeup hint only — the epoch above is the source of truth.
     ///
@@ -113,9 +120,55 @@ impl AppState {
 
     // Rate limiting for rotate_api_params
     const ROTATE_COOLDOWN_MS: u64 = 60_000; // 60 seconds
-    const ROTATE_MAX_RETRIES: u32 = 5;
 
     /// Try to acquire rotation permit. Returns Ok(()) if allowed, Err if rate limited.
+    ///
+    /// P1-008 AUDIT (2026-10-10). The finding was "`rotate_api_params` called
+    /// without guard (race on rotation)". The guard below is in fact already
+    /// correct for its one job — preventing two *concurrent* callers from both
+    /// rotating — and the audit is recorded here because the reasoning is not
+    /// obvious and the next person to touch this will otherwise re-derive it:
+    ///
+    /// * The CAS loop re-reads `rotate_last_called` and re-checks the cooldown
+    ///   *inside* the loop, against the same `now` it captured on entry. Every
+    ///   caller but the winner eventually observes `current != 0` with
+    ///   `now - current < ROTATE_COOLDOWN_MS` and is rejected. With
+    ///   `rotate_last_called` starting at 0, exactly one caller can win the
+    ///   0 -> now transition; the losers' `compare_exchange_weak` fails and they
+    ///   loop into the rejection. There is no interleaving in which both
+    ///   callers are told they may rotate. So duplicate rotation was NOT
+    ///   reachable through concurrency.
+    /// * What the guard *does* produce is a rejected loser with no way to get
+    ///   an answer: a caller that raced loses and receives
+    ///   "rate limited" even though a rotation carrying its requested result
+    ///   completed microseconds later. That is the real user-visible defect,
+    ///   and it is fixed in `api::client::rotate_api_params` by the
+    ///   single-flight + idempotency key that coalesces the loser onto the
+    ///   winner's result. The guard stays the outer bound on how often a
+    ///   rotation may START; the single-flight is what makes racing callers
+    ///   share one rotation instead of fighting over the cooldown.
+    ///
+    /// Two known limits, deliberately not changed here (behaviour preservation,
+    /// and out of scope for P1-008):
+    ///
+    /// * The timestamp is `SystemTime` (wall clock), not a monotonic clock. A
+    ///   backwards clock step (NTP correction, user changing the time zone on a
+    ///   device, which Android does on travel) makes `saturating_sub` return 0
+    ///   and DENY every rotation until the wall clock catches back up — the
+    ///   device "collect diagnostic parameters" button then fails for up to the
+    ///   size of the correction. A forward step larger than the cooldown does
+    ///   the opposite and lets a second rotation through. A `std::time::Instant`
+    ///   baseline per process removes both; that is a one-line change plus
+    ///   re-basing the stored value, and it wants its own change with its own
+    ///   test, not a drive-by edit inside a race fix.
+    /// * The permit is consumed at acquisition, so a rotation that then FAILS
+    ///   (keyring write task died, `build_http_client` rejected) has still spent
+    ///   the cooldown. Correct-but-annoying, and left alone deliberately:
+    ///   refunding the permit on failure would let a caller retry a failing
+    ///   rotation in a tight loop, which is the keystore-wear DoS (SEC-039)
+    ///   the cooldown exists to stop. The single-flight is the correct answer
+    ///   to "the rotation I joined failed": the next caller simply gets the
+    ///   cooldown error, as it does today.
     pub fn try_acquire_rotate_permit(&self) -> Result<(), AppError> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let last = self.rotate_last_called.load(std::sync::atomic::Ordering::SeqCst);
