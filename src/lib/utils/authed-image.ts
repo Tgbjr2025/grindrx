@@ -472,12 +472,21 @@ function drainWaiters(): void {
 /**
  * Take a fetch slot, or queue until one frees.
  *
+ * Returns EITHER a release function OR a promise for one, never a bare promise:
+ * the fast path is resolved SYNCHRONOUSLY so that a caller under the limit
+ * dispatches its bridge call on the same tick it arrived on, exactly as it did
+ * before the limiter existed. Only the queued path costs a microtask, which is
+ * where the latency is actually being paid for. A caller therefore awaits this
+ * result with `await`, and `await` on a non-promise value does not yield.
+ *
  * A REJECTION here means no slot was ever taken, so the caller has nothing to
  * release. That is the only path out of this function that does not hand back a
  * release function, and it is why `acquireFetchSlot` is not called inside the
  * `try` whose `finally` releases.
  */
-function acquireFetchSlot(signal?: AbortSignal): Promise<() => void> {
+function acquireFetchSlot(
+	signal?: AbortSignal,
+): (() => void) | Promise<() => void> {
 	// Already abandoned before we even queued: fail fast rather than occupy a
 	// slot for a request nobody is waiting on.
 	if (signal?.aborted === true) {
@@ -489,7 +498,7 @@ function acquireFetchSlot(signal?: AbortSignal): Promise<() => void> {
 	// starts on this tick exactly as it did before the limiter existed.
 	if (activeFetches < maxConcurrentFetches) {
 		activeFetches++;
-		return Promise.resolve(makeSlotRelease());
+		return makeSlotRelease();
 	}
 
 	// SLOW PATH — queue. Strict FIFO on arrival.
@@ -581,7 +590,18 @@ export async function fetchAuthedBytes(
 	try {
 		// May REJECT when `signal` is already aborted — that happens BEFORE a slot
 		// is taken, so the `finally` below must not run and nothing leaks.
-		release = await acquireFetchSlot(signal);
+		//
+		// The `instanceof` check is load-bearing, not a micro-optimisation: `await`
+		// costs a microtask even when its operand is already a plain value, so
+		// awaiting unconditionally would defer the bridge call by one tick on EVERY
+		// fetch — including the common under-the-limit case that is documented to
+		// behave exactly as it did before the limiter existed. When a caller starts
+		// a fetch and then synchronously acts on the bridge (the purge test releases
+		// its mock bridge in the very same tick), a one-tick deferral means the
+		// fetch has not started yet, and the whole burst then hangs on its 12s
+		// timeout. Only the queued path — where a real wait was already paid — awaits.
+		const slot = acquireFetchSlot(signal);
+		release = slot instanceof Promise ? await slot : slot;
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
 		// Clear the timer once the fetch settles so it doesn't dangle per call.
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -645,7 +665,9 @@ export async function fetchMediaBytes(
 	// upload that follows) is what keeps this from serialising the whole upload.
 	let release: (() => void) | undefined = undefined;
 	try {
-		release = await acquireFetchSlot(signal);
+		// Same non-yielding fast path as `fetchAuthedBytes` — see the note there.
+		const slot = acquireFetchSlot(signal);
+		release = slot instanceof Promise ? await slot : slot;
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
 		// Clear the timer once the fetch settles so it doesn't dangle per call.
 		let timer: ReturnType<typeof setTimeout> | undefined;
