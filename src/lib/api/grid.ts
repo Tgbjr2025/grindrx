@@ -6,6 +6,36 @@ import { cascadeV3ResponseSchema } from "$lib/model/grid/cascade/response/v3";
 import { searchProfileSchema, searchQuerySchema } from "$lib/model/grid/search";
 import { urlSearchParamsCodec } from "$lib/utils";
 
+/**
+ * The sign-out surface for the grid's resolved-profile cache.
+ *
+ * Re-exported here, and NOT called here, on purpose. `purgeAccountLocalData()`
+ * (in `$lib/app-data/`) enumerates the caches sign-out has to erase, and this is
+ * the grid entry in that list; it imports it from the grid API module so the
+ * purge has ONE grid import to reach, the same way it reaches the authenticated
+ * media cache. The cache itself lives in `$lib/model/grid/profile-cache.ts`
+ * because a cache that lives in a route leaf (`(root)/grid.ts` did) is
+ * unreachable from the purge by construction — see that file's header for the
+ * measured leak this re-export exists to close.
+ *
+ * Exported as a named re-export rather than `export *` so that what the purge
+ * can reach is a visible, reviewable list, not whatever the module happens to
+ * grow next month.
+ */
+export {
+	cacheProfile,
+	clearProfileCache,
+	currentGridCacheEpoch,
+	isGridCacheEpochCurrent,
+	MAX_PROFILE_CACHE,
+	purgeGridProfileCache,
+	profileCache,
+	resolveAndCacheGridProfiles,
+	type FullGridProfile,
+	type GridProfile,
+	type PartialGridProfile,
+} from "$lib/model/grid/profile-cache";
+
 export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
 	return await fetchRest(
 		"/v7/search?" +
