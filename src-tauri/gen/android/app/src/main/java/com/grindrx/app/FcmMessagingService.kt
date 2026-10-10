@@ -54,7 +54,7 @@ class FcmMessagingService : FirebaseMessagingService() {
         }
 
         val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (!conversationId.isNullOrBlank()) {
                 putExtra("conversationId", conversationId)
             }
