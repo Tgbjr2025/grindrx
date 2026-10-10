@@ -19,7 +19,7 @@
         "minWidth": 320,
         "minHeight": 300,
         "theme": "Dark",
-        "userAgent": "GrindrX/0.1.38 (+https://git.dominusaxis.com/dominus/grindrx)",
+        "userAgent": "GrindrX/0.1.48 (+https://git.dominusaxis.com/dominus/grindrx)",
         "titleBarStyle": "Visible",
         "backgroundColor": "#1e1e1e"
       }
