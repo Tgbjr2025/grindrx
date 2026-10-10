@@ -503,9 +503,17 @@ describe("P2-004: the fetch cap is real", () => {
 		await flush();
 		expect(bridge.started.length).toBe(3);
 
-		bridge.settleAll();
-		await flush();
+		// Raising the limit to 3 admits two of the three waiters, leaving ONE fetch
+		// still queued. So the burst cannot be drained in a single pass: settling the
+		// three in-flight fetches is what RELEASES their slots and starts the fourth,
+		// and `settleAll()` has already drained its list by then. Drain in rounds, as
+		// the burst and over-release tests above do, so the last fetch is settled too.
+		for (let i = 0; i < all.length; i++) {
+			bridge.settleAll();
+			await flush();
+		}
 		await Promise.all(all);
+		expect(bridge.started.length).toBe(4);
 		expect(__imageFetchSlotsInUse()).toBe(0);
 	});
 
