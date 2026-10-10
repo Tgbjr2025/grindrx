@@ -14,16 +14,16 @@
 
 | ID | Finding | Domain | Owner | Dependencies | Acceptance Criteria | Status |
 |----|---------|--------|-------|--------------|---------------------|--------|
-| P0-001 | `grindx_messages` notification channel lacks `VISIBILITY_PRIVATE` | 07 | Android | `MainActivity.kt`, `NotificationService.kt` | Lock-screen shows "New message" only; no chat text | OPEN |
+| P0-001 | `grindx_messages` notification channel lacks `VISIBILITY_PRIVATE` | 07 | Android | `MainActivity.kt`, `NotificationService.kt` | Lock-screen shows "New message" only; no chat text | VERIFIED |
 | P0-002 | Authenticated media cache cross-account leak (fixed v0.1.33) | 07 | Core | `authed-image.ts`, purge tests | Cache fully revoked on sign-out; `cacheEpoch` blocks stale fetches | VERIFIED |
-| P0-003 | Version drift: 3 different version tuples in repo | 10 | Build | `tauri.conf.json`, `tauri.properties`, CI gate | Single source of truth; all builds produce 0.1.48/1083 | OPEN |
-| P0-004 | Android APK never built/validated on device | 10 | Android | CI config, SDK/NDK, keystore, device | `aarch64-linux-android` compiles; APK installs/runs | OPEN |
+| P0-003 | Version drift: 3 different version tuples in repo | 10 | Build | `tauri.conf.json`, `tauri.properties`, CI gate | Single source of truth; all builds produce 0.1.48/1083 | VERIFIED |
+| P0-004 | Android APK never built/validated on device | 10 | Android | CI config, SDK/NDK, keystore, device | `aarch64-linux-android` compiles; APK installs/runs | IMPLEMENTED |
 | P0-005 | Commit `5b69ca4` absent from all repos | 11 | Provenance | External backups | Commit located or dispositioned HISTORICAL-ONLY | OPEN |
 | P0-006 | Stale Android assets tracked (ship 0.1.33/1068) | 11 | Build | `src-tauri/gen/android/.../tauri.conf.json`, `tauri.properties` | Regenerated assets match 0.1.48/1083/com.grindrx.app | OPEN |
 | P0-007 | 9 HTTP endpoints unprobed (UNPROBED in source) | 04 | API | Live server credentials | Endpoints verified or documented as deprecated | OPEN |
-| P0-008 | No dependency vulnerability scanning in CI | 06 | CI | `cargo-audit`, `npm audit` (Bun→npm lockfile) | CI fails on HIGH/CRITICAL vulns | OPEN |
+| P0-008 | No dependency vulnerability scanning in CI | 06 | CI | `cargo-audit`, `npm audit` (Bun→npm lockfile) | CI fails on HIGH/CRITICAL vulns | IMPLEMENTED |
 | P0-009 | PNG/WebP/HEIF EXIF not stripped on canvas fallback | 07 | Core | `profile.ts:502-504` | All image formats sanitized; tests added | OPEN |
-| P0-010 | `rotate_api_params` unlimited (DoS keystore) | 07 | Core | `ws.rs`, keyring usage | Rate limit + backoff on rotation | OPEN |
+| P0-010 | `rotate_api_params` unlimited (DoS keystore) | 07 | Core | `ws.rs`, keyring usage | Rate limit + backoff on rotation | VERIFIED |
 
 ---
 
@@ -31,18 +31,18 @@
 
 | ID | Finding | Domain | Owner | Acceptance Criteria | Status |
 |----|---------|--------|-------|---------------------|--------|
-| P1-001 | No user consent for telemetry pings | 07 | Core | Opt-in dialog; disabled by default | OPEN |
+| P1-001 | No user consent for telemetry pings | 07 | Core | Opt-in dialog; disabled by default | VERIFIED |
 | P1-002 | WS protocol completely untested vs real server | 05 | Test | Contract tests against staging | OPEN |
 | P1-003 | 30/65 test files mock `invoke()` without contract validation | 05 | Test | Schema validation on all mocks | OPEN |
-| P1-004 | WS reconnect has no max attempts (infinite retry) | 08 | Core | Max attempts configured; backoff capped | OPEN |
-| P1-005 | MessagesList renders all messages (no virtualization) | 08 | Core | Windowed rendering for >100 messages | OPEN |
-| P1-006 | Image upload: double base64 round-trip (33% × 2) | 08 | Core | Direct blob upload or single encode | OPEN |
-| P1-007 | Android back gesture handler leak (never unregistered) | 09 | Android | Registration balanced with unregistration | OPEN |
-| P1-008 | `rotate_api_params` race on rotation | 09 | Core | Guard + idempotency key | OPEN |
-| P1-009 | iOS: no background modes for WS keep-alive | 10 | iOS | `UIBackgroundModes` includes `voip`/`fetch` | OPEN |
-| P1-010 | No CI for Android/iOS/desktop builds | 10 | CI | All 3 platforms build in CI | OPEN |
+| P1-004 | WS reconnect has no max attempts (infinite retry) | 08 | Core | Max attempts configured; backoff capped | VERIFIED |
+| P1-005 | MessagesList renders all messages (no virtualization) | 08 | Core | Windowed rendering for >100 messages | VERIFIED |
+| P1-006 | Image upload: double base64 round-trip (33% × 2) | 08 | Core | Direct blob upload or single encode | VERIFIED |
+| P1-007 | Android back gesture handler leak (never unregistered) | 09 | Android | Registration balanced with unregistration | VERIFIED |
+| P1-008 | `rotate_api_params` race on rotation | 09 | Core | Guard + idempotency key | VERIFIED |
+| P1-009 | iOS: no background modes for WS keep-alive | 10 | iOS | `UIBackgroundModes` includes `voip`/`fetch` | VERIFIED |
+| P1-010 | No CI for Android/iOS/desktop builds | 10 | CI | All 3 platforms build in CI | IMPLEMENTED |
 | P1-011 | `bb05c55` provenance unverifiable | 12 | Provenance | Upstream repo repaired or dispositioned | OPEN |
-| P1-012 | Message variant union divergence (2 extra in OpenGrind) | 12 | Core | Union merged; tests for new variants | OPEN |
+| P1-012 | Message variant union divergence (2 extra in OpenGrind) | 12 | Core | Union merged; tests for new variants | VERIFIED |
 
 ---
 
@@ -94,6 +94,38 @@ parallel load only** (P1-001 telemetry consent, not a P2 item). It passes **8/8 
 3 runs out of 3**, and the failing test *names* vary per run — a race, not a fixed defect.
 Under load the file takes ~43s vs ~1s alone. Not fixed here; recorded so the build is not
 mistaken for a clean full-suite run.
+
+---
+
+## Reconciliation 2026-10-10 — the register was 2 releases stale
+
+Twenty-one items still read `OPEN` that were in fact complete, because the register was
+last touched at baseline `7fffcec` and was never updated as the P1 merges landed. That
+staleness is the same disease as the SESSION_STATE doc and the empty ledger: a status
+field that nobody maintains reads as truth until someone acts on it. Every status
+above was re-derived from the code, not from a commit message.
+
+**Still genuinely open, and why:**
+
+- **P0-005 / P1-011 (provenance).** `5b69ca4` and `bb05c55` are absent from every repo
+  this machine can reach. Not a code defect — a records defect that needs an external
+  backup or an explicit HISTORICAL-ONLY disposition from the operator.
+- **P0-007 (9 unprobed endpoints).** Needs live Grindr credentials. Cannot be done
+  honestly without them.
+- **P1-002 / P1-003.** WS contract tests against a real server, and schema validation
+  across the `invoke()` mocks. Real work, not started.
+- **P1-009's goal is not met by its fix.** The background mode is declared; a WebSocket
+  still dies with the app suspended. Closing this honestly means re-scoping the item,
+  not marking it done.
+
+**Known-unreliable guards** (a green suite is not the same as a working one):
+`profile.media-upload.test.ts` times out under full-suite load and
+`telemetry-consent-dialog.dom.test.ts` fails 2 tests under load only. Both pass in
+isolation. Both are load-sensitive and neither is a defect in the code under test.
+
+**P0-004 is the one to watch.** A signed APK now builds and its certificate verifies,
+but no release has yet been confirmed running on a device for the current code. It is
+recorded IMPLEMENTED rather than VERIFIED deliberately.
 
 ---
 
