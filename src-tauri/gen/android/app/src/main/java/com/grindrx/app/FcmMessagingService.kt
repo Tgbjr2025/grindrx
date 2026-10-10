@@ -13,11 +13,17 @@ import com.google.firebase.messaging.RemoteMessage
 /**
  * Receives Firebase Cloud Messaging traffic.
  *
- * Scope note: this handles the token lifecycle and foreground/data-message
- * display only. Delivering a push to this device requires an upstream sender
- * that already holds the token returned by [FcmTokenStore]; nothing in this
- * repository issues a send, so with no sender pushing, no notification will
- * arrive. See src-tauri/gen/android/FIREBASE_SETUP.md for the operator steps.
+ * Scope note: this handles the token lifecycle, REGISTRATION with our own
+ * server, and foreground/data-message display.
+ *
+ * Token registration was added 2026-10-10. Until then the token was written
+ * only to this device's SharedPreferences, so no server had a recipient list
+ * and the end-to-end delivery proven in the ledger had nobody to address.
+ * `onNewToken` alone was not sufficient — it only fires on first issue and on
+ * rotation, so MainActivity calls `registerIfKnown` on every launch.
+ *
+ * The SENDER is server-side and deliberately so: sending requires a service
+ * account that must never exist in an APK. See /home/axis/push-sender on axis.
  *
  * Background messages are handled by the system and surfaced here rather than
  * in Rust: the Tauri runtime is not guaranteed to be alive when the process is
@@ -30,10 +36,11 @@ class FcmMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         FcmTokenStore.set(applicationContext, token)
-        // Logged so the token is observable in logcat while there is no
-        // upstream endpoint to register it with. Remove once a sender exists.
-        android.util.Log.i("GrindrX", "FCM registration token: $token")
+        android.util.Log.i("GrindrX", "FCM registration token issued; registering")
+        registerWithServer(applicationContext, token)
     }
+
+
 
     override fun onMessageReceived(message: RemoteMessage) {
         val conversationId = message.data["conversationId"]
@@ -85,5 +92,80 @@ class FcmMessagingService : FirebaseMessagingService() {
         // Distinct from the WebSocket notifier's ids so a message delivered both
         // ways replaces itself instead of stacking two identical notifications.
         const val NOTIFICATION_ID = 9001
+
+private const val REGISTRY_URL = "https://cam.dominusaxis.com/grindrx/register"
+
+/**
+ * Hand this install's FCM token to the server so a release push has
+ * someone to send to.
+ *
+ * Until this existed the token lived only in this device's
+ * SharedPreferences, so the server had no recipient list and the
+ * end-to-end delivery proven in the ledger had no addressee.
+ *
+ * The install id is Firebase's own (stable per install, and already
+ * provisioned), so there is no second identifier to invent or to keep
+ * in sync. A token ROTATES, so this must be called on every launch and
+ * not only from onNewToken -- otherwise a rotated token leaves the
+ * server addressing one the device no longer owns.
+ *
+ * Best effort by design: failure is logged and swallowed. A push that
+ * cannot be registered must never take the app down with it, and the
+ * next launch retries.
+ */
+fun registerIfKnown(context: Context) {
+    try {
+        val token = FcmTokenStore.get(context) ?: return
+        registerWithServer(context, token)
+    } catch (e: Throwable) {
+        android.util.Log.w("GrindrX", "FCM register skipped: ${e.message}")
+    }
+}
+
+private fun registerWithServer(context: Context, token: String) {
+    // The install id is a Task. Using the Task listener rather than
+    // .await() keeps this dependency-free -- kotlinx-coroutines-play-services
+    // is not on the classpath, and adding it for one call would be a
+    // version-alignment risk against Firebase's own coroutines version.
+    com.google.firebase.installations.FirebaseInstallations.getInstance().id
+        .addOnCompleteListener { task ->
+            val installId = task.result
+            if (installId.isNullOrBlank()) {
+                android.util.Log.w("GrindrX", "FCM register: no install id")
+                return@addOnCompleteListener
+            }
+            Thread {
+                try {
+                    val url = java.net.URL(REGISTRY_URL)
+                    val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 8000
+                        readTimeout = 8000
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                    }
+                    val enc = { s: String -> java.net.URLEncoder.encode(s, "UTF-8") }
+                    val body = "id=" + enc(installId) +
+                        "&token=" + enc(token) +
+                        "&v=" + enc(appVersion(context)) +
+                        "&app=android"
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    val code = conn.responseCode
+                    android.util.Log.i("GrindrX", "FCM register HTTP $code")
+                    conn.disconnect()
+                } catch (e: Throwable) {
+                    android.util.Log.w("GrindrX", "FCM register failed: ${e.message}")
+                }
+            }.start()
+        }
+}
+
+private fun appVersion(context: Context): String =
+    try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+    } catch (e: Throwable) {
+        "unknown"
+    }
+
     }
 }

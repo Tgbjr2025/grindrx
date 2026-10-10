@@ -72,6 +72,11 @@ class MainActivity : TauriActivity() {
 		// stop_unwind turns into a SIGABRT.
 		Keyring.initializeNdkContext(applicationContext)
 		createNotificationChannel()
+		// Hand this install's FCM token to the server so release pushes have a
+		// recipient. onNewToken alone is NOT enough: it only fires when the token
+		// is first issued or ROTATED, so an install that launched once and kept
+		// its token would never be registered at all. No-op if no token yet.
+		FcmMessagingService.registerIfKnown(applicationContext)
 		super.onCreate(savedInstanceState)
 
 		// Hide the app's snapshot from the recents/multitasker switcher, where chat

@@ -605,16 +605,79 @@ function stripWebPMetadata(bytes: Uint8Array): Uint8Array | null {
  * the worst case is the pre-existing behaviour (upload the file as picked)
  * rather than a corrupted image.
  */
-function stripImageMetadata(bytes: Uint8Array, mimeType: string): Uint8Array {
+/**
+ * The byte signature every EXIF payload starts with: `Exif\0\0`.
+ *
+ * This is defined by the TIFF/Exif specification itself, and it is what the
+ * payload looks like wherever it is stored — as a JPEG APP1 segment, as a TIFF
+ * header, or as a standalone item inside an ISO-BMFF container. That last case
+ * is the one that matters here: in HEIF/AVIF the Exif data is a separate ITEM
+ * addressed through the `iinf`/`iloc` boxes, not a contiguous span, so it cannot
+ * be found by box arithmetic.
+ */
+const EXIF_PAYLOAD_SIGNATURE = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00] as const;
+
+/**
+ * True when the payload carries an EXIF block, and therefore may carry GPS.
+ *
+ * Deliberately a raw scan rather than a parse: it has to work on a container
+ * whose internal structure we cannot safely rewrite, so the only reliable
+ * signal is the signature the Exif spec mandates.
+ *
+ * The false-positive direction is "finds Exif\0\0 in pixel data", which can only
+ * make us refuse an image that happened to be safe. That is the correct way to
+ * be wrong here — this function gates whether a location leak is possible, and
+ * the whole point is that we never get that wrong silently.
+ */
+export function containsExifPayload(bytes: Uint8Array): boolean {
+	const limit = bytes.length - EXIF_PAYLOAD_SIGNATURE.length;
+	if (limit < 0) return false;
+	outer: for (let i = 0; i <= limit; i++) {
+		if (bytes[i] !== EXIF_PAYLOAD_SIGNATURE[0]) continue;
+		for (let j = 1; j < EXIF_PAYLOAD_SIGNATURE.length; j++) {
+			if (bytes[i + j] !== EXIF_PAYLOAD_SIGNATURE[j]) continue outer;
+		}
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Remove metadata containers from an upload payload, in place.
+ *
+ * Returns `null` when the container carries an EXIF payload we cannot remove
+ * without corrupting the image. The caller MUST treat `null` as "do not
+ * upload" rather than falling back to the original bytes — returning the input
+ * untouched is how a GPS coordinate reaches the server in an app whose entire
+ * reason to exist is not leaking them.
+ */
+export function stripImageMetadata(
+	bytes: Uint8Array,
+	mimeType: string,
+): Uint8Array | null {
 	switch (mimeType) {
-		case "image/jpeg": return stripJpegMetadata(bytes) ?? bytes;
-		case "image/gif": return stripGifMetadata(bytes) ?? bytes;
-		case "image/png": return stripPngMetadata(bytes) ?? bytes;
-		case "image/webp": return stripWebPMetadata(bytes) ?? bytes;
-		default:
-			// HEIF/AVIF and other formats: canvas path handles re-encode
-			// If canvas fails, we return bytes as-is (pre-existing behavior)
+		case "image/jpeg":
+			return stripJpegMetadata(bytes) ?? bytes;
+		case "image/gif":
+			return stripGifMetadata(bytes) ?? bytes;
+		case "image/png":
+			return stripPngMetadata(bytes) ?? bytes;
+		case "image/webp":
+			return stripWebPMetadata(bytes) ?? bytes;
+		default: {
+			// HEIF/AVIF and any other ISO-BMFF-family container.
+			//
+			// These CANNOT be rewritten byte-wise. The Exif payload is an item
+			// located through `iinf`/`iloc` inside the `meta` box, so it is not a
+			// contiguous span and splicing it out by box arithmetic yields a file
+			// most decoders reject; deleting the whole `meta` box is worse still,
+			// because HEIF requires it to describe the primary image at all.
+			//
+			// So the honest options are: let it through when there is provably
+			// nothing to leak, and refuse when there is.
+			if (containsExifPayload(bytes)) return null;
 			return bytes;
+		}
 	}
 }
 
@@ -635,8 +698,9 @@ function stripImageMetadata(bytes: Uint8Array, mimeType: string): Uint8Array {
  * frames, frame delays and loop count while losing any XMP/comment payload.
  * If the canvas path is unavailable for any reason the byte-level stripper is
  * used rather than falling back to the raw file, so a metadata failure can
- * never turn into a GPS leak. Only a container the stripper cannot safely
- * rewrite is passed through as-is.
+ * never turn into a GPS leak. The one case that is REFUSED rather than
+ * rewritten is a container carrying an EXIF payload we cannot excise without
+ * corrupting the image — see `stripImageMetadata`.
  *
  * Always reports the true pixel `width`/`height` of whatever bytes are being
  * returned: the profile-photos upload has to declare a square `thumbCoords`
@@ -659,15 +723,28 @@ async function downscaleImage(
 	};
 	/**
 	 * Upload payload for the paths that cannot safely re-encode: the file's own
-	 * bytes with the metadata containers removed in place. `stripImageMetadata`
-	 * returns the input untouched for a container it cannot safely rewrite, so
-	 * the absolute worst case is the pre-existing behaviour (upload the file as
-	 * picked) — never a corrupted image.
+	 * bytes with the metadata containers removed in place.
+	 *
+	 * `stripImageMetadata` returns `null` for a container that carries an EXIF
+	 * payload we cannot remove without corrupting the image (HEIF/AVIF, where the
+	 * Exif data is a separate `iloc`-addressed item rather than a contiguous
+	 * segment). `null` is a hard refusal, not a soft warning: the alternative is
+	 * uploading the file with its GPS coordinates attached, and a photo the user
+	 * can simply re-pick is a far better outcome than that.
 	 */
 	const stripped = async () => {
 		const bytes = new Uint8Array(await file.arrayBuffer());
+		const sanitized = stripImageMetadata(bytes, file.type || "image/jpeg");
+		if (!sanitized) {
+			throw new Error(
+				"This photo carries location data in a format we cannot remove " +
+					"without damaging the image, so it was not uploaded. Saving a " +
+					"copy as JPEG or PNG and picking that instead keeps the photo and " +
+					"drops the location.",
+			);
+		}
 		return {
-			base64: bytesToBase64(stripImageMetadata(bytes, file.type || "image/jpeg")),
+			base64: bytesToBase64(sanitized),
 			mimeType: file.type || "image/jpeg",
 			...(await dimensionsOf()),
 		};
