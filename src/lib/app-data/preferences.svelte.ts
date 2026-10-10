@@ -29,18 +29,120 @@ function defaultPreferences(): z.infer<typeof preferencesSchema> {
 	};
 }
 
+/**
+ * Marker recording that the last sign-out purge could NOT take `preferences.data`
+ * away, so whatever is still on disk belongs to a PURGED ACCOUNT.
+ *
+ * WHY THIS IS NOT A CONSOLE LOG — the P2-001 defect this key exists to close:
+ * `purgePreferencesFile` can fail TWICE. The delete is refused (the `fs:allow-remove`
+ * capability or its scope), and the compensating overwrite then cannot allocate a
+ * byte either (storage quota, full disk). The previous user's geohash — a ~2 m x 4 m
+ * cell — survives on disk. The purge recorded that in a local array and printed it,
+ * and then RETURNED: by contract it never throws, because a rejection would strand
+ * the user mid-sign-out. So the sign-out flow continued and the next account signed
+ * in. `readPreferences` found the file, decoded it cleanly (it is not corrupt — it
+ * is a perfectly valid preferences file belonging to someone who is no longer
+ * signed in) and returned it as `status: "ok"`. The half-purged state was mistaken
+ * for clean precisely because nothing on the read path could tell it apart from a
+ * normal file. The geohash was the sharpest symptom; `incognito` and the two
+ * `reveal*` toggles — private choices by the previous account — came back too.
+ *
+ * WHY localStorage AND NOT A SIBLING APP-DATA FILE: a marker written next to the
+ * file it describes would have to go through the same filesystem that just refused
+ * to write the file, so in exactly the scenario the marker exists for, the marker
+ * would fail too. WebView localStorage is a different store from the Tauri app-data
+ * fs, so it survives an app-data write failure. That is the whole reason the
+ * cross-store hop is taken.
+ *
+ * SCOPE: device-scoped, not per-account, and deliberately NOT in
+ * `PER_ACCOUNT_LOCALSTORAGE_KEYS` in `purge.ts`. It describes the trustworthiness of
+ * a FILE, not account data, and it must not be swept away by the localStorage pass
+ * that runs before the file purge — it is the thing that pass is supposed to leave
+ * behind if the file purge then fails.
+ */
+const PREFERENCES_UNTRUSTED_KEY = "grindrx-preferences-untrusted";
+
+/**
+ * Is the surviving `preferences.data` known to belong to a purged account?
+ *
+ * TWO FAILURE MODES, AND THEY ARE NOT SYMMETRIC ON PURPOSE:
+ *
+ *  - No localStorage at all (SSR, the node test environment): returns FALSE.
+ *    `markPreferencesUntrusted` is a no-op under the same condition, so
+ *    "untrusted" is literally unrepresentable here — a marker could never have
+ *    been written, so there is nothing to distrust. Returning true instead would
+ *    make every device without a localStorage treat its own perfectly good
+ *    preferences file as another account's, permanently discarding the user's
+ *    saved toggles and location.
+ *  - localStorage present but `getItem` throws: returns TRUE, i.e. fails closed.
+ *    Here the store exists and may well already hold a marker written by an
+ *    earlier failed purge, so absence cannot be proven — and a previous
+ *    account's ~2 m x 4 m geohash is the thing being protected.
+ */
+export function isPreferencesUntrusted(): boolean {
+	if (typeof localStorage === "undefined") return false;
+	try {
+		return localStorage.getItem(PREFERENCES_UNTRUSTED_KEY) !== null;
+	} catch (error) {
+		console.error(
+			"[GrindrX] could not read the preferences trust marker; treating preferences.data as untrusted:",
+			error,
+		);
+		return true;
+	}
+}
+
+/** Record that `preferences.data` on disk is a purged account's leftovers. */
+export function markPreferencesUntrusted(): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.setItem(PREFERENCES_UNTRUSTED_KEY, "1");
+	} catch (error) {
+		// A full quota here means the marker cannot be persisted, so the next
+		// account's read cannot be protected. Surfaced rather than swallowed:
+		// this is the one branch where the fallback chain has run out.
+		console.error("[GrindrX] could not record the preferences trust marker:", error);
+	}
+}
+
+/** Clear the marker — the file is gone, or was legitimately rewritten. */
+export function clearPreferencesUntrusted(): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(PREFERENCES_UNTRUSTED_KEY);
+	} catch (error) {
+		console.warn("[GrindrX] could not clear the preferences trust marker:", error);
+	}
+}
+
 // Distinguishes "no file yet" (safe to treat as defaults, safe to write over)
 // from "file present but unreadable" (must NOT be treated as ground truth for
-// a write — see readPreferences below). Reads that only need a value (not the
-// distinction) should use `getPreferences`.
+// a write — see readPreferences below), and from "file present but known to
+// belong to a purged account" (must not be SERVED, but is safe — indeed
+// desirable — to write over; see setPreferences). Reads that only need a value
+// (not the distinction) should use `getPreferences`.
 type PreferencesReadResult =
 	| { status: "missing"; value: z.infer<typeof preferencesSchema> }
 	| { status: "ok"; value: z.infer<typeof preferencesSchema> }
-	| { status: "unreadable"; value: z.infer<typeof preferencesSchema> };
+	| { status: "unreadable"; value: z.infer<typeof preferencesSchema> }
+	| { status: "stale"; value: z.infer<typeof preferencesSchema> };
 
 async function readPreferences(): Promise<PreferencesReadResult> {
 	if (!(await existsAppDataFile("preferences.data"))) {
 		return { status: "missing", value: defaultPreferences() };
+	}
+	// A sign-out purge tried and failed to take this file away, so its contents
+	// are a PURGED ACCOUNT's: their geohash, their incognito state, their reveal
+	// toggles. The file decodes fine — it is not corrupt, it is just not ours —
+	// so without this check it is indistinguishable from a normal read and the
+	// next account inherits all of it. Degrade to defaults rather than reject,
+	// for the same reason as the catch below: the home route's `{#await
+	// preferences}` has no catch and a rejection hard-crashes the app.
+	if (isPreferencesUntrusted()) {
+		console.error(
+			"[GrindrX] preferences.data survived a failed sign-out purge — treating it as another account's data",
+		);
+		return { status: "stale", value: defaultPreferences() };
 	}
 	// NOTE: this comment previously claimed the file was "written non-atomically
 	// (truncate + write)". That stopped being true in v0.1.28 — `writeAppDataFile`
@@ -128,12 +230,28 @@ export async function setPreferences(
 				"unreadable",
 			);
 		}
+		// `status: "stale"` deliberately FALLS THROUGH to the write rather than
+		// raising, which is the opposite of the branch above and is the whole
+		// point of distinguishing them. An unreadable file might hold THIS
+		// account's unsaved data, so clobbering it can lose data for good. A
+		// stale file holds a PURGED ACCOUNT's data, which is exactly what the
+		// purge tried to destroy and failed to; overwriting it here destroys it
+		// for real, and it is the recovery path out of the double failure —
+		// the quota that blocked the purge's neutralising write is the same
+		// quota this write needs, so by the time it succeeds both have cleared.
+		// Refusing here would instead leave the previous account's geohash on
+		// disk indefinitely and lock the new account out of saving anything.
 		const preferences = {
 			...current.value,
 			...newValues,
 		};
 		preferencesSchema.parse(preferences);
 		await writeAppDataFile("preferences.data", encode(preferences));
+		// The write just replaced the file wholesale, so whatever it held is
+		// gone and it now belongs to whoever is signed in. Clearing the marker
+		// here is what makes the next read take the normal `status: "ok"` path
+		// instead of degrading to defaults forever.
+		clearPreferencesUntrusted();
 	});
 	// The queue itself must not reject, or every subsequent write is skipped.
 	writeQueue = work.then(
