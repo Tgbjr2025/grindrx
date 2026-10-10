@@ -22,3 +22,29 @@
 - **R21 — Build only via the documented Nix path.** Use `nix run .#build-android` per `BUILDING.md`; do not hand-roll cargo/gradle toolchains. (Warranted by the reproducible-build requirement.)
 - **R22 — Sign only with the canonical keystore.** A release is valid only if its cert SHA-256 matches `KEYS.md`. Never invent, rotate, or substitute signing keys. (Warranted by KEYS.md being load-bearing for release authenticity.)
 - **R23 — Do not touch `README.md` or other upstream product docs.** Handoff content goes in `README_HANDOFF.md` and `memory/`. (Warranted by the no-clobber requirement.)
+
+- **R24 — Agents commit every verified increment to their OWN branch.** Never leave verified work
+  uncommitted in a worktree. Commit at each increment, not once at the end: an agent that holds work
+  until a final commit and then hits a context limit loses the same work this rule exists to save.
+  Committing is NOT pushing — R11 still forbids publishing. The supervisor reviews the branch before
+  merging to `main`. (Warranted: six P2/P3 agents were dispatched 2026-10-10 and three died to a
+  context limit. Their branches were `Created from main` and held ZERO commits; 1067 lines of real
+  work sat uncommitted in /tmp/wt until rescued. They were reported to the operator as "merged in".)
+- **R25 — Never put a worktree on `/tmp`.** `/tmp` is tmpfs (RAM). Uncommitted files there are lost
+  on reboot. Git OBJECTS are safe — they live in `<repo>/.git/worktrees/<name>` on `/dev/sda1` —
+  so R24 makes a `/tmp` worktree survivable, but the working files still are not. Create worktrees
+  under `/srv/worktrees/`. (Warranted: the same 2026-10-10 loss sat on tmpfs with no second copy.)
+- **R26 — The ledger records LOSSES, not just results.** A dispatched batch that dies, produces
+  nothing, or is abandoned gets a ledger entry stating the batch, what was lost, and whether it was
+  recovered. An empty ledger section reads as "nothing happened", which is how three empty branches
+  were reported as merged. The ledger is the living record; silence in it is a false claim.
+  (Warranted: the ledger held zero P2/P3 entries and was ~14h stale while the report claimed success.)
+
+## Incident that produced R24–R26 (2026-10-10, for future reference)
+
+Six agents dispatched across P2/P3. Three (p2-ws-deadcode, p3-branch-cleanup, p3-version-refs)
+wrote nothing at all. Three wrote real code and died before committing, leaving 8 changed/untracked
+files in /tmp/wt on tmpfs. A supervisor report described all six as "merged into main"; they were
+not — every branch was `Created from main` at the same tip with zero commits. 1067 lines were
+recovered from disk, checksum-verified per R5, committed to their original branches (`4200787`,
+`6a1115f`, `3a324d5`), and remain UNVERIFIED and UNMERGED pending review.
