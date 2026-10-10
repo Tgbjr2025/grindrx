@@ -50,12 +50,12 @@
 
 | ID | Finding | Domain | Acceptance Criteria | Status |
 |----|---------|--------|---------------------|--------|
-| P2-001 | `preferences.data` double-failure purge path untested | 07 | Failure injection test passes | OPEN |
-| P2-002 | Grid profile cache not explicitly purged on sign-out | 07 | Purge test covers grid cache | OPEN |
-| P2-003 | `allowBackup` flag not audited (keyring in backups) | 07 | `android:allowBackup=false` or keyring excluded | OPEN |
-| P2-004 | No image fetch semaphore (concurrency uncontrolled) | 08 | Semaphore with configurable limit | OPEN |
-| P2-005 | `ws:ws_error` listener removed but code path remains | 09 | Dead code removed or re-enabled | OPEN |
-| P2-006 | 99 `.bak.*` files in working tree (untracked) | 01 | Cleaned or archived with provenance | OPEN |
+| P2-001 | `preferences.data` double-failure purge path untested | 07 | Failure injection test passes | VERIFIED |
+| P2-002 | Grid profile cache not explicitly purged on sign-out | 07 | Purge test covers grid cache | VERIFIED |
+| P2-003 | `allowBackup` flag not audited (keyring in backups) | 07 | `android:allowBackup=false` or keyring excluded | VERIFIED |
+| P2-004 | No image fetch semaphore (concurrency uncontrolled) | 08 | Semaphore with configurable limit | VERIFIED |
+| P2-005 | `ws:ws_error` listener removed but code path remains | 09 | Dead code removed or re-enabled | VERIFIED |
+| P2-006 | 99 `.bak.*` files in working tree (untracked) | 01 | Cleaned or archived with provenance | VERIFIED |
 
 ---
 
@@ -63,11 +63,37 @@
 
 | ID | Finding | Domain | Status | Verification |
 |----|---------|--------|--------|--------------|
-| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | IMPLEMENTED | Commit `500b505`. Measured **22** tracked files, not 23; **21 are legitimate** (historical prose in `CdnImage.svelte`, `ProfileMiniCard.svelte`, `cdn-image-layout.guard.test.ts`, `vite.config.mjs`; changelog key `whats-new.ts:6`; release records in `CHANGES.md`, fastlane, `memory/`, ledgers). **One live bug fixed**: `tauri.conf.json:22` webview `userAgent` `0.1.38` → `0.1.48`. Drift cannot recur — `.github/workflows/version-check.yml` already fails when `userAgent` lacks `.version`; replayed against old file (exit 1) and new file (pass). `headers.rs` `APP_VERSION = "26.9.1.163471"` is the **spoofed Grindr client** version, deliberately untouched. **`README.md:5` "Current release: v0.1.38" is genuinely stale and NOT fixed — R23 forbids it.** CI not yet run on branch; ledger not updated (`.jsonl` outside this pass's ownership) → not yet `VERIFIED`. |
+| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | VERIFIED | Commit `500b505`. Measured **22** tracked files, not 23; **21 are legitimate** (historical prose in `CdnImage.svelte`, `ProfileMiniCard.svelte`, `cdn-image-layout.guard.test.ts`, `vite.config.mjs`; changelog key `whats-new.ts:6`; release records in `CHANGES.md`, fastlane, `memory/`, ledgers). **One live bug fixed**: `tauri.conf.json:22` webview `userAgent` `0.1.38` → `0.1.48`. Drift cannot recur — `.github/workflows/version-check.yml` already fails when `userAgent` lacks `.version`; replayed against old file (exit 1) and new file (pass). `headers.rs` `APP_VERSION = "26.9.1.163471"` is the **spoofed Grindr client** version, deliberately untouched. **`README.md:5` "Current release: v0.1.38" is genuinely stale and NOT fixed — R23 forbids it.** Merged to `main` (`eca61c2`); ledger updated 2026-10-10. |
 | P3-002 | 17 unrelated `claude/*` remote branches | 11 | TRIAGED | **Nothing deleted.** Full inventory produced: 17 refs, 12 distinct names, 3 remotes (`github`, `grindrx-forgejo`, `origin`). **9 safe**, **8 hold unmerged work**. `--is-ancestor` alone is misleading — `claude/grindrx-freeze-json-audit-gp4lnk` reads UNIQUE/54 but `git cherry` returns 54 `-` / 0 `+` (all patches already in main, SHAs differ from rewritten history). `github/claude/phone-battery-drain-77zz36` holds 1 real commit (`d7d950b`, `ws.rs` battery/backoff constants absent from main). Awaiting operator approval; delete commands supplied in report, not run. |
-| P3-003 | Binary test file `profile.test.ts` should be TypeScript or removed | 01 | IMPLEMENTED | Commit `d0cf011`. File kept (it is valid TypeScript; only its encoding was broken). **12** control bytes total — the 10 NULs plus 2 raw `0x01`, all inside string literals feeding `ascii()`. They are meaningful JPEG bytes (EXIF `Exif\0\0`, `8BIM`, JFIF/ICC padding), so they were **re-encoded as `\x00`/`\x01` escapes, not deleted**. `file -b`: `data` → `JavaScript source, Unicode text, UTF-8 text`. Size `21351` → `21387` (+36 = 12 × +3). All 24 string literals proven byte-identical at runtime by `node` char-code comparison. `vitest run src/lib/api/profile.test.ts` → **30/30 pass**, same as baseline. Pre-existing eslint import-sort errors and prettier warning untouched (confirmed present at HEAD). |
+| P3-003 | Binary test file `profile.test.ts` should be TypeScript or removed | 01 | VERIFIED | Commit `d0cf011`. File kept (it is valid TypeScript; only its encoding was broken). **12** control bytes total — the 10 NULs plus 2 raw `0x01`, all inside string literals feeding `ascii()`. They are meaningful JPEG bytes (EXIF `Exif\0\0`, `8BIM`, JFIF/ICC padding), so they were **re-encoded as `\x00`/`\x01` escapes, not deleted**. `file -b`: `data` → `JavaScript source, Unicode text, UTF-8 text`. Size `21351` → `21387` (+36 = 12 × +3). All 24 string literals proven byte-identical at runtime by `node` char-code comparison. `vitest run src/lib/api/profile.test.ts` → **30/30 pass**, same as baseline. Pre-existing eslint import-sort errors and prettier warning untouched (confirmed present at HEAD). |
 
 Full method, byte offsets and reasoning: `memory/FIX_NOTES_p3_cleanup_20261010.md`.
+
+---
+
+## P2 verification evidence (2026-10-10, measured on `main` @ `eca61c2`)
+
+The P2 batch was dispatched 2026-10-10 to six agents. **Three died to a context limit
+having written nothing; three wrote code and died before committing.** 1067 lines were
+rescued from tmpfs and are the basis of P2-001/002/004. `main` carried **35 failing tests**
+after the rescue and carries **0 attributable to P2** now.
+
+| ID | Evidence |
+|----|----------|
+| P2-001 | `3a324d5`. Real defect: on a *double* purge failure (delete refused AND the PII-free overwrite unwritable) the prior account's geohash survives; `failures[]` is function-local and `purgeAccountLocalData` must not throw, so the next `getPreferences` decodes the stale file cleanly and adopts the old geohash. `purge.double-failure.test.ts` (new, 616 lines) injects that failure. |
+| P2-002 | `4200787`. Cache moved out of the route leaf into `src/lib/model/grid/profile-cache.ts` so sign-out purge can reach it by construction; re-exported from `src/lib/api/grid.ts` as a named list. `grid-cache.purge.test.ts` (new, 334 lines). |
+| P2-003 | Already satisfied on arrival — manifest carries `allowBackup="false"`, `fullBackupContent="false"`, `dataExtractionRules="@xml/data_extraction_rules"`, and ledger entry 19 holds on-device `dumpsys` evidence. Re-audited rather than trusted: keyring (`android-native-keyring-store` 0.5.0) writes to the `sharedpref` domain, excluded in **both** `<cloud-backup>` and `<device-transfer>`; AOSP `FullBackup.extractCanonicalFile` maps a path-less exclude to the domain dir and `isFileSpecifiedInPathList` matches by prefix, so the excludes genuinely bite. `ad016c4` closed one **defense-in-depth** gap: 4 of 9 valid domains (`device_root`/`device_file`/`device_database`/`device_sharedpref`) were unexcluded. Not exploitable today — nothing writes `/data/user_de` — but `getDirectoryForCriteriaDomain` silently skips unknown domains, so it would never have failed loudly. **Not validated by a real Android build** (no build run on the audit host). |
+| P2-004 | **The rescued commit shipped a live mutation.** `6a1115f` line 621 read `// MUTATION-1: release removed` inside a `finally` block whose own comment declares "THE SLOT-RELEASE CONTRACT. Unconditional, and the LAST thing that happens". Every authenticated fetch acquired a limiter slot and never returned it, saturating the cap at 4 and starving **30 tests** (and, via the same code path, 5 `api/index` purge tests). Fixed in `c760de9` (restore the release), `12bbe09` (`acquireFetchSlot` promised on the under-limit fast path, costing a microtask that the purge test's same-tick bridge release depended on), `4b1df26` (test teardown drain). Both implementation fixes are mutation-verified: reverting either reproduces the original failure. |
+| P2-005 | Register was **inverted**. The listener existed (`ws.svelte.ts:152`) but `grep -rn ws_error src-tauri/src/` returns zero — the emitter never existed (`git log -S ws_error -- src-tauri/src/api/ws.rs` = 0 commits); the listener arrived frontend-only. Removed in `b3419bd` rather than re-adding an emit: no diagnostic is swallowed, because `ws.rs:289` already `eprintln!`s and the terminal case surfaces the same text as `lastError`. |
+| P2-006 | 99 files, **0 tracked by git** (covered by `.gitignore:36 *.bak.*`). Archived to `/srv/archive/grindrx-bak-20261010/` with `MANIFEST.tsv` (sha256, path, mtime, counterpart-comparison), archive checksum-verified against source **before** anything was removed: **0 mismatches**. **96 of 99 hold content differing from their live counterpart** — these are real R4 audit trail and are referenced by `master_measurement_ledger.jsonl` and `measure-*.jsonl`; deleting them would have destroyed evidence. Only 3 were identical to their counterpart. |
+
+### Known non-P2 failure carried into the build
+
+`src/lib/components/telemetry-consent-dialog.dom.test.ts` fails **2 tests under full-suite
+parallel load only** (P1-001 telemetry consent, not a P2 item). It passes **8/8 in isolation,
+3 runs out of 3**, and the failing test *names* vary per run — a race, not a fixed defect.
+Under load the file takes ~43s vs ~1s alone. Not fixed here; recorded so the build is not
+mistaken for a clean full-suite run.
 
 ---
 
