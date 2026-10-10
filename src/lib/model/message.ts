@@ -114,7 +114,19 @@ export const videoMessageSchema = messageBaseSchema.safeExtend({
 	body: z.object({
 		mediaId: z.number().int().nonnegative().nullable(),
 		url: z.url().nullable(),
-		fileCacheKey: z.string(),
+		// `.optional()` matches OpenGrind upstream
+		// (`src/lib/model/messaging/messages.ts:117`). It was required here, which
+		// is stricter than the server contract: a video body with no `fileCacheKey`
+		// failed `apiResponseMessageSchema` and the message was dropped from the
+		// conversation entirely. Verified by differential introspection of both
+		// schemas (see `message-union-divergence.test.ts`) — this was one of only
+		// two body fields where GrindrX rejected a payload upstream accepts.
+		//
+		// Nothing reads `fileCacheKey` in the renderer (grepped: `message.ts` and its
+		// test only), so widening it to `string | undefined` ripples into no other
+		// module. `privateVideoMessageSchema` spreads this shape, so it inherits the
+		// fix.
+		fileCacheKey: z.string().optional(),
 		contentType: z.string().nullable(),
 		length: z.number().int().nonnegative(),
 		maxViews: z.number().int().nonnegative().nullable(),
@@ -269,6 +281,42 @@ export const videoCallMessageSchema = messageBaseSchema.safeExtend({
 
 export type VideoCallMessage = z.infer<typeof videoCallMessageSchema>;
 
+/**
+ * The message variant union.
+ *
+ * P1-012 asked to "merge the 2 extra variants present upstream". A differential
+ * comparison against OpenGrind (`/srv/projects/opengrind-upstream`,
+ * `src/lib/model/messaging/messages.ts`) shows the premise does not hold: both
+ * sides declare the SAME 21 members over the SAME 21 discriminators, and the two
+ * variants the register names — `Generative` and `NonExpiringVideo` — are already
+ * present here (`generativeMessageSchema`, `nonExpiringVideoMessageSchema`) and
+ * already listed in this union. So there is nothing to merge at the variant level.
+ *
+ * What upstream and GrindrX actually disagree about is the SHAPE of some bodies.
+ * Comparing every field of every member by introspecting both schemas yields six
+ * divergences, now pinned by `message-union-divergence.test.ts`:
+ *
+ *   FIXED HERE
+ *   - `Video`/`PrivateVideo` `.body.fileCacheKey` — optional upstream, required
+ *     here. Now optional.
+ *
+ *   STILL DIVERGENT — deliberately left alone, each fix belongs to a file outside
+ *   this change's ownership, and one of them would not compile without it:
+ *   - `Album`/`ExpiringAlbum`/`ExpiringAlbumV2` `.body.expirationType` — nullable
+ *     upstream, optional-but-not-nullable here. The `null` was dropped from
+ *     `albumExpirationSchema` in `$lib/model/album.ts`, which is not this file.
+ *   - `ExpiringImage` `.body.url` — nullable upstream. Here it inherits the
+ *     non-nullable `z.url()` from `imageBaseMessageSchema`. Making it nullable
+ *     widens `ExpiringImageMessage["body"]["url"]` to `string | null`, which
+ *     breaks the build in `message/ImageMessage.svelte` (it passes `message.url`
+ *     straight into `resolveAuthedImage(url: string)`), and that file is not this
+ *     file either. The schema and the renderer have to move together.
+ *
+ *   INTENTIONAL GRINDREX PERMISSIVENESS — kept, upstream is the stricter one:
+ *   - `Image`/`ExpiringImage` `.body.imageHash` — required upstream, nullable here.
+ *     This is deliberate hardening: a photo whose hash the server has not filled in
+ *     yet must still render rather than vanish.
+ */
 export const messageSchema = z.discriminatedUnion("type", [
 	albumMessageSchema,
 	albumContentReactionMessageSchema,
