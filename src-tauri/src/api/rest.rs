@@ -782,22 +782,96 @@ pub async fn fetch_media_bytes(url: String) -> Result<tauri::ipc::Response, AppE
     Ok(tauri::ipc::Response::new(body))
 }
 
-/// Fetch the latest release JSON for the in-app update banner.
+/// A release as returned by any of the sources we poll.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ReleaseManifest {
+    pub tag_name: String,
+    pub html_url: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub prerelease: bool,
+}
+
+/// Parse `v0.1.49` into `[0, 1, 49]` for numeric comparison.
+///
+/// Deliberately NOT string comparison: "v0.1.9" sorts ABOVE "v0.1.49" as text,
+/// which would hand an older build to every user. Non-numeric and trailing
+/// pre-release/build segments are dropped, so `v1.2.3-rc1` reads as `[1,2,3]`.
+fn parse_tag(tag: &str) -> Vec<u64> {
+    tag.trim_start_matches(['v', 'V'])
+        .split(['.', '-', '+'])
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+/// True when `candidate` is a strictly higher version than `incumbent`.
+fn tag_is_newer(candidate: &str, incumbent: &str) -> bool {
+    let (a, b) = (parse_tag(candidate), parse_tag(incumbent));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// Fetch one release manifest, returning `None` for anything unusable.
+///
+/// A source that is down, slow, rate-limited, serving a draft/prerelease, or
+/// returning a shape we do not understand yields `None` — never an error that
+/// would sink the other source.
+async fn fetch_release_manifest(http: &reqwest::Client, url: &str) -> Option<ReleaseManifest> {
+    let response = http
+        .get(url)
+        .header("Accept", "application/vnd.github+json, application/json")
+        .header("User-Agent", "GrindrX-UpdateCheck")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let bytes = stream_capped_body(response, MAX_PUBLIC_JSON_BYTES).await.ok()?;
+    let manifest: ReleaseManifest = serde_json::from_slice(&bytes).ok()?;
+    // A draft or prerelease must never be what a user is pushed onto.
+    if manifest.draft || manifest.prerelease {
+        return None;
+    }
+    Some(manifest)
+}
+
+/// Fetch the latest release JSON for the in-app update banner and force gate.
 ///
 /// This is done natively rather than with a WebView `fetch()` because the
 /// release API does not send `Access-Control-Allow-Origin`, so a browser fetch
 /// from the `tauri.localhost` origin is blocked by CORS and the update check
-/// silently fails. The URL is fixed (not caller-supplied), so there is no SSRF
+/// silently fails. The URLs are fixed (not caller-supplied), so there is no SSRF
 /// surface, and no Authorization header is attached.
 ///
-/// Points at THIS fork's public repo (`Tgbjr2025/grindrx`), not upstream
-/// open-grind — the banner must surface GrindrX releases, and the returned JSON
-/// carries `tag_name`, `html_url`, and `body` (the changelog shown as "what's
-/// new"). GitHub's API requires a `User-Agent` header or it answers 403.
+/// **POLLS EVERY SOURCE AND TAKES THE HIGHEST.** Both are public and read
+/// without a credential:
+///
+/// * `Tgbjr2025/grindrx` on GitHub
+/// * `dominusaxis/grindrx-work` on our own Forgejo
+///
+/// A single source makes one host's rate limit, outage, or deletion silently
+/// stop every user receiving updates — which is exactly how 0.1.40 through
+/// 0.1.49 went unpublished to users until 2026-10-10. "Highest wins" rather than
+/// "first success wins" so a lagging mirror can never hold users back.
+///
+/// Fails open: if every source is unusable the command errors, and BOTH callers
+/// treat that as "unavailable" — the banner hides itself and the gate does not
+/// block. Locking a healthy user out over a network blip is far worse.
 #[tauri::command]
 pub async fn fetch_latest_release() -> Result<String, AppError> {
-    const RELEASES_URL: &str =
+    const GITHUB_URL: &str =
         "https://api.github.com/repos/Tgbjr2025/grindrx/releases/latest";
+    const FORGEJO_URL: &str =
+        "https://git.dominusaxis.com/api/v1/repos/dominusaxis/grindrx-work/releases/latest";
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -807,23 +881,32 @@ pub async fn fetch_latest_release() -> Result<String, AppError> {
         .redirect(Policy::none())
         .build()
         .map_err(|e| AppError::Http(e.to_string()))?;
-    let response = http
-        .get(RELEASES_URL)
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "GrindrX-UpdateCheck")
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        return Err(AppError::Http(format!(
-            "release check failed with status {}",
-            response.status()
-        )));
+
+    // Sequential on purpose: the total is bounded by one timeout, and polling a
+    // second host only to discard its answer is harder to reason about than the
+    // half-second it costs.
+    let from_github = fetch_release_manifest(&http, GITHUB_URL).await;
+    let from_forgejo = fetch_release_manifest(&http, FORGEJO_URL).await;
+
+    let best = match (from_github, from_forgejo) {
+        (Some(g), Some(f)) => {
+            if tag_is_newer(&f.tag_name, &g.tag_name) {
+                Some(f)
+            } else {
+                Some(g)
+            }
+        }
+        (Some(g), None) => Some(g),
+        (None, Some(f)) => Some(f),
+        (None, None) => None,
+    };
+
+    match best {
+        Some(manifest) => serde_json::to_string(&manifest).map_err(|e| AppError::Http(e.to_string())),
+        None => Err(AppError::Http(
+            "no reachable release source".to_string(),
+        )),
     }
-    // B3: was `response.text().await` with NO cap.
-    Ok(
-        String::from_utf8_lossy(&stream_capped_body(response, MAX_PUBLIC_JSON_BYTES).await?)
-            .into_owned(),
-    )
 }
 
 /// Aggregate download stats source: fetches the GitHub + Forgejo release lists
@@ -838,7 +921,7 @@ pub async fn fetch_download_stats() -> Result<String, AppError> {
     const GITHUB_URL: &str =
         "https://api.github.com/repos/Tgbjr2025/grindrx/releases?per_page=100";
     const FORGEJO_URL: &str =
-        "https://git.dominusaxis.com/api/v1/repos/dominus/grindrx/releases?limit=50";
+        "https://git.dominusaxis.com/api/v1/repos/dominusaxis/grindrx-work/releases?limit=50";
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -1071,4 +1154,60 @@ pub async fn request_public(
         rmp_serde::encode::to_vec_named(&raw).map_err(|e| AppError::Http(e.to_string()))?;
 
     Ok(STANDARD.encode(&response_bytes))
+}
+
+#[cfg(test)]
+mod release_source_tests {
+    use super::{parse_tag, tag_is_newer, ReleaseManifest};
+
+    #[test]
+    fn parses_a_v_prefixed_tag() {
+        assert_eq!(parse_tag("v0.1.49"), vec![0, 1, 49]);
+    }
+
+    #[test]
+    fn compares_numerically_not_as_text() {
+        // THE bug this exists to prevent: as strings "v0.1.9" > "v0.1.49",
+        // so a text compare would hand 0.1.49 to a user already on 0.1.9.
+        assert!(tag_is_newer("v0.1.49", "v0.1.9"));
+        assert!(!tag_is_newer("v0.1.9", "v0.1.49"));
+        assert!(tag_is_newer("v0.2.0", "v0.1.99"));
+        assert!(tag_is_newer("v1.0.0", "v0.9.9"));
+    }
+
+    #[test]
+    fn equal_versions_are_not_newer() {
+        assert!(!tag_is_newer("v0.1.49", "v0.1.49"));
+        assert!(!tag_is_newer("v0.1.49", "0.1.49"));
+    }
+
+    #[test]
+    fn tolerates_missing_and_ragged_segments() {
+        assert!(tag_is_newer("v0.1.50", "v0.1"));
+        assert!(tag_is_newer("v1", "v0.9.9"));
+        // A non-numeric segment reads as 0, which is safe precisely because the
+        // comparator pads the shorter side with 0 as well — so "v1.2.3-rc1" and
+        // "v1.2.3" compare EQUAL rather than the pre-release looking newer.
+        assert!(!tag_is_newer("v1.2.3-rc1", "v1.2.3"));
+        assert!(!tag_is_newer("v1.2.3", "v1.2.3-rc1"));
+        // And a genuine prerelease is still below the next real release.
+        assert!(tag_is_newer("v1.2.4", "v1.2.3-rc1"));
+    }
+
+    #[test]
+    fn a_manifest_without_a_tag_or_url_is_unusable() {
+        // serde must reject these rather than hand the caller an empty string
+        // that would compare as version 0.
+        assert!(serde_json::from_str::<ReleaseManifest>(r#"{"html_url":"u"}"#).is_err());
+        assert!(serde_json::from_str::<ReleaseManifest>(r#"{"tag_name":"v1"}"#).is_err());
+    }
+
+    #[test]
+    fn a_manifest_defaults_its_flags_closed() {
+        let m: ReleaseManifest =
+            serde_json::from_str(r#"{"tag_name":"v1","html_url":"u","body":"n"}"#).unwrap();
+        assert!(!m.draft);
+        assert!(!m.prerelease);
+        assert_eq!(m.body, "n");
+    }
 }
