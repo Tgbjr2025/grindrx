@@ -3,6 +3,13 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.49": [
+		"Fixed: the app could get stuck showing the grid with no way to sign in. Signing out works again, including after a restart.",
+		"Fixed: photos stopped loading in the grid and in chats when you scrolled quickly.",
+		"Fixed: signing out did not always clear the previous account\u2019s photos from this device.",
+		"New: nothing leaves this device for usage statistics unless you say yes.",
+		"New: the launcher icon is orange again.",
+	],
 	"0.1.38": [
 		"Fixed: adding a photo said \"Photo added\" and then deleted it. Your photos are no longer overwritten when the list can't be read.",
 		"Fixed: the main photo can now be changed and deleted, and reordering is saved.",
