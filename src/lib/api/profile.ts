@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
+import { toBase64 } from "$lib/base64";
 import {
 	mediaHashPrivateSchema,
 	mediaHashPublicSchema,
@@ -261,20 +262,44 @@ export function clearMediaIdCache(): void {
 /**
  * Convert a byte array to a base64 string without stalling the main thread.
  *
- * The previous implementation built the binary string one `String.fromCharCode`
- * call per byte, which is O(n) JS-engine string concatenations and froze the
- * WebView on multi-MB images. We instead decode in fixed-size chunks via
- * `String.fromCharCode(...chunk)` (spread is bounded by `CHUNK` so we never blow
- * the argument-count limit) and concatenate a handful of chunk strings.
+ * Delegates to `$lib/base64`'s `toBase64` rather than keeping a second encoder
+ * here. Two encoders means one of them is always the un-chunked slow one — that
+ * is exactly what `$lib/base64` says it exists to stop, and this copy was the
+ * one it had not yet absorbed. Behaviour is byte-identical (both spellings were
+ * verified against each other for a full 0..255 byte sweep, a buffer spanning
+ * several 32 KiB chunk boundaries, and a non-zero-`byteOffset` subarray view);
+ * the shared one is strictly better because it takes the engine's native
+ * `Uint8Array.prototype.toBase64` when the WebView has it, which produces the
+ * base64 string without materialising the intermediate binary string at all.
+ * That intermediate is the size of the *inflated* payload — ~30 MB for a
+ * 22 MB photo — so on a WebView with the native encoder this deletes a
+ * full-size transient allocation from the upload path rather than chunking it.
+ *
+ * ## Why the upload crosses the bridge as base64 at all (P1-006)
+ *
+ * The remediation register recorded "double base64 round-trip (33% x 2)" here.
+ * It was measured against this tree and does NOT reproduce: every upload path
+ * performs exactly ONE encode (here) and ONE decode
+ * (`STANDARD.decode` in `src-tauri/src/api/rest.rs`, immediately before
+ * `reqwest` gets the raw bytes for the HTTP body). The +33% is paid once, on
+ * the IPC hop, and never on the wire to Grindr.
+ *
+ * The round trip that DID cost 33% twice was the DOWNLOAD direction — the old
+ * `fetch_authed_bytes` returned a `data:` URL, so raw bytes were base64'd in
+ * Rust, then base64'd AGAIN inside the `data:` URL, then parsed apart by the
+ * WebView. That was fixed before this finding was filed; see the comment on
+ * `fetch_authed_bytes` in `rest.rs`.
+ *
+ * Removing the remaining single encode is not possible without making things
+ * worse, and the obvious "fix" is actively harmful on this app's primary
+ * target. Tauri v2 has no raw-bytes channel from the WebView to a command on
+ * Android — `InvokeBody::Raw` is documented as unsupported there, and Tauri
+ * explicitly recommends a base64 `String` OVER passing the bytes as a JSON
+ * number array. See `profile.media-upload.test.ts`, which pins the one-encode
+ * invariant so a future change cannot quietly double it.
  */
 export function bytesToBase64(bytes: Uint8Array): string {
-	const CHUNK = 0x8000; // 32 KiB per fromCharCode call
-	let binary = "";
-	for (let i = 0; i < bytes.length; i += CHUNK) {
-		const chunk = bytes.subarray(i, i + CHUNK);
-		binary += String.fromCharCode(...chunk);
-	}
-	return btoa(binary);
+	return toBase64(bytes);
 }
 
 /**

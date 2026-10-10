@@ -346,6 +346,35 @@ pub struct UploadImageResult {
     pub body: String,
 }
 
+/// Upload raw media bytes to the chat-media endpoint and mint a `{ mediaId, … }`.
+///
+/// `image_base64` is a base64 STRING, not `Vec<u8>`, and that is deliberate — do
+/// not "optimise" it away. P1-006 asked for the image to cross the IPC boundary
+/// as raw bytes so the encode could happen once, at the HTTP upload. Measured
+/// against this tree that was wrong twice over:
+///
+///  1. There is only ONE conversion here already. The WebView encodes once
+///     (`bytesToBase64` in `$lib/api/profile`), this command decodes once, and
+///     `bytes` goes out as the raw reqwest body — so the +33% is paid on the
+///     IPC hop only and never on the wire to Grindr. The "33% x 2" round trip
+///     the register describes was the DOWNLOAD direction (the old
+///     `fetch_authed_bytes` returned a `data:` URL, base64'ing twice); that was
+///     fixed separately and is documented on `fetch_authed_bytes` below.
+///  2. Raw bytes are not available on Android, this app's primary target.
+///     `tauri`'s own `InvokeBody` docs state that `InvokeBody::Raw` is NOT
+///     supported on Android, and that passing the bytes "as a base64 String …
+///     is still more efficient than passing them as a number array" — because
+///     `InvokeBody::into_json` (`cfg(mobile)`) widens raw bytes into a JSON
+///     number array, which is ~3x the wire size of base64 rather than 1.33x.
+///     The WebView has no raw channel at all: `invoke()` hands the whole args
+///     object to `window.__TAURI_INTERNALS__` as JSON, and a `Uint8Array`
+///     stringifies to `{"0":…}`, which serde cannot even read as a `Vec<u8>`.
+///
+/// A real path off this would be "direct blob upload" — hand Rust a file path
+/// and let it stream the file off disk, skipping the IPC hop entirely — but the
+/// image has already been downscaled and EXIF-stripped into an in-memory Blob
+/// by then, so it would first have to be spilled to disk. It also changes a
+/// command signature shared with `$lib/api/audio.ts` and `$lib/api/album.ts`.
 #[tauri::command]
 pub async fn upload_image(
     state: tauri::State<'_, AppState>,
