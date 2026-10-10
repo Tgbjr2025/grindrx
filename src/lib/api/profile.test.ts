@@ -227,8 +227,8 @@ function jpegSegment(marker: number, payload: number[]): number[] {
 	return [0xff, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xff, ...payload];
 }
 
-const EXIF_PAYLOAD = "Exif  GPS:48.8584,2.2945 CAM:iPhone15,2 2026:10:05 11:22:33";
-const IPTC_PAYLOAD = "Photoshop 3.0 8BIM ";
+const EXIF_PAYLOAD = "Exif\x00\x00GPS:48.8584,2.2945 CAM:iPhone15,2 2026:10:05 11:22:33";
+const IPTC_PAYLOAD = "Photoshop 3.0\x008BIM\x00";
 const COM_PAYLOAD = "shot on my phone at home";
 
 /**
@@ -238,9 +238,9 @@ const COM_PAYLOAD = "shot on my phone at home";
 function jpegWithMetadata(): Uint8Array {
 	return Uint8Array.from([
 		0xff, 0xd8, // SOI
-		...jpegSegment(0xe0, ascii("JFIF    ")),
+		...jpegSegment(0xe0, ascii("JFIF\x00\x00\x01\x01\x00\x00")),
 		...jpegSegment(0xe1, ascii(EXIF_PAYLOAD)), // DROP
-		...jpegSegment(0xe2, ascii("ICCPROF  fake-profile")), // KEEP
+		...jpegSegment(0xe2, ascii("ICCPROF\x00\x00fake-profile")), // KEEP
 		...jpegSegment(0xed, ascii(IPTC_PAYLOAD)), // DROP
 		...jpegSegment(0xee, ascii("Adobe@dct@0")), // KEEP
 		...jpegSegment(0xfe, ascii(COM_PAYLOAD)), // DROP
