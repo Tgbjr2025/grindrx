@@ -36,6 +36,10 @@ import z from "zod";
 
 import { clearAllProfileCaches, clearMediaIdCache } from "$lib/api/profile";
 import { disablePin, setBiometricUnlock } from "$lib/app-data/app-lock.svelte";
+import {
+	clearPreferencesUntrusted,
+	markPreferencesUntrusted,
+} from "$lib/app-data/preferences.svelte";
 import { clearStoredViewers } from "$lib/app-data/viewers.svelte";
 import { purgeAuthedImageCache } from "$lib/utils/authed-image";
 import { writeAppDataFile } from ".";
@@ -198,6 +202,8 @@ const PURGED_PREFERENCES = {
 async function purgePreferencesFile(failures: string[]): Promise<void> {
 	try {
 		await remove(PREFERENCES_FILE, { baseDir: BaseDirectory.AppData });
+		// The file is gone, so there is nothing left to distrust.
+		clearPreferencesUntrusted();
 		return;
 	} catch (removeErr) {
 		console.warn(
@@ -210,8 +216,25 @@ async function purgePreferencesFile(failures: string[]): Promise<void> {
 			PREFERENCES_FILE,
 			encode(purgedPreferencesSchema.parse(PURGED_PREFERENCES)),
 		);
+		// Overwritten with a PII-free payload, so it is ours again and readable.
+		clearPreferencesUntrusted();
 	} catch (err) {
 		failures.push("preferences.data");
+		// DOUBLE FAILURE — the delete was refused AND the neutralising overwrite
+		// could not be written. The previous user's geohash is still on disk.
+		//
+		// Recording this in `failures` is necessary but NOT sufficient: `failures`
+		// is a local array that dies with this function, and `purgeAccountLocalData`
+		// returns normally because it must never throw. A console.error reaches
+		// logcat and nothing else. The next account's `getPreferences` would find
+		// the file, decode it cleanly (it is valid — it is simply not theirs) and
+		// inherit the previous account's location and private toggles.
+		//
+		// So the failure is ALSO recorded durably, in a different store from the
+		// filesystem that just refused us: `readPreferences` consults the marker
+		// and degrades to defaults instead of serving a purged account's data.
+		// See `PREFERENCES_UNTRUSTED_KEY` in `./preferences.svelte.ts`.
+		markPreferencesUntrusted();
 		console.error("[GrindrX] Failed to purge preferences file:", err);
 	}
 }

@@ -170,6 +170,11 @@ function remember(srcUrl: string, objectUrl: string): void {
  * ref-counts, so a stale `release()` closure from an unmounted `<img>` is a
  * harmless no-op instead of a double revoke.
  *
+ * It deliberately does NOT touch the fetch limiter (P2-004). Forcibly freeing
+ * slots here would admit more concurrent fetches than the configured limit,
+ * re-creating the memory spike the limiter exists to prevent; the in-flight
+ * fetches hold their slots until they settle and release normally.
+ *
  * Returns how many object URLs were revoked, so the caller can log a purge that
  * actually had something to free (a silent `0` is how a broken wiring hides).
  * Idempotent, and safe to call when the cache was never populated.
@@ -206,6 +211,10 @@ export function __resetAuthedImageCacheForTests(): void {
 	inflight.clear();
 	refCounts.clear();
 	retired.clear();
+	// The limiter is module state too. Left un-reset, a slot leaked by an earlier
+	// test would silently shrink the effective limit for every later one — and a
+	// leak assertion would be measuring the previous test's leak, not this one.
+	__resetImageFetchSemaphoreForTests();
 }
 
 /** Test-only introspection: how many object URLs are currently parked. */
@@ -311,16 +320,288 @@ function sniffMime(b: Uint8Array): string {
 	return "application/octet-stream";
 }
 
+// --- Image fetch concurrency limiter (P2-004) -------------------------------
+//
+// THE DEFECT THIS CLOSES. `MAX_ENTRIES` bounds how many blobs are RETAINED and
+// `inflight` bounds how many fetches run for the SAME url. Neither bounds how
+// many fetches run AT ALL. `CdnImage` (the grid), `ImageMessage`/`AlbumMessage`
+// (chat) and `MediaGallery` (lightbox) all call `resolveAuthedImage` on mount,
+// so opening a grid page or an album issued one `fetch_authed_bytes` IPC call
+// per tile simultaneously. Each of those returns a multi-MB `ArrayBuffer` that
+// is then wrapped in a Blob and an object URL, so N tiles meant N multi-MB
+// buffers materialising on the WebView main thread at once, plus N concurrent
+// calls saturating the Rust `reqwest` pool behind the Tauri IPC bridge. The
+// symptoms are a memory spike and a stalled main thread on exactly the screens
+// that render the most images — the opposite of what a photo grid should do.
+//
+// THE DEFAULT AND WHY IT IS 4.
+//
+//   * One grid page is roughly 12-20 tiles; an album opens several slides at
+//     once. At 4 the whole first screen is in flight almost immediately, because
+//     a typical tile fetch is far shorter than the 12s per-call timeout.
+//   * Below ~3 the grid fills visibly slower than the network can deliver, and
+//     the user perceives it as "scrolling is laggy".
+//   * Above ~8 the multi-MB buffer spike returns and the main-thread stall that
+//     motivated this limiter comes back with it.
+//
+// The honest ceiling: because each call keeps its existing 12s timeout, the
+// worst case for a burst of N images is ceil(N / limit) * 12s. That is the price
+// of bounded memory, and it is bounded on purpose — unbounded concurrency is not
+// "fast", it is a stall with a worse tail.
+const DEFAULT_MAX_CONCURRENT_FETCHES = 4;
+
+/**
+ * The effective cap on concurrent `fetch_authed_bytes` / `fetch_media_bytes`
+ * calls. `Infinity` is a supported, documented setting meaning "never queue" —
+ * that is the configuration in which the limiter is a true no-op.
+ */
+let maxConcurrentFetches: number = DEFAULT_MAX_CONCURRENT_FETCHES;
+
+/**
+ * Slots currently OCCUPIED — acquired, or transferred to a waiter that has not
+ * yet resumed. Counting the hand-off is what makes the queue exact: see
+ * {@link releaseFetchSlot}.
+ */
+let activeFetches = 0;
+
+/** Callers waiting for a slot, in ARRIVAL order (strict FIFO). */
+const fetchWaiters: SlotWaiter[] = [];
+
+interface SlotWaiter {
+	/**
+	 * Take a slot and continue. Increments {@link activeFetches} SYNCHRONOUSLY,
+	 * because the slot is transferred at this instant — before the waiter
+	 * resumes on a later microtask.
+	 */
+	grant: () => void;
+}
+
+/**
+ * Set the maximum number of concurrent image byte-fetches. Returns the limit
+ * actually adopted, so a caller can log a value that was clamped.
+ *
+ * SAFETY: a limit below 1 is not "slower", it is a DEADLOCK — every fetch would
+ * queue forever and no image in the app would ever render. There is no error to
+ * surface at that point, so the value is clamped up to 1 rather than accepted.
+ * `NaN` is treated the same way and falls back to the default, because
+ * `activeFetches < NaN` is ALWAYS false — a `NaN` limit hangs the whole app
+ * silently.
+ */
+export function setMaxConcurrentImageFetches(limit: number): number {
+	if (limit === Number.POSITIVE_INFINITY) {
+		maxConcurrentFetches = Number.POSITIVE_INFINITY;
+	} else if (Number.isFinite(limit)) {
+		maxConcurrentFetches = Math.max(1, Math.floor(limit));
+	} else {
+		maxConcurrentFetches = DEFAULT_MAX_CONCURRENT_FETCHES;
+	}
+	// Raising the limit must admit whoever is ALREADY waiting, not just whoever
+	// arrives next.
+	drainWaiters();
+	return maxConcurrentFetches;
+}
+
+/** The limit currently in force. */
+export function getMaxConcurrentImageFetches(): number {
+	return maxConcurrentFetches;
+}
+
+/**
+ * The signal a caller passes to abandon a fetch it no longer needs (e.g. a grid
+ * tile scrolled out of view before its queued fetch started).
+ *
+ * NOTE ON SCOPE: this is plumbed through the low-level byte fetchers ONLY, and
+ * deliberately NOT through `resolveAuthedImage`. That function de-duplicates
+ * concurrent callers through the shared `inflight` map, so one caller's abort
+ * would fail a DIFFERENT caller's identical fetch. A per-caller abort signal and
+ * a shared in-flight promise are incompatible; the shared promise wins, because
+ * breaking it would regress the de-dup that stops a thumbnail, a cover and a
+ * lightbox from fetching the same photo three times.
+ */
+export class ImageFetchAbortedError extends Error {
+	constructor() {
+		super("image fetch aborted before it started");
+		this.name = "AbortError";
+	}
+}
+
+/**
+ * Build the one-and-only release function for a slot.
+ *
+ * THE CONTRACT: exactly one `release()` per successful `acquireFetchSlot()`.
+ * The `released` flag is what makes a double release harmless. That matters
+ * because the mirror image of "a leaked slot" is "an over-released slot", which
+ * would silently re-admit more concurrent fetches than the configured limit and
+ * defeat the limiter entirely.
+ */
+function makeSlotRelease(): () => void {
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		releaseFetchSlot();
+	};
+}
+
+/**
+ * Hand a freed slot to the head of the queue, if anyone is waiting.
+ *
+ * The decrement and the hand-off are both SYNCHRONOUS, so `activeFetches` is
+ * never observably below the limit: a new caller can only run after this
+ * function returns, by which time the waiter has already been counted. Were
+ * the wake deferred to a microtask instead, a caller arriving in that gap would
+ * see a free slot, take it, and the woken waiter would then take a second one —
+ * admitting limit+1.
+ */
+function releaseFetchSlot(): void {
+	// `Math.max(0, …)` is defensive: after a test reset `activeFetches` is 0 and
+	// an already-outstanding task still releases its slot. Real double-releases
+	// are stopped by the `released` flag in {@link makeSlotRelease}.
+	activeFetches = Math.max(0, activeFetches - 1);
+	const next = fetchWaiters.shift();
+	if (next !== undefined) next.grant();
+}
+
+/** Admit waiters while there is room. Called after the limit is RAISED. */
+function drainWaiters(): void {
+	while (fetchWaiters.length > 0 && activeFetches < maxConcurrentFetches) {
+		fetchWaiters.shift()?.grant();
+	}
+}
+
+/**
+ * Take a fetch slot, or queue until one frees.
+ *
+ * Returns EITHER a release function OR a promise for one, never a bare promise:
+ * the fast path is resolved SYNCHRONOUSLY so that a caller under the limit
+ * dispatches its bridge call on the same tick it arrived on, exactly as it did
+ * before the limiter existed. Only the queued path costs a microtask, which is
+ * where the latency is actually being paid for. A caller therefore awaits this
+ * result with `await`, and `await` on a non-promise value does not yield.
+ *
+ * A REJECTION here means no slot was ever taken, so the caller has nothing to
+ * release. That is the only path out of this function that does not hand back a
+ * release function, and it is why `acquireFetchSlot` is not called inside the
+ * `try` whose `finally` releases.
+ */
+function acquireFetchSlot(
+	signal?: AbortSignal,
+): (() => void) | Promise<() => void> {
+	// Already abandoned before we even queued: fail fast rather than occupy a
+	// slot for a request nobody is waiting on.
+	if (signal?.aborted === true) {
+		return Promise.reject(new ImageFetchAbortedError());
+	}
+
+	// FAST PATH — under the limit. No queue, no deferral, no extra ordering: this
+	// is the "limiter is a no-op" case, and it is taken SYNCHRONOUSLY so the task
+	// starts on this tick exactly as it did before the limiter existed.
+	if (activeFetches < maxConcurrentFetches) {
+		activeFetches++;
+		return makeSlotRelease();
+	}
+
+	// SLOW PATH — queue. Strict FIFO on arrival.
+	//
+	// WHY FIFO AND NOT "profile photos over thumbnails": `resolveAuthedImage`
+	// receives a URL and nothing else — it cannot tell a 1024x1024 profile render
+	// from a 320x320 thumbnail, because `CdnImage` resolves both through the
+	// identical path. A priority scheme would therefore require changing call
+	// sites, and any priority scheme is a starvation risk: with a continuous
+	// arrival of low-priority thumbnails, a high-priority profile photo can wait
+	// forever, which is a WORSE failure than a slightly late thumbnail. FIFO is
+	// starvation-free by construction and needs no caller to change.
+	return new Promise<() => void>((resolve, reject) => {
+		let granted = false;
+
+		const onAbort = (): void => {
+			// Already running: the slot belongs to that task and is released by its
+			// own `finally`. Aborting here must not double-hand the slot.
+			if (granted) return;
+			const index = fetchWaiters.indexOf(waiter);
+			if (index >= 0) fetchWaiters.splice(index, 1);
+			reject(new ImageFetchAbortedError());
+		};
+
+		const waiter: SlotWaiter = {
+			grant: () => {
+				granted = true;
+				// The slot is transferred NOW, not when this waiter resumes: the
+				// releaser already decremented, and `drainWaiters` relies on this
+				// synchronous increment to avoid over-admitting.
+				activeFetches++;
+				signal?.removeEventListener("abort", onAbort);
+				resolve(makeSlotRelease());
+			},
+		};
+
+		signal?.addEventListener("abort", onAbort, { once: true });
+		fetchWaiters.push(waiter);
+	});
+}
+
+/** Test-only introspection: slots occupied right now. Must return to 0. */
+export function __imageFetchSlotsInUse(): number {
+	return activeFetches;
+}
+
+/** Test-only introspection: how many callers are queued for a slot. */
+export function __imageFetchSlotsQueued(): number {
+	return fetchWaiters.length;
+}
+
+/**
+ * Reset the limiter to its default and free anyone queued. Tests only, for the
+ * same reason `__resetAuthedImageCacheForTests` exists: this is module state,
+ * and a leak assertion in one test is meaningless if a previous test leaked a
+ * slot into it.
+ *
+ * Queued waiters are GRANTED (not rejected) so nothing is left hanging on a
+ * promise that will never settle; their tasks proceed and release normally.
+ */
+export function __resetImageFetchSemaphoreForTests(): void {
+	activeFetches = 0;
+	maxConcurrentFetches = DEFAULT_MAX_CONCURRENT_FETCHES;
+	const stranded = fetchWaiters.splice(0, fetchWaiters.length);
+	for (const waiter of stranded) waiter.grant();
+}
+
 /**
  * Low-level: fetch authed bytes for a grindr-hosted URL as raw bytes plus a
  * sniffed MIME type. Used by the upload re-encode path (which needs the bytes,
  * not a blob handle). Returns null for non-grindr hosts or on failure.
+ *
+ * The whole body runs inside ONE limiter slot. The `finally` that releases it is
+ * the reason a failed, timed-out or aborted fetch cannot leak a slot — a leaked
+ * slot is permanent, and `limit` permanent leaks means the app eventually stops
+ * loading ANY image for the rest of the process lifetime. That failure mode is
+ * strictly worse than the unbounded concurrency this limiter was added to fix,
+ * which is why it is pinned by tests rather than left to review.
  */
 export async function fetchAuthedBytes(
 	url: string,
+	signal?: AbortSignal,
 ): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
+	// Host classification first: a non-authed URL returns immediately and must
+	// never occupy a slot another image needs.
 	if (classifyHost(url) !== "auth") return null;
+
+	let release: (() => void) | undefined = undefined;
 	try {
+		// May REJECT when `signal` is already aborted — that happens BEFORE a slot
+		// is taken, so the `finally` below must not run and nothing leaks.
+		//
+		// The `instanceof` check is load-bearing, not a micro-optimisation: `await`
+		// costs a microtask even when its operand is already a plain value, so
+		// awaiting unconditionally would defer the bridge call by one tick on EVERY
+		// fetch — including the common under-the-limit case that is documented to
+		// behave exactly as it did before the limiter existed. When a caller starts
+		// a fetch and then synchronously acts on the bridge (the purge test releases
+		// its mock bridge in the very same tick), a one-tick deferral means the
+		// fetch has not started yet, and the whole burst then hangs on its 12s
+		// timeout. Only the queued path — where a real wait was already paid — awaits.
+		const slot = acquireFetchSlot(signal);
+		release = slot instanceof Promise ? await slot : slot;
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
 		// Clear the timer once the fetch settles so it doesn't dangle per call.
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -339,13 +620,25 @@ export async function fetchAuthedBytes(
 			clearTimeout(timer);
 		}
 	} catch (error) {
-		console.error(
-			"[GrindrX] fetch_authed_bytes failed for",
-			url.slice(0, 120),
-			"-",
-			error,
-		);
+		// An abort is a caller decision, not a fault: it is reported with the same
+		// `null` as any other failure because these fetchers never throw. Callers
+		// treat `null` as "fall back to the placeholder", which is exactly right
+		// for a tile that has scrolled away.
+		if (!(error instanceof ImageFetchAbortedError)) {
+			console.error(
+				"[GrindrX] fetch_authed_bytes failed for",
+				url.slice(0, 120),
+				"-",
+				error,
+			);
+		}
 		return null;
+	} finally {
+		// THE SLOT-RELEASE CONTRACT. Unconditional, and the LAST thing that
+		// happens: success, `invoke` rejection, the 12s timeout, a decode throw
+		// and an abort all land here. `release` is undefined only on the
+		// never-acquired abort path, where the optional call is a no-op.
+		release?.();
 	}
 }
 
@@ -363,8 +656,18 @@ export async function fetchAuthedBytes(
  */
 export async function fetchMediaBytes(
 	url: string,
+	signal?: AbortSignal,
 ): Promise<{ buffer: ArrayBuffer; mime: string } | null> {
+	// Same limiter as `fetchAuthedBytes`: this is a multi-MB CDN byte fetch over
+	// the same Rust bridge and the same connection pool, so leaving it unbounded
+	// would leave a hole in the cap for any caller that reaches for signed media.
+	// Holding a slot across only the FETCH (never across the re-encode or the
+	// upload that follows) is what keeps this from serialising the whole upload.
+	let release: (() => void) | undefined = undefined;
 	try {
+		// Same non-yielding fast path as `fetchAuthedBytes` — see the note there.
+		const slot = acquireFetchSlot(signal);
+		release = slot instanceof Promise ? await slot : slot;
 		// Hard timeout so a stuck bridge call can never hang album-load forever.
 		// Clear the timer once the fetch settles so it doesn't dangle per call.
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -383,13 +686,21 @@ export async function fetchMediaBytes(
 			clearTimeout(timer);
 		}
 	} catch (error) {
-		console.error(
-			"[GrindrX] fetch_media_bytes failed for",
-			url.slice(0, 120),
-			"-",
-			error,
-		);
+		// An abort is not a fault, so it is not logged as one — see the identical
+		// branch in `fetchAuthedBytes`.
+		if (!(error instanceof ImageFetchAbortedError)) {
+			console.error(
+				"[GrindrX] fetch_media_bytes failed for",
+				url.slice(0, 120),
+				"-",
+				error,
+			);
+		}
 		return null;
+	} finally {
+		// Same unconditional slot release as `fetchAuthedBytes`. See THE
+		// SLOT-RELEASE CONTRACT above.
+		release?.();
 	}
 }
 
