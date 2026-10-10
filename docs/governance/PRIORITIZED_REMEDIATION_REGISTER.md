@@ -61,11 +61,13 @@
 
 ## P3 — Cleanup / Cosmetic
 
-| ID | Finding | Domain | Status |
-|----|---------|--------|--------|
-| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | OPEN |
-| P3-002 | 17 unrelated `claude/*` remote branches | 11 | OPEN |
-| P3-003 | Binary test file `profile.test.ts` should be TypeScript or removed | 01 | OPEN |
+| ID | Finding | Domain | Status | Verification |
+|----|---------|--------|--------|--------------|
+| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | IMPLEMENTED | Commit `500b505`. Measured **22** tracked files, not 23; **21 are legitimate** (historical prose in `CdnImage.svelte`, `ProfileMiniCard.svelte`, `cdn-image-layout.guard.test.ts`, `vite.config.mjs`; changelog key `whats-new.ts:6`; release records in `CHANGES.md`, fastlane, `memory/`, ledgers). **One live bug fixed**: `tauri.conf.json:22` webview `userAgent` `0.1.38` → `0.1.48`. Drift cannot recur — `.github/workflows/version-check.yml` already fails when `userAgent` lacks `.version`; replayed against old file (exit 1) and new file (pass). `headers.rs` `APP_VERSION = "26.9.1.163471"` is the **spoofed Grindr client** version, deliberately untouched. **`README.md:5` "Current release: v0.1.38" is genuinely stale and NOT fixed — R23 forbids it.** CI not yet run on branch; ledger not updated (`.jsonl` outside this pass's ownership) → not yet `VERIFIED`. |
+| P3-002 | 17 unrelated `claude/*` remote branches | 11 | TRIAGED | **Nothing deleted.** Full inventory produced: 17 refs, 12 distinct names, 3 remotes (`github`, `grindrx-forgejo`, `origin`). **9 safe**, **8 hold unmerged work**. `--is-ancestor` alone is misleading — `claude/grindrx-freeze-json-audit-gp4lnk` reads UNIQUE/54 but `git cherry` returns 54 `-` / 0 `+` (all patches already in main, SHAs differ from rewritten history). `github/claude/phone-battery-drain-77zz36` holds 1 real commit (`d7d950b`, `ws.rs` battery/backoff constants absent from main). Awaiting operator approval; delete commands supplied in report, not run. |
+| P3-003 | Binary test file `profile.test.ts` should be TypeScript or removed | 01 | IMPLEMENTED | Commit `d0cf011`. File kept (it is valid TypeScript; only its encoding was broken). **12** control bytes total — the 10 NULs plus 2 raw `0x01`, all inside string literals feeding `ascii()`. They are meaningful JPEG bytes (EXIF `Exif\0\0`, `8BIM`, JFIF/ICC padding), so they were **re-encoded as `\x00`/`\x01` escapes, not deleted**. `file -b`: `data` → `JavaScript source, Unicode text, UTF-8 text`. Size `21351` → `21387` (+36 = 12 × +3). All 24 string literals proven byte-identical at runtime by `node` char-code comparison. `vitest run src/lib/api/profile.test.ts` → **30/30 pass**, same as baseline. Pre-existing eslint import-sort errors and prettier warning untouched (confirmed present at HEAD). |
+
+Full method, byte offsets and reasoning: `memory/FIX_NOTES_p3_cleanup_20261010.md`.
 
 ---
 
