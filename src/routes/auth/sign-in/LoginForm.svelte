@@ -30,7 +30,12 @@
 			});
 			void goto("/");
 		} catch (error) {
-			console.error(error);
+			// Marker restored from bb05c55. A bare `console.error(error)` in the
+			// sign-in path is indistinguishable from any other rejected promise in
+			// logcat; `vite.config.mjs` strips console.log in production but keeps
+			// console.error, so this line is the only thing marking "the login
+			// call itself failed" rather than "something else did".
+			console.error("LOGIN_ERR:", error);
 			const appError = asAppError(error);
 			if (appError) {
 				if (
