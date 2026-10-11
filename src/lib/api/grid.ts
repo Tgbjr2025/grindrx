@@ -1,6 +1,7 @@
 import z from "zod";
 
 import { fetchRest } from "$lib/api";
+import { rememberProfileIdentities } from "$lib/app-data/profile-identity-cache.svelte";
 import { cascadeV3QuerySchema } from "$lib/model/grid/cascade/query/v3";
 import { cascadeV3ResponseSchema } from "$lib/model/grid/cascade/response/v3";
 import { searchProfileSchema, searchQuerySchema } from "$lib/model/grid/search";
@@ -37,7 +38,13 @@ export {
 } from "$lib/model/grid/profile-cache";
 
 export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
-	return await fetchRest(
+	// Feed the hash -> profileId index from the parsed results. Search is one of
+	// the places the user legitimately discovers a profile, and the response's
+	// `profileImageMediaHash` is the same field masked viewer rows carry — so a
+	// profile found this way can be linked back from a masked viewer later.
+	// Done at the parse boundary so it is recorded once per response rather than
+	// per component that happens to render a search result.
+	const result = await fetchRest(
 		"/v7/search?" +
 			new URLSearchParams(
 				urlSearchParamsCodec(searchQuerySchema).encode(query),
@@ -60,6 +67,8 @@ export async function searchProfiles(query: z.infer<typeof searchQuerySchema>) {
 			}),
 		),
 	);
+	rememberProfileIdentities(result.profiles);
+	return result;
 }
 
 /**

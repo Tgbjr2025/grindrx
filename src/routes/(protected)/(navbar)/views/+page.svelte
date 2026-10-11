@@ -5,7 +5,12 @@
 
 	import { fetchRest } from "$lib/api";
 	import { getDistanceUnit } from "$lib/app-data/distance-unit.svelte";
-	import { getStoredViewers, recordViewers } from "$lib/app-data/viewers.svelte";
+	import { countIdentityConflicts } from "$lib/app-data/profile-identity-cache.svelte";
+	import {
+		getStoredViewers,
+		recordViewers,
+		resolveViewerProfileId,
+	} from "$lib/app-data/viewers.svelte";
 	import CdnImage from "$lib/components/CdnImage.svelte";
 	import { Button } from "$lib/components/ui/button";
 	import * as Empty from "$lib/components/ui/empty";
@@ -21,10 +26,13 @@
 	//
 	// The masking is SERVER-SIDE: `ProfileMasked`
 	// (docs/content/grindr-api/users/profiles.md#ProfileMasked) genuinely carries
-	// no `profileId`, so a masked row cannot be made clickable by any client
-	// change — that needs a paid tier. What we CAN fix is (a) not throwing away
-	// rows we do have ids for, and (b) making the masked rows informative rather
-	// than a row of identical "Anonymous" rows.
+	// no `profileId`, so the SERVER will never unmask it — that needs a paid
+	// tier. What we CAN do is resolve a masked row against profile identities the
+	// app has already legitimately seen, by matching `profileImageMediaHash`.
+	// That happens inside `recordViewers` (see `$lib/app-data/viewers.svelte`),
+	// which is called with the server rows below, so by the time `storedRows()`
+	// reads the history back a resolved row is already clickable and needs no
+	// special case here. The server's own rows are rendered as-is.
 	//
 	// Tolerant numeric-or-string timestamp: `seen` is documented as unix
 	// milliseconds, but a string form previously failed `z.number()` and was
@@ -125,24 +133,44 @@
 	const views = $derived.by(async () => {
 		void tick;
 		const r = await fetchRest("/v7/views/list").then((res) => res.jsonParsed(responseSchema));
-		const toRow = (p: View, i: number, bucket: string): Row => ({
-			// Key on the real id when we have one so a viewer present in both
-			// arrays can't collide, and the keyed each below stays stable.
-			key: p.profileId != null ? `p${p.profileId}` : `${bucket}${i}`,
-			// Only a genuine positive id is clickable — never `null`/0.
-			clickable: p.profileId != null,
-			profileId: p.profileId ?? undefined,
-			displayName: p.displayName ?? null,
-			profileImageMediaHash: p.profileImageMediaHash ?? null,
-			seen: p.seen ?? p.lastViewed ?? null,
-			distance: p.distance ?? null,
-			viewCount: p.viewedCount?.totalCount ?? 0,
-			isSecretAdmirer: p.isSecretAdmirer ?? false,
-		});
-		const rows: Row[] = [
-			...r.profiles.map((p, i) => toRow(p, i, "v")),
+		const toRow = (p: View, i: number, bucket: string): Row => {
+			// Resolve a masked row by photo hash against identities the app already
+			// has. `resolveViewerProfileId` is the SAME function `recordViewers`
+			// uses, so there is exactly one implementation of the rule that a
+			// server-provided id is never overwritten — the live list and the stored
+			// history cannot disagree.
+			const profileId = resolveViewerProfileId({
+				profileId: p.profileId,
+				profileImageMediaHash: p.profileImageMediaHash,
+			});
+			return {
+				// Key on the resolved id when we have one, so a viewer present in
+				// both arrays can't collide and the keyed each below stays stable
+				// across a refresh that resolves them.
+				key: profileId != null ? `p${profileId}` : `${bucket}${i}`,
+				// Only a genuine positive id is clickable — never `null`/0.
+				clickable: profileId != null,
+				profileId: profileId ?? undefined,
+				displayName: p.displayName ?? null,
+				profileImageMediaHash: p.profileImageMediaHash ?? null,
+				seen: p.seen ?? p.lastViewed ?? null,
+				distance: p.distance ?? null,
+				viewCount: p.viewedCount?.totalCount ?? 0,
+				isSecretAdmirer: p.isSecretAdmirer ?? false,
+			};
+		};
+		// The views we accepted from the response, kept as RAW server rows (unresolved)
+		// so the store below does its own resolution. See the `recordViewers` call.
+		const accepted: View[] = [
+			...r.profiles,
 			// A preview that DOES carry an id is clickable like any other row;
 			// de-duplicate against the profiles bucket so a viewer is listed once.
+			...r.previews.filter(
+				(p) => p.profileId == null || !r.profiles.some((q) => q.profileId === p.profileId),
+			),
+		];
+		const rows: Row[] = [
+			...r.profiles.map((p, i) => toRow(p, i, "v")),
 			...r.previews
 				.filter((p) => p.profileId == null || !r.profiles.some((q) => q.profileId === p.profileId))
 				.map((p, i) => toRow(p, i, "w")),
@@ -151,18 +179,23 @@
 		// Fold this response into the on-device history (last 50). `/v7/views/list`
 		// is a rolling window with no cursor, so a viewer who leaves it is simply
 		// gone — without this, closing the screen erased the record. Masked rows
-		// are stored too: they keep the photo/distance/count and become clickable
-		// by themselves if Grindr later reveals the id.
+		// are stored too: they keep the photo/distance/count, and become clickable
+		// either because Grindr later reveals the id or because the hash resolves.
+		//
+		// The RAW server rows are passed, not the resolved `rows` above, so the
+		// stored history is built by the store's own resolution rather than by
+		// this screen's. One source of truth, and a resolution bug cannot be
+		// masked by the screen happening to pre-resolve.
 		recordViewers(
-			rows.map((row) => ({
-				profileId: row.profileId ?? null,
-				displayName: row.displayName,
-				profileImageMediaHash: row.profileImageMediaHash,
-				seen: row.seen,
-				distance: row.distance,
-				viewCount: row.viewCount,
-				isSecretAdmirer: row.isSecretAdmirer,
-				masked: !row.clickable,
+			accepted.map((p) => ({
+				profileId: p.profileId,
+				displayName: p.displayName,
+				profileImageMediaHash: p.profileImageMediaHash,
+				seen: p.seen ?? p.lastViewed ?? null,
+				distance: p.distance ?? null,
+				viewCount: p.viewedCount?.totalCount ?? 0,
+				isSecretAdmirer: p.isSecretAdmirer ?? false,
+				masked: p.profileId == null,
 			})),
 		);
 
@@ -224,6 +257,19 @@
 					<span class="opacity-70">· saved history</span>
 				{/if}
 			</p>
+			<!--
+				Ambiguous photo hashes — one hash that matched two different known
+				profile ids. Those rows are deliberately left UNRESOLVED rather than
+				guessed, so this count is why a row you expected to be linked is not.
+				Shown only when non-zero; it is a diagnostic, not an error state.
+			-->
+			{#if countIdentityConflicts() > 0}
+				<p class="text-xs text-muted-foreground/70 px-3 pb-1">
+					{countIdentityConflicts()} photo
+					{countIdentityConflicts() === 1 ? "hash is" : "hashes are"} ambiguous and left
+					unlinked
+				</p>
+			{/if}
 			<ul class="flex flex-col py-2">
 				{#each shown as view (view.key)}
 					<li>

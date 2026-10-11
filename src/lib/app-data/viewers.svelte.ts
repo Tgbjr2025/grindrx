@@ -11,16 +11,38 @@
  * The operator asked for the last 50 to be kept and reachable. This stores them
  * on the device so they survive restarts and accumulate.
  *
- * WHAT THIS CANNOT DO — read before promising anyone a link: Grindr masks most
- * viewers SERVER-SIDE. A masked row genuinely carries no `profileId` (documented
- * as `ProfileMasked` in `docs/content/grindr-api/users/profiles.md`, and noted
- * by the Views screen itself), so there is no profile page to link to and no
- * client change can invent one — that needs a paid tier. Rows therefore carry
+ * WHAT THIS STILL CANNOT DO — read before promising anyone a link: Grindr masks
+ * most viewers SERVER-SIDE. A masked row genuinely arrives with no `profileId`
+ * (documented as `ProfileMasked` in `docs/content/grindr-api/users/profiles.md`,
+ * and noted by the Views screen itself), so no client change can make the SERVER
+ * unmask it — that needs a paid tier. Rows therefore carry
  * `profileId: number | null`, and `clickable` is derived from it rather than
- * assumed. Storing a masked row is still worth it: it preserves the count, the
- * photo, the distance and the view count, and it upgrades to clickable by itself
- * if Grindr later unmasks that viewer.
+ * assumed.
+ *
+ * BUT A MASKED ROW IS NOT ALWAYS A DEAD END ANY MORE. A masked row still
+ * carries `profileImageMediaHash`, and that hash also appears in every full
+ * profile the app has already parsed — the cascade, `/v3/profiles` batch
+ * resolves, `/v7/search`, any profile screen opened. `profile-identity-cache`
+ * indexes those `hash -> profileId` pairs, and {@link resolveViewerProfileId}
+ * consults it at INGEST time, so the stored row is already correct and the UI
+ * needs no special case: the Views screen renders `clickable` from `profileId`
+ * exactly as it always has.
+ *
+ * Two properties of that resolution are load-bearing and must not be traded
+ * away (both are pinned by tests in `viewers.svelte.test.ts`):
+ *
+ *   - A server-provided `profileId` is AUTHORITATIVE and is NEVER overwritten.
+ *     Resolution only ever fills a `null`. A server id is ground truth; a hash
+ *     match is an inference.
+ *   - An ambiguous hash (one that matches two different known ids) is left
+ *     UNRESOLVED and counted, never guessed. A wrong link sends the user to
+ *     someone else's profile, which is worse than an unclickable row.
+ *
+ * A masked viewer the user has genuinely never seen in their own profile data
+ * still stays unresolved. That is the honest floor.
  */
+
+import { lookupProfileIdByHash } from "$lib/app-data/profile-identity-cache.svelte";
 
 /** Cap requested by the operator. Oldest rows are dropped first. */
 export const MAX_STORED_VIEWERS = 50;
@@ -64,6 +86,47 @@ export type ViewerInput = {
 	isSecretAdmirer?: boolean | null;
 	masked?: boolean;
 };
+
+/** A `profileId` only when the server really gave us a usable one. */
+function serverProfileId(input: ViewerInput): number | null {
+	return typeof input.profileId === "number" && Number.isInteger(input.profileId)
+		? input.profileId
+		: null;
+}
+
+/**
+ * The `profileId` this row should be stored with, resolving a masked one by hash.
+ *
+ * The order below IS the safety property, so read it as a whole:
+ *
+ *  1. A real server id wins outright. It is never replaced by a resolved id,
+ *     even when the row's hash also matches some other known profile — a server
+ *     id is ground truth about who this is, and a hash match is an inference
+ *     about it.
+ *  2. Otherwise a previously stored id is kept. A row that was already
+ *     resolved (or un-masked by Grindr) must not regress to unclickable
+ *     because this particular response was masked.
+ *  3. Otherwise, and only otherwise, try the hash index. An unknown or
+ *     ambiguous hash resolves to `null`, which is the pre-existing behaviour.
+ *
+ * Pure and total: it cannot throw, and every uncertain path returns `null`
+ * rather than dropping the row.
+ */
+export function resolveViewerProfileId(
+	input: ViewerInput,
+	previous?: StoredViewer,
+): number | null {
+	const serverId = serverProfileId(input);
+	if (serverId !== null) return serverId;
+	if (previous?.profileId != null) return previous.profileId;
+	try {
+		return lookupProfileIdByHash(input.profileImageMediaHash);
+	} catch {
+		// Resolution is best-effort: a viewer row is never dropped or errored
+		// because resolution failed. Leaving it unresolved is the honest result.
+		return null;
+	}
+}
 
 /**
  * Identity for a viewer row.
@@ -112,12 +175,16 @@ export function toStoredViewer(
 		typeof input.seen === "number" && Number.isFinite(input.seen)
 			? input.seen
 			: (previous?.seen ?? null);
+	// The ONE place resolution happens, at ingest. `mergeViewers` keys by
+	// `viewerKey(input)` before calling this, so a masked row is looked up under
+	// its masked key and the resolved id is applied to the row it produces.
+	const resolvedId = resolveViewerProfileId(input, previous);
 	return {
-		key: viewerKey(input),
-		profileId:
-			typeof input.profileId === "number" && Number.isInteger(input.profileId)
-				? input.profileId
-				: (previous?.profileId ?? null),
+		// Key on the RESOLVED id so a row that resolution just linked de-duplicates
+		// against that same viewer arriving unmasked later, instead of leaving two
+		// rows for one person.
+		key: viewerKey({ ...input, profileId: resolvedId }),
+		profileId: resolvedId,
 		displayName: input.displayName ?? previous?.displayName ?? null,
 		profileImageMediaHash:
 			input.profileImageMediaHash ?? previous?.profileImageMediaHash ?? null,
@@ -129,9 +196,12 @@ export function toStoredViewer(
 		viewCount: Math.max(input.viewCount ?? 0, previous?.viewCount ?? 0),
 		isSecretAdmirer:
 			input.isSecretAdmirer ?? previous?.isSecretAdmirer ?? false,
-		// A viewer who was masked and is now visible is no longer masked. The
-		// reverse (visible -> masked) does not happen and would be a server bug.
-		masked: input.profileId == null ? (input.masked ?? true) : false,
+		// A viewer is masked exactly when we have no profile id for them. That is
+		// now derived from the RESOLVED id, so a row we resolved by hash is
+		// correctly no longer masked (and therefore clickable). Deriving it from
+		// `input.profileId` alone would keep a resolved row wearing the "masked"
+		// label while holding a usable id — the two fields would disagree.
+		masked: resolvedId == null ? (input.masked ?? true) : false,
 		firstSeenAt: previous?.firstSeenAt ?? now,
 		updatedAtAt: now,
 	};
@@ -155,8 +225,48 @@ export function mergeViewers(
 	for (const row of stored) byKey.set(row.key, row);
 
 	for (const input of incoming) {
-		const key = viewerKey(input);
-		byKey.set(key, toStoredViewer(input, now, byKey.get(key)));
+		// A masked row is keyed by what we know about it (name/photo/distance),
+		// but the row we STORE is keyed by its resolved profileId. Resolve BEFORE
+		// keying so the map and the row agree — otherwise the next merge would
+		// look this viewer up under the masked key, miss, and rebuild it from
+		// scratch, losing `firstSeenAt` and the accumulated view count.
+		const maskedKey = viewerKey(input);
+		const resolvedId = resolveViewerProfileId(input);
+		const key = viewerKey({ ...input, profileId: resolvedId });
+
+		let previous = byKey.get(maskedKey);
+		if (previous === undefined && maskedKey !== key) {
+			previous = byKey.get(key);
+		}
+		if (previous === undefined && resolvedId === null && input.profileImageMediaHash != null) {
+			// ONLY for a row that stays unresolved. A row with a server id (or a
+			// resolved one) is already keyed by that id and was looked up by it
+			// above; scanning by hash for it would adopt an unrelated profile that
+			// merely shares the same photo, collapsing genuinely distinct viewers
+			// into one row.
+			//
+			// The remaining case is the one that matters: a row we resolved (or
+			// Grindr un-masked) on an earlier fetch, now masked again and no longer
+			// resolvable. The stored id is kept rather than regressing the row to
+			// unclickable.
+			for (const candidate of byKey.values()) {
+				if (
+					candidate.profileId != null &&
+					candidate.profileImageMediaHash === input.profileImageMediaHash
+				) {
+					previous = candidate;
+					break;
+				}
+			}
+		}
+
+		const row = toStoredViewer(input, now, previous);
+		// The row may have moved keys (masked -> resolved). Drop the entry it used
+		// to live under so one person is never listed twice.
+		if (previous !== undefined && previous.key !== row.key) {
+			byKey.delete(previous.key);
+		}
+		byKey.set(row.key, row);
 	}
 
 	// Newest first: most recent view, then most recently refreshed as a
