@@ -17,8 +17,8 @@ The app also checks for updates on its own: when a newer release exists, an in-a
 ### Verify your download
 
 ```
-SHA-256 (GrindrX-v0.1.51.apk):  9f3f4e6d6a1c2b8e0f4a7d5c3e9b2f8a1d6c4e7b0f9a3c5e8d2b6f1a4c7e0d3b
-Size:                           71,440,981 bytes
+SHA-256 (GrindrX-v0.1.51.apk):  28555351a12f9b8f7fb9232848866beac51b9a38b5fa25c4890cf50663422f74
+Size:                           71,446,857 bytes
 certificate:                    22d6889ef07459a20919d48afffe7ed7a4e3903039e15542767cedcdff8d4c01
 ```
 
