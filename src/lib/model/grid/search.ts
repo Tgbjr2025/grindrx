@@ -50,5 +50,17 @@ export const searchProfileSchema = z.object({
 	displayName: z.string().nullable(),
 	age: z.int().nonnegative().nullable(),
 	distance: z.number().nullable(),
+	// The `/v7/search` response documents this field
+	// (docs/content/grindr-api/browse/grid.md, Search response), but the schema
+	// never declared it, so Zod stripped it from every parsed search result.
+	// It is what the masked-viewer resolution matches on — see
+	// `$lib/app-data/profile-identity-cache.svelte` — so a profile the user found
+	// by searching could not be linked back from a masked viewer row.
+	//
+	// Deliberately `z.string()` rather than `mediaHashPublicSchema`: this field is
+	// only ever an index key (the cache validates the 40-hex shape itself), so a
+	// private/signed hash must degrade to a usable string rather than fail the
+	// whole profile's parse and drop it from the search results.
+	profileImageMediaHash: z.string().nullable().optional().catch(null),
 	medias: z.array(z.object({ mediaHash: mediaHashPublicSchema })).nullable(),
 });

@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+	countIdentityConflicts,
+	purgeProfileIdentityCache,
+	rememberProfileIdentity,
+} from "./profile-identity-cache.svelte";
 import {
 	MAX_STORED_VIEWERS,
 	mergeViewers,
+	resolveViewerProfileId,
 	type StoredViewer,
 	toStoredViewer,
 	type ViewerInput,
@@ -10,6 +16,33 @@ import {
 } from "./viewers.svelte";
 
 const NOW = 1_700_000_000_000;
+
+/** Real-shaped 40-hex hashes — the identity module validates that shape. */
+const HASH_KNOWN = "a".repeat(40);
+const HASH_OTHER = "b".repeat(40);
+const HASH_SERVER = "c".repeat(40);
+
+function createMemoryStorage(): Storage {
+	const map = new Map<string, string>();
+	return {
+		get length() {
+			return map.size;
+		},
+		clear: () => map.clear(),
+		getItem: (k: string) => map.get(k) ?? null,
+		key: (i: number) => [...map.keys()][i] ?? null,
+		removeItem: (k: string) => void map.delete(k),
+		setItem: (k: string, v: string) => void map.set(k, v),
+	} as Storage;
+}
+
+// The identity index is module-level state shared with the tests above. Each
+// test starts from a purged index and an empty store, or a leak assertion is
+// satisfied by bookkeeping a previous test left behind.
+beforeEach(() => {
+	vi.stubGlobal("localStorage", createMemoryStorage());
+	purgeProfileIdentityCache();
+});
 
 function viewer(overrides: Partial<ViewerInput> = {}): ViewerInput {
 	return {
@@ -213,5 +246,288 @@ describe("mergeViewers", () => {
 		);
 		expect(merged.filter((v) => v.profileId != null)).toHaveLength(1);
 		expect(merged.filter((v) => v.masked)).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Hash resolution of masked rows.
+//
+// The four properties below are the safety contract. A green suite that stops
+// asserting them is worse than no suite: it would report success while the app
+// linked a viewer to the wrong person.
+// ---------------------------------------------------------------------------
+
+describe("resolveViewerProfileId", () => {
+	it("(a) resolves a masked row whose hash the app has already seen", () => {
+		rememberProfileIdentity({
+			profileId: 4242,
+			profileImageMediaHash: HASH_KNOWN,
+		});
+		expect(
+			resolveViewerProfileId({
+				profileId: null,
+				profileImageMediaHash: HASH_KNOWN,
+			}),
+		).toBe(4242);
+	});
+
+	it("(b) NEVER overwrites a server id, even when the hash matches another id", () => {
+		// The index knows this hash as profile 99. The server says it is 7.
+		rememberProfileIdentity({ profileId: 99, profileImageMediaHash: HASH_SERVER });
+		expect(
+			resolveViewerProfileId({
+				profileId: 7,
+				profileImageMediaHash: HASH_SERVER,
+			}),
+		).toBe(7);
+	});
+
+	it("(b) a server id survives even when the hash is NOT indexed at all", () => {
+		expect(
+			resolveViewerProfileId({
+				profileId: 7,
+				profileImageMediaHash: HASH_OTHER,
+			}),
+		).toBe(7);
+	});
+
+	it("(c) an unknown hash leaves the row unresolved", () => {
+		expect(
+			resolveViewerProfileId({
+				profileId: null,
+				profileImageMediaHash: HASH_OTHER,
+			}),
+		).toBeNull();
+	});
+
+	it("(c) a row with no hash at all stays unresolved and does not throw", () => {
+		expect(resolveViewerProfileId({ profileId: null })).toBeNull();
+		expect(
+			resolveViewerProfileId({
+				profileId: null,
+				profileImageMediaHash: null,
+			}),
+		).toBeNull();
+	});
+
+	it("(d) a hash colliding to two known ids is NOT resolved", () => {
+		rememberProfileIdentity({ profileId: 1, profileImageMediaHash: HASH_KNOWN });
+		rememberProfileIdentity({ profileId: 2, profileImageMediaHash: HASH_KNOWN });
+		expect(
+			resolveViewerProfileId({
+				profileId: null,
+				profileImageMediaHash: HASH_KNOWN,
+			}),
+		).toBeNull();
+		// ...and it is surfaced rather than swallowed.
+		expect(countIdentityConflicts()).toBe(1);
+	});
+
+	it("(d) an existing server id still wins over a conflicted hash", () => {
+		rememberProfileIdentity({ profileId: 1, profileImageMediaHash: HASH_KNOWN });
+		rememberProfileIdentity({ profileId: 2, profileImageMediaHash: HASH_KNOWN });
+		expect(
+			resolveViewerProfileId({
+				profileId: 7,
+				profileImageMediaHash: HASH_KNOWN,
+			}),
+		).toBe(7);
+	});
+
+	it("keeps a previously stored id rather than regressing to unresolved", () => {
+		// A row resolved (or un-masked) on an earlier fetch must not go dead
+		// because this response masked it again.
+		const previous = toStoredViewer(
+			{ profileId: 5, displayName: "Sam", profileImageMediaHash: HASH_OTHER },
+			NOW,
+		);
+		expect(
+			resolveViewerProfileId(
+				{
+					profileId: null,
+					displayName: "Sam",
+					profileImageMediaHash: HASH_OTHER,
+					masked: true,
+				},
+				previous,
+			),
+		).toBe(5);
+	});
+});
+
+describe("toStoredViewer with resolution", () => {
+	it("(a) stores a resolved masked row as clickable, not masked", () => {
+		rememberProfileIdentity({
+			profileId: 4242,
+			profileImageMediaHash: HASH_KNOWN,
+		});
+		const stored = toStoredViewer(
+			{
+				profileId: null,
+				displayName: "Sam",
+				profileImageMediaHash: HASH_KNOWN,
+				distance: 5,
+				masked: true,
+			},
+			NOW,
+		);
+		expect(stored.profileId).toBe(4242);
+		// `masked` and `profileId` must agree: a row holding a usable id while
+		// still labelled masked is the inconsistency the UI renders from.
+		expect(stored.masked).toBe(false);
+		// Keyed on the resolved id, so it de-duplicates against this person
+		// arriving unmasked later.
+		expect(stored.key).toBe("p4242");
+	});
+
+	it("(c) an unknown hash leaves the row completely intact", () => {
+		const stored = toStoredViewer(
+			{
+				profileId: null,
+				displayName: "Sam",
+				profileImageMediaHash: HASH_OTHER,
+				distance: 5,
+				seen: NOW,
+				viewCount: 3,
+				masked: true,
+			},
+			NOW,
+		);
+		expect(stored.profileId).toBeNull();
+		expect(stored.masked).toBe(true);
+		expect(stored.displayName).toBe("Sam");
+		expect(stored.distance).toBe(5);
+		expect(stored.viewCount).toBe(3);
+		expect(stored.seen).toBe(NOW);
+	});
+
+	it("(d) a conflicted hash stores an unresolved row and counts the conflict", () => {
+		rememberProfileIdentity({ profileId: 1, profileImageMediaHash: HASH_KNOWN });
+		rememberProfileIdentity({ profileId: 2, profileImageMediaHash: HASH_KNOWN });
+		const stored = toStoredViewer(
+			{
+				profileId: null,
+				displayName: "Sam",
+				profileImageMediaHash: HASH_KNOWN,
+				distance: 5,
+				masked: true,
+			},
+			NOW,
+		);
+		expect(stored.profileId).toBeNull();
+		expect(stored.masked).toBe(true);
+		expect(countIdentityConflicts()).toBe(1);
+	});
+});
+
+describe("mergeViewers with resolution", () => {
+	it("(a) a masked row resolves and becomes one clickable row", () => {
+		rememberProfileIdentity({
+			profileId: 4242,
+			profileImageMediaHash: HASH_KNOWN,
+		});
+		const merged = mergeViewers(
+			[],
+			[
+				{
+					profileId: null,
+					displayName: "Sam",
+					profileImageMediaHash: HASH_KNOWN,
+					distance: 5,
+					seen: NOW,
+					masked: true,
+				},
+			],
+			NOW,
+		);
+		expect(merged).toHaveLength(1);
+		expect(merged[0].profileId).toBe(4242);
+		expect(merged[0].masked).toBe(false);
+	});
+
+	it("(b) a server id is never replaced by the resolved one", () => {
+		rememberProfileIdentity({
+			profileId: 99,
+			profileImageMediaHash: HASH_SERVER,
+		});
+		const merged = mergeViewers(
+			[],
+			[
+				{
+					profileId: 7,
+					displayName: "Real",
+					profileImageMediaHash: HASH_SERVER,
+					seen: NOW,
+				},
+			],
+			NOW,
+		);
+		expect(merged[0].profileId).toBe(7);
+	});
+
+	it("does not list one person twice when a masked row later arrives unmasked", () => {
+		rememberProfileIdentity({
+			profileId: 4242,
+			profileImageMediaHash: HASH_KNOWN,
+		});
+		const maskedRow = {
+			profileId: null,
+			displayName: "Sam",
+			profileImageMediaHash: HASH_KNOWN,
+			distance: 5,
+			seen: NOW,
+			masked: true,
+		};
+		const first = mergeViewers([], [maskedRow], NOW);
+		const second = mergeViewers(
+			first,
+			[{ ...maskedRow, profileId: 4242, masked: false }],
+			NOW + 1000,
+		);
+		expect(second).toHaveLength(1);
+		expect(second[0].profileId).toBe(4242);
+	});
+
+	it("keeps accumulating one person's history across masked refreshes", () => {
+		rememberProfileIdentity({
+			profileId: 4242,
+			profileImageMediaHash: HASH_KNOWN,
+		});
+		const maskedRow = {
+			profileId: null,
+			displayName: "Sam",
+			profileImageMediaHash: HASH_KNOWN,
+			distance: 5,
+			seen: NOW,
+			viewCount: 4,
+			masked: true,
+		};
+		const first = mergeViewers([], [maskedRow], NOW);
+		const second = mergeViewers(first, [{ ...maskedRow, seen: NOW + 5000 }], NOW + 5000);
+		expect(second).toHaveLength(1);
+		// Accumulated, not rebuilt: losing these is what made a masked viewer look
+		// like a brand-new visitor on every refresh.
+		expect(second[0].firstSeenAt).toBe(NOW);
+		expect(second[0].seen).toBe(NOW + 5000);
+		expect(second[0].viewCount).toBe(4);
+	});
+
+	it("(c) an unresolvable masked row is still stored, not dropped", () => {
+		const merged = mergeViewers(
+			[],
+			[
+				{
+					profileId: null,
+					displayName: "Nobody",
+					profileImageMediaHash: HASH_OTHER,
+					distance: 5,
+					seen: NOW,
+					masked: true,
+				},
+			],
+			NOW,
+		);
+		expect(merged).toHaveLength(1);
+		expect(merged[0].profileId).toBeNull();
 	});
 });

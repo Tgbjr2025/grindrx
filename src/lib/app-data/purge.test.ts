@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeAppDataFile } from "$lib/app-data";
 import {
+	rememberProfileIdentity,
+	storedIdentityCount,
+} from "$lib/app-data/profile-identity-cache.svelte";
+import {
 	DEVICE_SCOPED_KEYS_KEPT_ON_SIGNOUT,
 	PER_ACCOUNT_LOCALSTORAGE_KEYS,
 	PER_ACCOUNT_LOCALSTORAGE_PREFIXES,
@@ -113,6 +117,13 @@ const SEEDED_PII: Record<string, string> = {
 		'{"abc":{"mediaId":42,"signedUrl":"https://x.cloudfront.net/a?sig=secret"}}',
 	"grindrx-stored-viewers":
 		'[{"key":"p1","displayName":"Alex","profileImageMediaHash":"hash1","distance":120}]',
+	// The hash -> profileId identity index used to resolve masked viewers. It maps
+	// photo hashes to real profile ids, so it is a social graph in its own right.
+	"grindrx-profile-identities": JSON.stringify({
+		v: 1,
+		identities: [["a".repeat(40), 1]],
+		conflicts: [],
+	}),
 	"grindrx-geohash-user-pinned": "1",
 	"grindrx-install-id": "install-abc",
 	"grindrx-tour-done": "1",
@@ -300,6 +311,25 @@ describe("purgeAccountLocalData", () => {
 
 		expect(getStoredViewers()).toHaveLength(0);
 		expect(localStorage.getItem("grindrx-stored-viewers")).toBeNull();
+	});
+
+	it("erases the profile identity index on sign-out", async () => {
+		// The index resolves masked viewers against profile ids the PREVIOUS
+		// account fetched. Leaving it behind would let the next account resolve
+		// their masked viewers against the previous account's people — wrong, and
+		// cross-account.
+		rememberProfileIdentity({
+			profileId: 1,
+			profileImageMediaHash: "a".repeat(40),
+		});
+		expect(storedIdentityCount()).toBe(1);
+
+		await purgeAccountLocalData();
+
+		expect(localStorage.getItem("grindrx-profile-identities")).toBeNull();
+		// Cleared in memory too, not just on disk: the module rehydrates from
+		// localStorage, so a memory-only clear would be undone on next use.
+		expect(storedIdentityCount()).toBe(0);
 	});
 
 	it("drops the geohash-pinned flag along with the geohash it describes", async () => {

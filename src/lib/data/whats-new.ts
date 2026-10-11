@@ -3,6 +3,14 @@
 // entry fall back to a generic message.
 
 export const VERSION_HIGHLIGHTS: Record<string, string[]> = {
+	"0.1.51": [
+		"Fixed: your gender options would not load, which stopped you saving any profile change at all.",
+		"New: viewers who Grindr masks now resolve to the profile you have already seen, so most rows are clickable again.",
+		"Fixed: the app stopped updating after a few minutes offline, with nothing to say why.",
+		"Fixed: the Discreet app icon setting had silently vanished from the app.",
+		"New: app updates are checked against more than one place, so a hiccup at one server no longer means missing out.",
+		"Only signed-out devices send usage statistics, and only if you agree. Photos carrying location data in a format we cannot strip are refused rather than uploaded.",
+	],
 	"0.1.50": [
 		"New: app updates are now checked against more than one place, so a hiccup at one server no longer means missing out on updates.",
 		"Fixed: signing out no longer gets you stuck.",

@@ -51,6 +51,24 @@ impl std::error::Error for AppError {}
 
 impl From<reqwest::Error> for AppError {
     fn from(e: reqwest::Error) -> Self {
+        // Restored from the rescued commit bb05c55, with one deliberate change.
+        //
+        // This is the SINGLE conversion point for every backend transport
+        // failure — DNS, connect timeouts, resets, the 30s cap. Without it a
+        // device log gives you "error sending request" with no indication of
+        // which of the several dozen calls failed, and that is invisible on
+        // release builds where request logging is compiled out.
+        //
+        // THE PATH ONLY, NEVER THE FULL URL. `reqwest::Error::url()` carries the
+        // query string, and this app puts the bearer token and signed CDN
+        // parameters there. Printing it to logcat would hand every app holding
+        // READ_LOGS the credentials, which is exactly what
+        // src/lib/ws.svelte.ts went to some trouble to avoid.
+        if let Some(url) = e.url() {
+            eprintln!("[reqwest_err] path={} err={}", url.path(), e);
+        } else {
+            eprintln!("[reqwest_err] err={}", e);
+        }
         AppError::Http(e.to_string())
     }
 }

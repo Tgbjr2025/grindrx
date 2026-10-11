@@ -1,5 +1,100 @@
 # SESSION_STATE - grindrx-work
 
+**2026-10-11 ~00:40 UTC — DOCUMENTATION RECONCILED. No source code changed, nothing committed, nothing
+pushed. Every fact below was measured in this checkout or on `axis` during the session; the previous
+handoff entry in this file is dated 2026-10-02 and is NINE DAYS stale.**
+
+Operator's instruction was documentation-only. This entry exists because the drift between the docs
+and reality is now the project's dominant failure mode: `PROJECT.md`, `memory/PROJECT_ROADMAP.md`,
+`README_HANDOFF.md` and `HANDOFF_MESSAGE.md` all named a branch, a HEAD, a server and a directory
+that stopped being true on 2026-10-05, and three separate sessions worked from those wrong
+premises. **Correcting docs in place without recording it in state just recreates the problem**, so
+this entry is the receipt.
+
+## WHAT WAS CORRECTED (files changed, nothing else)
+
+| File | What changed |
+|---|---|
+| `memory/MEMORY.md` | Header host topology; memory-file index; forges (both authoritative, highest-tag-wins); R24–R26 summary; current version/build/gate table; release pipeline; **new KNOWN OPEN ITEMS section**; the `origin`-is-upstream warning rewritten and re-scoped to `axis`. |
+| `memory/PROJECT_ROADMAP.md` | Phases 10–12 re-derived (CAS-4001 resolved, signed build DONE, distribution PARTIAL); success criterion rewritten — the signed half is met, the device half is not. |
+| `PROJECT.md` | Branch `migration/ovh-state-2026-10-05` / HEAD `6f0226a941b6` → `main` / `d742ebfc`; Forgejo `private` → **public**; secrets table (it pointed at an EMPTY directory); build host; **new divergence section**. |
+| `memory/rules.md` | R20/R21 marked against current reality (R21's Nix path is no longer the one in use); R24/R25/R26 **re-verified and confirmed accurate**; post-incident updates recording the mutation the rescue commit shipped. |
+| `README_HANDOFF.md` | Rebuilt around 0.1.50/1085: new §0, the host topology, the both-forges rule, the toolchain split, the open items, and the same six gap areas re-checked rather than copied. |
+| `HANDOFF_MESSAGE.md` | Bootstrap prompt rewritten to match. |
+| `docs/governance/PRIORITIZED_REMEDIATION_REGISTER.md` | Reconciled again: P0-005, P0-006, P0-009, P1-011 flipped with evidence; P0-007's "9 endpoints" figure flagged as itself stale; new 2026-10-11 reconciliation section. |
+| `memory/SESSION_STATE.md` | This entry. **No history deleted.** |
+
+Backups: `*.bak.pre_v0110docs.20261011_003206` alongside each file (gitignored via `.gitignore:36`).
+
+## WHAT WAS MEASURED (not inferred)
+
+| Fact | How it was established |
+|---|---|
+| Version 0.1.50 | `package.json`, `tauri.conf.json`, `Cargo.toml`, `gen/android/app/tauri.properties` all agree |
+| versionCode 1085 / iOS bundleVersion 1085 / `autoIncrementVersionCode: false` | `tauri.conf.json` |
+| APK 71,440,981 bytes, sha256 `7847eafc77e2…80d358d` | `stat` + `shasum -a 256` on the built artifact |
+| Cert `22d6889e…4c01`, DN `CN=GrindX, O=GrindX, C=US` | `apksigner verify --print-certs` |
+| **vitest 1115 passed / 0 failed / 2 skipped, 80 files** | full `npx vitest run`, re-run this session |
+| svelte-check 0 errors, 4 warnings in 4 files | re-run this session |
+| `cargo test --lib` 35/35 | re-run this session |
+| Both forges live; app polls both, highest tag wins | `rest.rs:872-874`, `:922-924` |
+| `POST /grindrx/register` exists | `axis:/home/axis/ping-server/server.js` |
+| push sender + 0600 service account | `axis:/home/axis/push-sender/`, `ls -l` on `grindrx-fbsvc.json` |
+| JDK 17 / NDK 27.0.12077973 / build-tools 34,35,36 on the M1 | `/usr/libexec/java_home -V`, `ls ~/Library/Android/sdk` |
+| `/srv/secrets/` is empty; `/srv/worktrees/` exists; `axis:/srv/projects/grindrx-work` exists | `ssh axis`, `ls -la` |
+| S26 Ultra unreachable | `ssh s26` → connection timed out |
+
+## ⚠ CONTRADICTIONS FOUND — REPORTED, NOT SMOOTHED OVER
+
+1. **THE TWO HOSTS HAVE DIVERGED, and this is the most serious finding.**
+   `axis:/srv/projects/grindrx-work` is at `71a03294`. **It does not contain `48f34943` ("gender
+   options never loaded, blocking ALL profile saves") or `d742ebfc` ("restore two rescued
+   diagnostics")** — `git cat-file` on axis: *"fatal: Not a valid object name"*. It **does** hold
+   one unpushed commit of its own (`71a03294`) plus **5 ledger entries the local tree does not have**
+   (90 vs 85), including the `bb05c55` provenance finding and the four-unrevocable-tokens entry.
+   Meanwhile the M1 `main` is clean and **identical to both forges**. So "canonical source" is
+   currently a contested word. **Neither side should be deleted or force-pushed. Reconcile by
+   merging, preserving both.**
+2. **"origin is upstream open-grind" was corrected in only ONE of the two checkouts.** The user's
+   instruction — do not repeat that claim — is right for this checkout: `origin` here is
+   `forgejo-grindrx:dominusaxis/grindrx-work.git`. **But `axis:/srv/projects/grindrx-work/.git/config`
+   still has `origin` = `http://127.0.0.1:3000/dominus/open-grind.git`** (upstream), an older
+   `grindrx-forgejo` pointing at `dominus/grindrx` with a password in the URL, and `github` with a
+   GitHub **PAT in the URL**. The documented correction has not reached the box that most needs it.
+3. **A "U1 could not be located" note in this entry was WRONG. Correcting it rather than leaving
+   it.** On the first pass I searched the working tree at `d742ebfc`, every local branch ref,
+   `memory/`, `ledger/`, `docs/governance/` and the axis worktrees, found no `U1` and no
+   `Accept: */*`, and wrote that down. **It was in `git log -1 --format=%B d742ebfc` all along**,
+   under "DELIBERATELY NOT RESTORED": *"`Accept: */*` on image requests. The rescue asserts the CDN
+   needs it but records neither the media types nor a request it fixed. Unproven; adding an
+   untested header speculatively is how a guess becomes a 'fix'."*
+   **So U1 is a deliberately-deferred open item, not missing documentation** — a materially
+   different thing. One is a five-minute lookup; the other is an unbacked claim that the next
+   session would have had to either repeat or act on. **Lesson, and it is the same lesson this file
+   keeps recording: the commit message is a source. `git log -1 %B` before concluding that anything
+   is absent from the tree.**
+4. **README.md has re-drifted.** It says "Current release: v0.1.49" with APK sha256 `9f7959f7…`
+   (that was 0.1.49/1084). The code is 0.1.50/1085. It was corrected once on 2026-10-10
+   (`90e66f63`) and the version bump immediately outran it again. **R23 forbids touching it, so it
+   is recorded here rather than edited** — but the version-bump procedure needs to update it.
+5. **The FCM registry has never had a client.** `POST /grindrx/register` is implemented and the
+   service account is in place, but `devices.jsonl` is **0 lines**, because the only test device is
+   unreachable. "Push delivery is proven end-to-end" (ledger entry 38) was measured on 0.1.48 with a
+   hand-captured token; the *registry* path has no end-to-end evidence.
+6. **P0-007's "9 unprobed endpoints" is itself stale.** Only **two** source files still carry the
+   `UNPROBED` banner: `src/lib/api/assignment.ts:12` and `src/lib/api/taps.ts:52`. The count must be
+   re-derived before anyone starts work from the register.
+7. **Two pre-existing P1 items were already met by real code** but still read `VERIFIED` with no
+   re-measurement date — `P1-009` (iOS background modes: the register's own note says "the goal is
+   not met by its fix") and `P0-004`. Left as they are, with the caveat carried forward.
+
+## STATE
+
+Branch `main` @ `d742ebfc`, tree clean, **nothing committed and nothing pushed by this session.**
+`main` == `origin/main` == `github/main`. Gates green at the numbers above. **0.1.50 has NOT been
+device-verified.** Next session's first job is not code: it is **reconciling `axis` with this
+checkout**, because until then "what is the current state" has two defensible answers.
+
 **2026-10-02 ~06:00 UTC - iOS PORT IS BUILDABLE AND LAUNCHES. Free distribution via
 AltStore/SideStore needs no credential. Signed device install is blocked ONLY on a rejected Apple
 ID session. Two real product defects found and fixed. Full detail in

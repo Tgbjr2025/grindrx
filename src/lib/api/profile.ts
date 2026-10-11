@@ -4,6 +4,10 @@ import z from "zod";
 import { fetchRest } from "$lib/api";
 import { toBase64 } from "$lib/base64";
 import {
+	rememberProfileIdentities,
+	rememberProfileIdentity,
+} from "$lib/app-data/profile-identity-cache.svelte";
+import {
 	mediaHashPrivateSchema,
 	mediaHashPublicSchema,
 } from "$lib/model/media";
@@ -62,6 +66,15 @@ export async function getProfile(profileId: number) {
 			// FIX 11 — use jsonParsed() to get Cloudflare block detection
 			const data = res.jsonParsed(profileResponseSchema);
 			const profile = data.profiles[0];
+			// Opening a profile is the strongest evidence available that this user
+			// has legitimately seen this person, and `profileSchema` carries both
+			// `profileId` and `profileImageMediaHash` (the same field masked viewer
+			// rows have). Feed the index here too, so a viewer we later see masked
+			// can still be linked to a profile the user themselves opened.
+			rememberProfileIdentity({
+				profileId: profile.profileId,
+				profileImageMediaHash: profile.profileImageMediaHash,
+			});
 			profilesCache.set(profileId, { profile, updatedAt: Date.now() });
 			return profile;
 		} finally {
@@ -111,6 +124,18 @@ export async function getProfiles(
 	// (missing aboutMe/tribes/lookingFor/socials). Caching them here made
 	// getProfile() return a truncated record for ~60s after a grid load, blanking
 	// the profile detail view. The grid consumes the returned array directly.
+
+	// Feed the hash -> profileId index. This is the BATCH boundary the grid
+	// already funnels every partial-profile resolve through, so one call here
+	// covers up to 150 profiles per grid page, and the data is already parsed —
+	// nothing is fetched to build the index.
+	//
+	// `profileImageMediaHash` and `profileId` are both fields of
+	// `profileShortSchema` (via `profileMaskedMinSchema` and `profileMinSchema`),
+	// so this is the same field the masked viewer rows carry — not an inferred
+	// equivalent like `medias[0]` or the cascade's `photoMediaHashes[0]`, which
+	// are NOT documented as the same thing and are deliberately not used here.
+	rememberProfileIdentities(profiles);
 	return profiles;
 }
 

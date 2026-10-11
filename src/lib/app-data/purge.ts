@@ -41,6 +41,7 @@ import {
 	markPreferencesUntrusted,
 } from "$lib/app-data/preferences.svelte";
 import { clearStoredViewers } from "$lib/app-data/viewers.svelte";
+import { purgeProfileIdentityCache } from "$lib/app-data/profile-identity-cache.svelte";
 import { purgeAuthedImageCache } from "$lib/utils/authed-image";
 import { writeAppDataFile } from ".";
 
@@ -64,6 +65,14 @@ export const PER_ACCOUNT_LOCALSTORAGE_KEYS = [
 	// memory as a rune store as well, which is why `clearStoredViewers()` (until
 	// this fix a zero-caller export) is invoked alongside the key removal.
 	"grindrx-stored-viewers",
+	// The hash -> profileId index used to resolve masked viewers. It maps photo
+	// hashes to REAL profile ids for up to 2000 people, so it is a social graph
+	// in exactly the sense the viewers key above is — arguably more directly,
+	// because it is ids rather than names. `purgeProfileIdentityCache()` clears
+	// the in-memory maps AND the key (the module rehydrates from localStorage, so
+	// memory-only would let a rehydrating module read the previous account's
+	// index straight back in).
+	"grindrx-profile-identities",
 	// "The browsing geohash was chosen by hand, not read from GPS". The geohash
 	// itself is already purged above and in `preferences.data`, so leaving this
 	// flag behind is a DANGLING reference to a value that no longer exists: the
@@ -295,6 +304,14 @@ export async function purgeAccountLocalData(): Promise<void> {
 	// would have loaded the previous account's viewers straight back in.
 	step("stored viewers", () => {
 		clearStoredViewers();
+	});
+	// The hash -> profileId identity index. Purged for the same reason as the
+	// viewers above, and in the same place in the sequence: it is derived from
+	// the previous account's own grid/search/profile fetches, so leaving it
+	// would let the NEXT account resolve masked viewers against the previous
+	// account's people — cross-account, and wrong.
+	step("profile identity index", () => {
+		purgeProfileIdentityCache();
 	});
 	// In-memory app-lock state, so the previous user's gate cannot outlive the
 	// sign-out even if the hard navigation below is slow or blocked.
