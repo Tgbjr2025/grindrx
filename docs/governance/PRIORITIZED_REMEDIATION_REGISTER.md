@@ -1,6 +1,9 @@
-# Prioritized Remediation Register — GrindrX v0.1.48
+# Prioritized Remediation Register — GrindrX v0.1.50
 
 **Baseline:** `7fffcec` | **Directive:** MASTER_MEASUREMENT_DIRECTIVE.md §9
+**Register title updated 2026-10-11:** the register now tracks 0.1.50. It was titled v0.1.48 while
+the code was three releases ahead — the same staleness this document exists to correct.
+**Last reconciliation pass: 2026-10-11** (second pass; the first was 2026-10-10).
 
 ---
 
@@ -16,13 +19,13 @@
 |----|---------|--------|-------|--------------|---------------------|--------|
 | P0-001 | `grindx_messages` notification channel lacks `VISIBILITY_PRIVATE` | 07 | Android | `MainActivity.kt`, `NotificationService.kt` | Lock-screen shows "New message" only; no chat text | VERIFIED |
 | P0-002 | Authenticated media cache cross-account leak (fixed v0.1.33) | 07 | Core | `authed-image.ts`, purge tests | Cache fully revoked on sign-out; `cacheEpoch` blocks stale fetches | VERIFIED |
-| P0-003 | Version drift: 3 different version tuples in repo | 10 | Build | `tauri.conf.json`, `tauri.properties`, CI gate | Single source of truth; all builds produce 0.1.48/1083 | VERIFIED |
+| P0-003 | Version drift: 3 different version tuples in repo | 10 | Build | `tauri.conf.json`, `tauri.properties`, CI gate | Single source of truth; all builds produce 0.1.50/1085 | VERIFIED |
 | P0-004 | Android APK never built/validated on device | 10 | Android | CI config, SDK/NDK, keystore, device | `aarch64-linux-android` compiles; APK installs/runs | IMPLEMENTED |
 | P0-005 | Commit `5b69ca4` absent from all repos | 11 | Provenance | External backups | Commit located or dispositioned HISTORICAL-ONLY | OPEN |
-| P0-006 | Stale Android assets tracked (ship 0.1.33/1068) | 11 | Build | `src-tauri/gen/android/.../tauri.conf.json`, `tauri.properties` | Regenerated assets match 0.1.48/1083/com.grindrx.app | OPEN |
-| P0-007 | 9 HTTP endpoints unprobed (UNPROBED in source) | 04 | API | Live server credentials | Endpoints verified or documented as deprecated | OPEN |
+| P0-006 | Stale Android assets tracked (ship 0.1.33/1068) | 11 | Build | `src-tauri/gen/android/.../tauri.conf.json`, `tauri.properties` | Regenerated assets match 0.1.50/1085/com.grindrx.app | VERIFIED |
+| P0-007 | HTTP endpoints unprobed (UNPROBED in source) | 04 | API | Live server credentials | Endpoints verified or documented as deprecated | OPEN |
 | P0-008 | No dependency vulnerability scanning in CI | 06 | CI | `cargo-audit`, `npm audit` (Bun→npm lockfile) | CI fails on HIGH/CRITICAL vulns | IMPLEMENTED |
-| P0-009 | PNG/WebP/HEIF EXIF not stripped on canvas fallback | 07 | Core | `profile.ts:502-504` | All image formats sanitized; tests added | OPEN |
+| P0-009 | PNG/WebP/HEIF EXIF not stripped on canvas fallback | 07 | Core | `profile.ts` `stripImageMetadata` + upload path | All image formats sanitized; tests added | VERIFIED |
 | P0-010 | `rotate_api_params` unlimited (DoS keystore) | 07 | Core | `ws.rs`, keyring usage | Rate limit + backoff on rotation | VERIFIED |
 
 ---
@@ -33,13 +36,13 @@
 |----|---------|--------|-------|---------------------|--------|
 | P1-001 | No user consent for telemetry pings | 07 | Core | Opt-in dialog; disabled by default | VERIFIED |
 | P1-002 | WS protocol completely untested vs real server | 05 | Test | Contract tests against staging | OPEN |
-| P1-003 | 30/65 test files mock `invoke()` without contract validation | 05 | Test | Schema validation on all mocks | OPEN |
+| P1-003 | Most test files mock `invoke()` without contract validation | 05 | Test | Schema validation on all mocks | OPEN |
 | P1-004 | WS reconnect has no max attempts (infinite retry) | 08 | Core | Max attempts configured; backoff capped | VERIFIED |
 | P1-005 | MessagesList renders all messages (no virtualization) | 08 | Core | Windowed rendering for >100 messages | VERIFIED |
 | P1-006 | Image upload: double base64 round-trip (33% × 2) | 08 | Core | Direct blob upload or single encode | VERIFIED |
 | P1-007 | Android back gesture handler leak (never unregistered) | 09 | Android | Registration balanced with unregistration | VERIFIED |
 | P1-008 | `rotate_api_params` race on rotation | 09 | Core | Guard + idempotency key | VERIFIED |
-| P1-009 | iOS: no background modes for WS keep-alive | 10 | iOS | `UIBackgroundModes` includes `voip`/`fetch` | VERIFIED |
+| P1-009 | iOS: no background modes for WS keep-alive | 10 | iOS | `UIBackgroundModes` includes `voip`/`fetch` | VERIFIED (goal NOT met — see reconciliation) |
 | P1-010 | No CI for Android/iOS/desktop builds | 10 | CI | All 3 platforms build in CI | IMPLEMENTED |
 | P1-011 | `bb05c55` provenance unverifiable | 12 | Provenance | Upstream repo repaired or dispositioned | OPEN |
 | P1-012 | Message variant union divergence (2 extra in OpenGrind) | 12 | Core | Union merged; tests for new variants | VERIFIED |
@@ -63,8 +66,8 @@
 
 | ID | Finding | Domain | Status | Verification |
 |----|---------|--------|--------|--------------|
-| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | VERIFIED | Commit `500b505`. Measured **22** tracked files, not 23; **21 are legitimate** (historical prose in `CdnImage.svelte`, `ProfileMiniCard.svelte`, `cdn-image-layout.guard.test.ts`, `vite.config.mjs`; changelog key `whats-new.ts:6`; release records in `CHANGES.md`, fastlane, `memory/`, ledgers). **One live bug fixed**: `tauri.conf.json:22` webview `userAgent` `0.1.38` → `0.1.48`. Drift cannot recur — `.github/workflows/version-check.yml` already fails when `userAgent` lacks `.version`; replayed against old file (exit 1) and new file (pass). `headers.rs` `APP_VERSION = "26.9.1.163471"` is the **spoofed Grindr client** version, deliberately untouched. **`README.md:5` "Current release: v0.1.38" is genuinely stale and NOT fixed — R23 forbids it.** Merged to `main` (`eca61c2`); ledger updated 2026-10-10. |
-| P3-002 | 17 unrelated `claude/*` remote branches | 11 | TRIAGED | **Nothing deleted.** Full inventory produced: 17 refs, 12 distinct names, 3 remotes (`github`, `grindrx-forgejo`, `origin`). **9 safe**, **8 hold unmerged work**. `--is-ancestor` alone is misleading — `claude/grindrx-freeze-json-audit-gp4lnk` reads UNIQUE/54 but `git cherry` returns 54 `-` / 0 `+` (all patches already in main, SHAs differ from rewritten history). `github/claude/phone-battery-drain-77zz36` holds 1 real commit (`d7d950b`, `ws.rs` battery/backoff constants absent from main). Awaiting operator approval; delete commands supplied in report, not run. |
+| P3-001 | Stale `0.1.38` references in 23 locations (README, whats-new, etc.) | 11 | VERIFIED | Commit `500b505`. Measured **22** tracked files, not 23; **21 are legitimate** (historical prose in `CdnImage.svelte`, `ProfileMiniCard.svelte`, `cdn-image-layout.guard.test.ts`, `vite.config.mjs`; changelog key `whats-new.ts:6`; release records in `CHANGES.md`, fastlane, `memory/`, ledgers). **One live bug fixed**: `tauri.conf.json:22` webview `userAgent` `0.1.38` → `0.1.48`. Drift cannot recur — `.github/workflows/version-check.yml` already fails when `userAgent` lacks `.version`; replayed against old file (exit 1) and new file (pass). `headers.rs` `APP_VERSION = "26.9.1.163471"` is the **spoofed Grindr client** version, deliberately untouched. `README.md:5` was then fixed anyway by `90e66f63` (`0.1.38` → `0.1.49`) — **and has re-drifted again to `v0.1.49` while the code is `0.1.50`/`1085`**, so the CI `userAgent` guard does not cover `README.md`. **The version-bump procedure, not the file, is the defect.** Merged to `main` (`eca61c2`); ledger updated 2026-10-10 and re-measured 2026-10-11. |
+| P3-002 | 17 unrelated `claude/*` remote branches | 11 | TRIAGED | **Nothing deleted.** Full inventory produced: 17 refs, 12 distinct names, 3 remotes (`github`, `grindrx-forgejo`, `origin`). **9 safe**, **8 hold unmerged work**. `--is-ancestor` alone is misleading — `claude/grindrx-freeze-json-audit-gp4lnk` reads UNIQUE/54 but `git cherry` returns 54 `-` / 0 `+` (all patches already in main, SHAs differ from rewritten history). `github/claude/phone-battery-drain-77zz36` holds 1 real commit (`d7d950b`, `ws.rs` battery/backoff constants absent from main). Awaiting operator approval; delete commands supplied in report, not run. **Re-measured 2026-10-11: 16 refs, 12 distinct names, 2 remotes** — the `grindrx-forgejo` remote no longer exists in `.gitconfig`, so one ref went with it. The 9-safe/8-hold split was computed over the 17-ref set and was **not** recomputed; re-run the inventory before deleting anything. |
 | P3-003 | Binary test file `profile.test.ts` should be TypeScript or removed | 01 | VERIFIED | Commit `d0cf011`. File kept (it is valid TypeScript; only its encoding was broken). **12** control bytes total — the 10 NULs plus 2 raw `0x01`, all inside string literals feeding `ascii()`. They are meaningful JPEG bytes (EXIF `Exif\0\0`, `8BIM`, JFIF/ICC padding), so they were **re-encoded as `\x00`/`\x01` escapes, not deleted**. `file -b`: `data` → `JavaScript source, Unicode text, UTF-8 text`. Size `21351` → `21387` (+36 = 12 × +3). All 24 string literals proven byte-identical at runtime by `node` char-code comparison. `vitest run src/lib/api/profile.test.ts` → **30/30 pass**, same as baseline. Pre-existing eslint import-sort errors and prettier warning untouched (confirmed present at HEAD). |
 
 Full method, byte offsets and reasoning: `memory/FIX_NOTES_p3_cleanup_20261010.md`.
@@ -126,6 +129,102 @@ isolation. Both are load-sensitive and neither is a defect in the code under tes
 **P0-004 is the one to watch.** A signed APK now builds and its certificate verifies,
 but no release has yet been confirmed running on a device for the current code. It is
 recorded IMPLEMENTED rather than VERIFIED deliberately.
+
+---
+
+## Reconciliation 2026-10-11 — second pass, and one item was found to have been closed ON PAPER
+
+The 2026-10-10 pass fixed 21 stale `OPEN` statuses. This pass re-derived the remaining ones from
+the tree at `main` = `d742ebfc`. **Two findings closed with evidence, and one item that a ledger
+entry claimed was closed is NOT.**
+
+### Closed, with the evidence
+
+**P0-006 — stale Android assets. VERIFIED.** The acceptance criterion is that the tracked
+`gen/android` assets match the current version tuple and identifier. Measured 2026-10-11:
+
+- `gen/android/app/tauri.properties` → `tauri.android.versionName=0.1.50`, `versionCode=1085`
+- `gen/android/app/src/main/assets/tauri.conf.json` → `"version":"0.1.50"`, `"identifier":"com.grindrx.app"`,
+  `userAgent` `GrindrX/0.1.50`
+- `app/build.gradle.kts:60` `applicationId = "com.grindrx.app"`; `:63-64` read the version from
+  `tauriProperties` rather than hardcoding it
+- The only surviving `org.opengrind` strings under `gen/android` are in **explanatory comments**
+  (`AndroidManifest.xml:17,27`, `res/xml/file_paths.xml:6`), not live identifiers
+
+**P0-009 — EXIF on the canvas-fallback path. VERIFIED.** Closed by `f32228cb`
+("refuse unsanitizable EXIF"), which is on `main`. `stripImageMetadata` (`src/lib/api/profile.ts:654`)
+handled jpeg/gif/png/webp but its default branch returned HEIF/AVIF bytes **as-is**, so a HEIF photo
+whose canvas re-encode failed was uploaded with its EXIF intact — and EXIF carries GPS. It now
+detects the `Exif\0\0` payload by signature (present wherever TIFF/EXIF is stored, including as an
+iloc-addressed item inside an ISO-BMFF container) and **refuses the upload** rather than letting an
+unrewritable container through. Tests in `src/lib/api/profile-exif.test.ts`; ledger records them as
+mutation-verified, with the note that the first attempt asserted nothing useful and was discarded.
+
+### NOT closed — the ledger says one thing and the refs say another
+
+**P0-005 (`5b69ca4`) stays OPEN, and the ledger's "exists on GitHub" does not survive checking.**
+Ledger entry 84 records *"5b69ca4 exists on GitHub (2026-10-06, 'migration: preserve OVH iOS
+port'), closing P0-005."* Measured 2026-10-11 at `d742ebfc`:
+
+```
+$ git branch -a --contains 5b69ca4
+  remotes/ovh-migration/migration/ovh-ios-port-v0.1.48-2026-10-06
+
+$ git merge-base --is-ancestor 5b69ca4 main          # -> NO
+$ git merge-base --is-ancestor 5b69ca4 origin/main   # -> NO
+$ git remote
+  github
+  origin
+```
+
+The commit object is present, but it is reachable **only** through `refs/remotes/ovh-migration/…`,
+and **`ovh-migration` is not a configured remote** — `.git/config` lists only `github` and `origin`.
+So the commit is in exactly one local object store, behind a stale tracking ref for a remote that
+no longer exists, and is **not on GitHub or Forgejo**. That is a *worse* position than the original
+finding, because it looks closed. (`refs/remotes/axis/*`, `refs/remotes/bundle/*` and
+`refs/remotes/axisbranches/*` are stale in the same way.) **Action: push it, or take an explicit
+HISTORICAL-ONLY disposition from the operator.** Do not report this item as resolved until one of
+those two has happened.
+
+**P1-011 (`bb05c55`) stays OPEN — located, but not backed up.** Ledger entry 86 traces it to the
+M1's `/Users/thomasbateman/open-grind`, where `bb05c55` is the second commit below HEAD `26be526`
+("rescue(m1): preserve GrindrX photo/album auth fixes (uncommitted on M1)"). It is on **no remote**,
+and `git cat-file` in `grindrx-work` fails on it. Ledger entry 88 records a second artifact copy at
+`bc71144d…` on the M1. **Two unbacked-up local repos is one disk failure from losing it.**
+
+### Re-derived, still open
+
+**P0-007 — the finding's own count is stale.** The item reads "9 HTTP endpoints unprobed". Only
+**two** source files still carry an `UNPROBED` banner: `src/lib/api/assignment.ts:12` and
+`src/lib/api/taps.ts:52`. Either seven were closed since the baseline or the original count was
+wrong. **Re-derive the list from the banners before assigning this work** — an item whose scope is
+unknown is how an agent reports "done" on work that was never specified.
+
+**P1-003 — partially answered by a different approach.** `src/lib/api/auth-contract.guard.test.ts`
+validates **cross-layer** agreement (it globs `/src/**/*.{ts,svelte}` and `/src-tauri/src/**/*.rs`
+and asserts the TS bridge, the Svelte form and the Rust command name the same endpoint), because the
+defect it guards — three internally-correct files implementing one feature with two endpoints — was
+structurally invisible to every per-file test. That is one endpoint pinned, not "schema validation
+on all mocks". The item stays **OPEN**; the count "30/65" was removed from the row rather than
+carried forward as fact.
+
+**P1-002 — unchanged, and it needs credentials an agent will not manufacture.** A WS contract test
+against a real server. Ledger entry 85 records an explicit **decline** to fabricate a Grindr test
+account and bypass phone verification. The legitimate route is recorded there: use **recorded
+fixtures**. That decision stands.
+
+**P1-009 — the status is honest but the goal is not met.** `UIBackgroundModes` is declared; a
+WebSocket still dies with the app suspended. Recorded as `VERIFIED (goal NOT met)` rather than
+re-scoping it silently. **Closing this honestly means rewriting the item, not the status.**
+
+### Blockers that are not code
+
+- **No device.** The S26 Ultra is unreachable (`ssh s26` → connection timed out), so **P0-004 cannot
+  advance past IMPLEMENTED**, and **0.1.49 and 0.1.50 are both unverified on hardware**. The signed
+  APK is real and its certificate verifies — that is a different claim.
+- **Four Forgejo access tokens (ids 10–13) await operator revocation.** Ledger entry 90.
+- **`axis/.git/config` embeds a GitHub PAT and a dead Forgejo password in remote URLs**, and axis
+  therefore cannot push to Forgejo at all. Ledger entry 90.
 
 ---
 
