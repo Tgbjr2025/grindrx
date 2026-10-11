@@ -46,13 +46,59 @@
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
             android:exported="true">
+            <!--
+                No LAUNCHER filter here on purpose. MainActivity is the TARGET of
+                both aliases below, and a launcher filter on the target as well
+                as on an alias is how you end up with two icons on the home
+                screen and a "always"/"just once" prompt — which would make the
+                discreet toggle half-work instead of switching.
+            -->
+        </activity>
+
+        <!--
+            Discreet app icon — restored 2026-10-11.
+
+            Both aliases had been dropped from the manifest while
+            DiscreetIconSetting.svelte was left in place. That component gates
+            itself on `{#if available}`, where `available` requires the
+            `__DiscreetMode` bridge, which was gone too — so the toggle silently
+            never rendered and the feature was unreachable with nothing to say
+            so. The weather icon assets and the `weather_app_name` string were
+            still present, so this was a half-finished removal, not a decision.
+
+            MainActivity must NOT itself carry the LAUNCHER filter alongside
+            these: two launcher entries for one activity is what makes the
+            disambiguation prompt appear, and the discreet toggle stops being a
+            single predictable switch. The filter is therefore on MainAlias only.
+        -->
+        <activity-alias
+            android:name=".MainAlias"
+            android:targetActivity=".MainActivity"
+            android:label="@string/main_activity_title"
+            android:icon="@mipmap/ic_launcher"
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <!-- Discreet mode: weather alias — disabled by default, enabled via settings -->
+        <activity-alias
+            android:name=".WeatherAlias"
+            android:targetActivity=".MainActivity"
+            android:label="@string/weather_app_name"
+            android:icon="@mipmap/ic_launcher_weather"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".FcmMessagingService"

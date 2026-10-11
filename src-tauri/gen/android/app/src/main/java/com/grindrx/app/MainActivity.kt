@@ -3,6 +3,8 @@ package com.grindrx.app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
@@ -131,6 +133,9 @@ class MainActivity : TauriActivity() {
 		webViewRef = webView
 		webView.addJavascriptInterface(InsetsInterface(), "__AndroidInsets")
 		webView.addJavascriptInterface(AndroidBackInterface(), "__AndroidBack")
+		// Discreet app icon. Without this the settings toggle gates itself off
+		// and the feature is unreachable with no error anywhere.
+		webView.addJavascriptInterface(DiscreetModeInterface(), "__DiscreetMode")
 	}
 
 	override fun onDestroy() {
@@ -180,5 +185,52 @@ class MainActivity : TauriActivity() {
 			lockscreenVisibility = Notification.VISIBILITY_PRIVATE
 		}
 		getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+	}
+
+	/**
+	 * Discreet icon toggle — restored 2026-10-11.
+	 *
+	 * Both `activity-alias` entries had been removed from the manifest while
+	 * `DiscreetIconSetting.svelte` was left in place. That component sets
+	 * `available` only when this bridge exists, and renders nothing at all
+	 * otherwise — so with the bridge gone the setting silently disappeared from
+	 * the app rather than reporting itself unavailable.
+	 *
+	 * The alias names here MUST match the manifest, or the toggle flips
+	 * something that does not exist and the home-screen icon never changes.
+	 */
+	inner class DiscreetModeInterface {
+		private val pm: PackageManager get() = applicationContext.packageManager
+
+		@JavascriptInterface
+		fun isDiscreet(): Boolean = pm.getComponentEnabledSetting(
+			ComponentName(applicationContext, "$packageName.WeatherAlias"),
+		) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+
+		/**
+		 * Must disable the OTHER alias alongside enabling this one. Android
+		 * offers the user every enabled launcher entry, so leaving the main
+		 * alias on would put two icons on the home screen and the feature would
+		 * half-work rather than switch.
+		 */
+		@JavascriptInterface
+		fun setDiscreet(discreet: Boolean) {
+			val weather = ComponentName(applicationContext, "$packageName.WeatherAlias")
+			val main = ComponentName(applicationContext, "$packageName.MainAlias")
+			val target = if (discreet) weather else main
+			val other = if (discreet) main else weather
+			// Component name order matters: every alias for a target activity has
+			// to be set in one call or the launcher can cache a mixed state.
+			pm.setComponentEnabledSetting(
+				other,
+				PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+				PackageManager.DONT_KILL_APP,
+			)
+			pm.setComponentEnabledSetting(
+				target,
+				PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+				PackageManager.DONT_KILL_APP,
+			)
+		}
 	}
 }

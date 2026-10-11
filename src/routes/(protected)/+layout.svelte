@@ -10,6 +10,7 @@
 	import FeatureTour from "$lib/components/FeatureTour.svelte";
 	import PinLockGate from "$lib/components/PinLockGate.svelte";
 	import WhatsNewDialog from "$lib/components/WhatsNewDialog.svelte";
+	import WsReconnectBanner from "$lib/components/WsReconnectBanner.svelte";
 	import {
 		isFirstRun,
 		isNewVersion,
@@ -154,4 +155,5 @@
 
 	<WhatsNewDialog bind:open={whatsNewOpen} version={appVersion} onTour={() => (tourOpen = true)} />
 	<FeatureTour bind:open={tourOpen} />
+	<WsReconnectBanner />
 {/if}

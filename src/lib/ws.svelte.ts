@@ -114,6 +114,23 @@ class WsState {
 	 */
 	reconnectExhausted = $state<ReconnectExhausted | null>(null);
 
+	/**
+	 * Pending unattended retry, or null.
+	 *
+	 * Without this the parked socket was dead until force-quit: Rust parks
+	 * deliberately (it does not self-notify, or the budget could not do its
+	 * job), `connect()` is called once at init, and `retryAfterExhaustion()` had
+	 * no caller — one reference, its own definition. So the event fired, the
+	 * state was assigned, and nothing ever read either. A user who lost
+	 * connectivity for a few minutes came back to an app that never reconnected
+	 * and showed no reason why.
+	 *
+	 * The retry is unattended AND the UI offers one, because the two failures
+	 * are different: unattended covers "you did nothing wrong", the button
+	 * covers "you are staring at it now and want it fixed".
+	 */
+	#retryTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// The three lifecycle listeners below were registered in the constructor
 	// with their `unlisten` functions discarded, so nothing could ever detach
 	// them: every re-instantiation would stack another set, and there was no
@@ -158,6 +175,7 @@ class WsState {
 					return;
 				}
 				this.reconnectExhausted = parsed.data;
+				this.#scheduleAutoRetry();
 			}),
 		);
 
@@ -167,8 +185,34 @@ class WsState {
 		track(
 			listen<void>("ws:connected", () => {
 				this.reconnectExhausted = null;
+				this.#cancelAutoRetry();
 			}),
 		);
+	}
+
+	/**
+	 * How long to wait before the unattended retry.
+	 *
+	 * Comfortably longer than the Rust budget's own ceiling so this does not
+	 * race it and re-create the tight loop the budget exists to stop, and short
+	 * enough that a user who backgrounds the app for a coffee comes back to a
+	 * live socket rather than a dead one.
+	 */
+	#autoRetryDelayMs = 30_000;
+
+	#cancelAutoRetry(): void {
+		if (this.#retryTimer !== null) {
+			clearTimeout(this.#retryTimer);
+			this.#retryTimer = null;
+		}
+	}
+
+	#scheduleAutoRetry(): void {
+		this.#cancelAutoRetry();
+		this.#retryTimer = setTimeout(() => {
+			this.#retryTimer = null;
+			void this.retryAfterExhaustion();
+		}, this.#autoRetryDelayMs);
 	}
 
 	/**
@@ -178,8 +222,12 @@ class WsState {
 	 * the three things that reset a parked budget — the same path login uses.
 	 * Returns false when there is no session to connect with, so the caller can
 	 * avoid showing a retry that cannot work.
+	 *
+	 * Also re-arms the unattended retry: a manual attempt that fails for a
+	 * transient reason must not leave the app with no further attempts.
 	 */
 	async retryAfterExhaustion(): Promise<boolean> {
+		this.#cancelAutoRetry();
 		const { invoke } = await import("@tauri-apps/api/core");
 		try {
 			await invoke("ws_connect");
@@ -187,6 +235,7 @@ class WsState {
 			return true;
 		} catch (error) {
 			console.error("[ws] manual retry failed", error);
+			if (this.reconnectExhausted !== null) this.#scheduleAutoRetry();
 			return false;
 		}
 	}
