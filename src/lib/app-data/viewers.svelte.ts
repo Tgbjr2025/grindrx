@@ -238,12 +238,17 @@ export function mergeViewers(
 		if (previous === undefined && maskedKey !== key) {
 			previous = byKey.get(key);
 		}
-		if (previous === undefined && input.profileImageMediaHash != null) {
-			// The row may be stored under an id we learned earlier, while this
-			// response masked it again. Same photo hash is the same evidence the
-			// identity index uses, and adopting the STORED id keeps a
-			// server-provided id winning over a fresh hash inference — which is
-			// the "never overwrite a real id" property, applied across fetches.
+		if (previous === undefined && resolvedId === null && input.profileImageMediaHash != null) {
+			// ONLY for a row that stays unresolved. A row with a server id (or a
+			// resolved one) is already keyed by that id and was looked up by it
+			// above; scanning by hash for it would adopt an unrelated profile that
+			// merely shares the same photo, collapsing genuinely distinct viewers
+			// into one row.
+			//
+			// The remaining case is the one that matters: a row we resolved (or
+			// Grindr un-masked) on an earlier fetch, now masked again and no longer
+			// resolvable. The stored id is kept rather than regressing the row to
+			// unclickable.
 			for (const candidate of byKey.values()) {
 				if (
 					candidate.profileId != null &&
