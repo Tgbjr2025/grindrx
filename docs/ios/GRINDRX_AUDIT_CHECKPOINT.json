@@ -1,0 +1,178 @@
+{
+  "checkpoint_id": "CHK-2026-10-15T002800Z",
+  "timestamp": "2026-10-15T00:28:00Z",
+  "version": "1.0",
+  "repository": {
+    "path": "/srv/projects/grindrx-work",
+    "branch": "main",
+    "commit": "649302df1422d2956defa132802d133ad2db7247",
+    "remote_tracking": "origin/main",
+    "status": "ahead 219 commits"
+  },
+  "audit_workspace": "/srv/projects/grindrx-work/docs/ios/",
+  "audit_artifacts_created": [
+    "GRINDRX_AUDIT_EVIDENCE.md",
+    "GRINDRX_BUILD_AND_TEST_RESULTS.md",
+    "GRINDRX_DEPENDENCY_AND_SECURITY_REVIEW.md"
+  ],
+  "completed_phases": [
+    {
+      "phase": 1,
+      "name": "Repository integrity & environment",
+      "status": "completed",
+      "result": {
+        "git_status": "clean working tree, 219 commits ahead",
+        "toolchain": {
+          "bun": "1.4.2",
+          "node": "v24.21.0",
+          "rustc": "1.95.0",
+          "cargo": "1.95.0",
+          "tauri": "2.12.1"
+        },
+        "system": {
+          "ram": "62 GiB total",
+          "disk": "316 GiB free",
+          "cpu": "16 cores AMD EPYC"
+        }
+      }
+    },
+    {
+      "phase": 2,
+      "name": "Source code inventory",
+      "status": "completed",
+      "result": {
+        "rust_files": 14,
+        "rust_loc": 3966,
+        "svelte_files": 292,
+        "svelte_loc": 20660,
+        "typescript_files": 221,
+        "typescript_loc": 18250,
+        "tauri_commands": 32
+      }
+    },
+    {
+      "phase": 5,
+      "name": "Build verification",
+      "status": "completed",
+      "result": {
+        "rust_check": {
+          "status": "PASS",
+          "exit_code": 0,
+          "duration": "7.70s",
+          "errors": 0,
+          "warnings": 1
+        },
+        "typescript_check": {
+          "status": "PASS",
+          "exit_code": 0,
+          "duration": "~30s",
+          "errors": 0,
+          "warnings": 4
+        },
+        "production_apk": {
+          "exists": true,
+          "version": "0.1.51",
+          "size": "71 MB",
+          "sha256": "28555351a12f9b8f7fb9232848866beac51b9a38b5fa25c4890cf50663422f74"
+        }
+      }
+    },
+    {
+      "phase": 6,
+      "name": "Security & privacy analysis",
+      "status": "completed",
+      "result": {
+        "network_security": "SECURE",
+        "authentication": "SECURE",
+        "telemetry": {
+          "status": "MODERATE",
+          "pii_transmitted": false,
+          "endpoint": "https://cam.dominusaxis.com/grindrx"
+        },
+        "csp": "MODERATE (unsafe-inline present)",
+        "secrets": "CLEAN (none found)"
+      }
+    },
+    {
+      "phase": 7,
+      "name": "Android platform readiness",
+      "status": "completed",
+      "result": {
+        "min_sdk": 28,
+        "target_sdk": 36,
+        "version_code": 1086,
+        "version_name": "0.1.51"
+      }
+    }
+  ],
+  "pending_phases": [
+    {
+      "phase": 3,
+      "name": "SvelteKit & TypeScript audit",
+      "priority": "medium"
+    },
+    {
+      "phase": 4,
+      "name": "Rust & Tauri 2 audit",
+      "priority": "high"
+    },
+    {
+      "phase": 8,
+      "name": "Feature flow verification",
+      "priority": "high"
+    },
+    {
+      "phase": 9,
+      "name": "Independent verification",
+      "priority": "high"
+    },
+    {
+      "phase": 10,
+      "name": "Final report generation",
+      "priority": "high"
+    }
+  ],
+  "key_findings": [
+    {
+      "id": "FIND-001",
+      "severity": "medium",
+      "category": "security",
+      "title": "CSP with unsafe-inline",
+      "file": "src-tauri/tauri.conf.json:28",
+      "impact": "XSS protection weakened",
+      "remediation": "Remove unsafe-inline, use nonces/hashes"
+    },
+    {
+      "id": "FIND-002",
+      "severity": "medium",
+      "category": "performance",
+      "title": "Rate limiting missing on rotate_api_params",
+      "file": "src-tauri/src/api/client.rs:151-157",
+      "impact": "Keyring contention on Android",
+      "remediation": "Implement per-caller rate limiting"
+    },
+    {
+      "id": "FIND-003",
+      "severity": "medium",
+      "category": "android",
+      "title": "Notification visibility not enforced",
+      "file": "src-tauri/src/api/ws.rs:522-527",
+      "impact": "Chat preview may show on lock screen",
+      "remediation": "Requires Kotlin change in MainActivity"
+    }
+  ],
+  "verification_status": {
+    "repository_integrity": "VERIFIED",
+    "build_passes": "VERIFIED",
+    "type_check_passes": "VERIFIED",
+    "secrets_scan": "CLEAN",
+    "runtime_verification": "PENDING (no physical device)"
+  },
+  "opencode_config": {
+    "config_file": "/home/axis/.opencode/config.json",
+    "provider": "colab-gpu",
+    "default_model": "mradermacher/Qwen2.5-Coder-32B-Instruct-Abliterated-AWQ",
+    "ollama_model": "qwen3-coder-next:q4_K_M",
+    "inference_test": "PASSED (colab qwen endpoint verified)"
+  }
+}

@@ -3,10 +3,10 @@
   "productName": "GrindrX",
   "version": "0.1.51",
   "identifier": "com.grindrx.app",
-  "build": {
-    "beforeDevCommand": "bun run dev:web",
+	 "build": {
+    "beforeDevCommand": "cd .. && bun run dev:web",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "cd .. && bun run build",
     "frontendDist": "../build"
   },
   "app": {

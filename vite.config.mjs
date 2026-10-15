@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => ({
+	// Build output directory - must match tauri.conf.json frontendDist
+	build: {
+		outDir: "build",
+		emptyOutDir: true,
+	},
+
 	// sveltePhosphorOptimize rewrites barrel `from "phosphor-svelte"` imports to
 	// deep `phosphor-svelte/lib/Icon` imports at build time. phosphor-svelte has
 	// no `sideEffects: false`, so without this the barrel can pull a large slice
