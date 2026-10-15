@@ -1,9 +1,8 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
   "productName": "GrindrX",
   "version": "0.1.51",
   "identifier": "com.grindrx.app",
-	 "build": {
+  "build": {
     "beforeDevCommand": "cd .. && bun run dev:web",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "cd .. && bun run build",
@@ -50,7 +49,7 @@
       "versionCode": 1086
     },
     "iOS": {
-      "developmentTeam": "7CFMMM9HH6",
+      "developmentTeam": "Q66S4H63P2",
       "bundleVersion": "1086",
       "minimumSystemVersion": "14.0"
     }

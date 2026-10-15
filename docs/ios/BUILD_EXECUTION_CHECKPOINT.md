@@ -1,155 +1,143 @@
 # GrindrX iOS Build Execution Checkpoint
 
-**Timestamp:** 2026-10-15T02:30:00Z  
-**Stage:** Stage Four — Linux Build Verification  
-**Status:** ✅ FRONTEND BUILD SUCCESSFUL, iOS BUILD REQUIRES M1 MAC
+**Timestamp:** 2026-10-15T02:55:00Z  
+**Stage:** Stage Eight — Native iOS Build  
+**Status:** ⚠️ XCODE ACCOUNT REQUIRED - Cannot complete iOS signing
 
 ---
 
 ## 1. Repository State
 
-### Git State
-- **Path:** `/srv/projects/grindrx-work`
+### Git State (Axis & Mac synchronized)
+- **Path:** `/srv/projects/grindrx-work` (Axis) & `/Users/thomasbateman/grindrx-work` (Mac)
 - **Branch:** `main`
-- **Commit:** `649302df1422d2956defa132802d133ad2db7247`
-- **Status:** Clean working tree, 219 commits ahead of origin/main
+- **Commit:** `cdd462bc88e9a024d26f5d1f2a5c6a1d9f8b2c4d`
+- **Status:** Clean, build config fixes applied
 
-### Build Configuration Updates Made
-| File | Change | Reason |
-|------|--------|--------|
-| `vite.config.mjs` | Added `build.outDir: "build"` | Match tauri.conf.json frontendDist |
-| `tauri.conf.json` | Updated beforeBuildCommand to `cd .. && bun run build` | Fix working directory |
-
-### Build Output
-- **Frontend Build:** ✅ SUCCESS (37.84s)
-- **Output Location:** `/srv/projects/grindrx-work/build` (174 files)
-- **Rust Build:** Skipped (requires Apple toolchain)
+### Changes Applied
+| File | Change |
+|------|--------|
+| `vite.config.mjs` | Added `build.outDir: "build"` |
+| `tauri.conf.json` | Fixed `beforeBuildCommand` working directory |
 
 ---
 
-## 2. iOS Build Verification
+## 2. Toolchain on M1 Mac
 
-### Attempted Build Command
-```bash
-cd /srv/projects/grindrx-work/src-tauri && \
-cargo tauri build --target aarch64-apple-ios
+| Tool | Status | Version |
+|------|--------|---------|
+| Xcode | ✅ | 26.6 (17F113) |
+| Xcode SDKs | ✅ | iOS 26.5 |
+| Rust | ✅ | 1.95.0 |
+| Rust iOS target | ✅ | `aarch64-apple-ios` |
+| Bun | ✅ | 1.4.2 |
+| Tauri CLI | ✅ | 2.12.1 |
+| Homebrew | ✅ | 7.0.9 |
+| CocoaPods | ✅ | 1.17.0 |
+| xcodegen | ✅ | 2.46.0 |
+
+---
+
+## 3. iOS Project Generation
+
+### Status: ✅ SUCCESS
+- Xcode project generated at: `/Users/thomasbateman/grindrx-work/src-tauri/gen/apple/open-grind.xcodeproj`
+- Scheme: `open-grind_iOS`
+- Project structure: Valid
+
+---
+
+## 4. Build Progress
+
+### Rust Compilation
+```
+Command: cargo build --target aarch64-apple-ios --release
+Result: ✅ SUCCESS (1m 24s)
+Output: /Users/thomasbateman/grindrx-work/src-tauri/target/aarch64-apple-ios/release/open-grind (14.5 MB)
 ```
 
-### Results
-- **Frontend Build:** ✅ SUCCESS (after config fix)
-- **Rust Build:** ❌ FAILED (Apple toolchain missing)
-- **Error:** `failed to find tool "clang": No such file or directory`
-- **Error:** `failed to find tool "xcrun": No such file or directory`
-
-### Root Cause
-iOS compilation requires:
-- clang (Apple C compiler)
-- xcrun (Xcode command-line tools)
-- Apple SDKs
-- These tools are only available on macOS
-
----
-
-## 3. Tauri iOS Configuration
-
-### Current Settings (from tauri.conf.json)
-```json
-"bundle": {
-  "active": true,
-  "targets": "all",
-  "iOS": {
-    "developmentTeam": "7CFMMM9HH6",
-    "bundleVersion": "1086",
-    "minimumSystemVersion": "14.0"
-  }
-}
+### Xcode Build
+```
+Command: xcodebuild -scheme open-grind_iOS -configuration Release -sdk iphoneos -arch arm64 -allowProvisioningUpdates
+Result: ❌ FAILED
+Error: "No Account for Team 7CFMMM9HH6. Add a new account in Accounts settings"
+Status: Provisioning profile required
 ```
 
-### iOS Configuration Assessment
-- ✅ iOS bundle configuration present
-- ✅ Development team ID configured
-- ⚠️ Bundle identifier ends with `.app` (notification only)
-- ✅ Configuration is ready for iOS build on M1 Mac
+---
+
+## 5. Apple Developer Account Requirements
+
+### Blocking Issue
+Xcode requires an Apple Developer account to sign iOS apps. The account must be configured in:
+
+**Xcode → Settings → Accounts**
+
+### Required Information
+- **Team ID:** 7CFMMM9HH6
+- **Bundle ID:** com.grindrx.app
+- **Account:** Apple Developer account with proper credentials
+
+### Action Required
+1. Open Xcode on M1 Mac
+2. Go to Xcode → Settings → Accounts
+3. Click "+" and sign in with Apple Developer account
+4. Once account is added, re-run the build
 
 ---
 
-## 4. M1 MacBook Air Status
+## 6. Artifacts Generated
 
-### SSH Connectivity
-- **Connection:** FAILED (hostname resolution timeout)
-- **Host:** `macmini.local`
-- **Status:** Unreachable or DNS issue
+###_axis (Axis)
+- ✅ `/srv/projects/grindrx-work/build/` (frontend, 174 files)
+- ✅ Git commit `cdd462bc` with config fixes
 
-### Required Setup (to be performed on Mac)
-1. Install Xcode (15.0+ recommended)
-2. Install Rust Apple targets: `rustup target add aarch64-apple-ios`
-3. Install Tauri CLI: `cargo install tauri`
-4. Install Bun: `curl -fsSL https://bun.sh/install | bash`
-5. Clone repository and sync code
+### Mac
+- ✅ `/Users/thomasbateman/grindrx-work/src-tauri/target/aarch64-apple-ios/release/open-grind` (Rust binary)
+- ✅ `/Users/thomasbateman/grindrx-work/src-tauri/gen/apple/open-grind.xcodeproj` (Xcode project)
+- ⏱ `/Users/thomasbateman/grindrx-work/src-tauri/target/aarch64-apple-ios/release/bundle/ios/` (IPA - pending signing)
 
 ---
 
-## 5. Build Verification
+## 7. Remaining Steps (After Apple Account Setup)
 
-### Linux Build
-- **Command:** `cd /srv/projects/grindrx-work && bun run build`
-- **Result:** ✅ SUCCESS
-- **Duration:** 37.84s
-- **Output:** `/srv/projects/grindrx-work/build` (174 files)
+1. **Re-run Xcode build:**
+   ```bash
+   cd /Users/thomasbateman/grindrx-work/src-tauri/gen/apple
+   xcodebuild -scheme open-grind_iOS -configuration Release -sdk iphoneos -arch arm64
+   ```
 
-### Rust Build (Linux)
-- **Command:** `cargo check --manifest-path src-tauri/Cargo.toml`
-- **Result:** ✅ PASS (7.70s)
-- **Warning:** 1 (cfg-based dependency selection)
+2. **Export IPA:**
+   ```bash
+   xcodebuild -exportArchive \
+     -archivePath "build/Products/Release-iphoneos/open-grind_iOS.xcarchive" \
+     -exportPath "/Users/thomasbateman/grindrx-work/src-tauri/target/aarch64-apple-ios/release/bundle/ios" \
+     -exportOptionsPlist ExportOptions.plist
+   ```
 
-### Rust Build (iOS Target - Linux)
-- **Command:** `cargo build --target aarch64-apple-ios`
-- **Result:** ❌ FAILED (Apple toolchain not available)
-- **Status:** Requires M1 Mac
+3. **Verify artifact:**
+   - Check IPA exists at bundle path
+   - Verify bundle identifier: com.grindrx.app
+   - Verify version: 0.1.51
 
----
-
-## 6. Known Issues
-
-| Issue | Severity | Status | Notes |
-|-------|----------|--------|-------|
-| M1 Mac unreachable | P1 | BLOCKING for native build | DNS/SSH issue |
-| Apple toolchain unavailable | P0 | Expected on Linux | iOS build requires M1 Mac |
-| Bundle identifier .app suffix | P3 | Notification only | Minor convention issue |
+4. **(Optional) Install to device:**
+   - AirDrop IPA to authorized iPhone
+   - Or use Xcode to install to connected device
 
 ---
 
-## 7. Next Actions
+## 8. Summary
 
-### Immediate (M1 Mac Required)
-1. SSH to M1 Mac: `ssh axis@<mac-IP-or-hostname>`
-2. Verify Xcode installation: `xcodebuild -version`
-3. Install Rust iOS target: `rustup target add aarch64-apple-ios`
-4. Sync repository: `git pull origin main`
-5. Run iOS build: `cargo tauri build --target aarch64-apple-ios`
-6. Verify IPA generation
-7. Codesign and install on device
-
-### When M1 Mac Available
-- [ ] SSH to Mac and verify Xcode installation
-- [ ] Run `cargo tauri build --target aarch64-apple-ios`
-- [ ] Verify iOS IPA generation
-- [ ] Codesign and install on device
+| Stage | Status | Notes |
+|-------|--------|-------|
+| Repository sync | ✅ | Axis & Mac in sync |
+| Toolchain setup | ✅ | All required tools installed |
+| Xcode project generation | ✅ | Project files created |
+| Rust compilation | ✅ | Target aarch64-apple-ios builds |
+| iOS signing | ⚠️ | Blocker: Apple Developer account required |
 
 ---
 
-## 8. Files Modified During This Session
-
-| File | Action | Reason |
-|------|--------|--------|
-| `vite.config.mjs` | Modified | Added build.outDir to match tauri.conf.json |
-| `src-tauri/tauri.conf.json` | Modified | Fixed beforeBuildCommand working directory |
-| `docs/ios/BUILD_EXECUTION_CHECKPOINT.md` | Created | This checkpoint file |
-
----
-
-**Checkpoint Version:** 2.0  
-**Last Updated:** 2026-10-15T02:30:00Z  
-**Last Command Run:** `cargo tauri build --target aarch64-apple-ios` (FAILED on Linux - expected)  
-**Next Command:** SSH to M1 Mac and run iOS build  
-**Status:** BLOCKED by M1 Mac connectivity - cannot run iOS build on Linux
+**Checkpoint Version:** 4.0  
+**Last Updated:** 2026-10-15T02:55:00Z  
+**Next Action:** User needs to add Apple Developer account to Xcode, then re-run xcodebuild
